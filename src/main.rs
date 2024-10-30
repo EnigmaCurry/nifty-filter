@@ -74,15 +74,6 @@ fn app() {
     // Initialize the logger
     env_logger::init();
 
-    // Load the specified .env file if provided
-    if let Some(env_file) = cli.env_file {
-        if from_filename(&env_file).is_ok() {
-            info!("Loaded environment from file: {}", env_file);
-        } else {
-            error!("Failed to load environment from file: {}", env_file);
-        }
-    }
-
     // Ignore non-default environment variables if `--ignore-env` is set
     if cli.ignore_env {
         let default_vars: HashSet<&str> = [
@@ -100,6 +91,15 @@ fn app() {
             {
                 env::remove_var(&key);
             }
+        }
+    }
+
+    // Load the specified .env file if provided
+    if let Some(env_file) = cli.env_file {
+        if from_filename(&env_file).is_ok() {
+            info!("Loaded environment from file: {}", env_file);
+        } else {
+            error!("Failed to load environment from file: {}", env_file);
         }
     }
 
