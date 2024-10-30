@@ -1,5 +1,7 @@
 # nifty-filter
 
+> 💥 warning: alpha pre-release version
+
 nifty-filter is a template and configuration tool for
 [netfilter](https://www.netfilter.org/) (nftables) and is useful for
 creating a Linux based Internet protocol (IP) router. It is a program
