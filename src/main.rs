@@ -3,7 +3,8 @@ use clap::Parser;
 use dotenvy::from_filename;
 use env_logger;
 use log::{error, info};
-use std::env;
+use std::collections::HashSet;
+use std::env::{self};
 mod parsers;
 use parsers::Subnet;
 
@@ -11,9 +12,13 @@ use parsers::Subnet;
 #[command(name = "RouterConfig")]
 #[command(about = "Generates router configuration from environment or .env file")]
 struct Cli {
-    /// Path to the .env file
+    /// Path to the .env file (actual environment vars supercede this)
     #[arg(long)]
     env_file: Option<String>,
+
+    /// Ignore the environment (combine this with --env-file)
+    #[arg(long)]
+    ignore_env: bool,
 
     /// Enable verbose output
     #[arg(short, long)]
@@ -122,6 +127,26 @@ fn main() {
             info!("Loaded environment from file: {}", env_file);
         } else {
             error!("Failed to load environment from file: {}", env_file);
+        }
+    }
+
+    // Ignore non-default environment variables if `--ignore-env` is set
+    if cli.ignore_env {
+        let default_vars: HashSet<&str> = [
+            "HOME", "USER", "PWD", "OLDPWD", "SHELL", "PATH", "LANG", "TERM", "UID", "EUID",
+            "LOGNAME", "HOSTNAME", "EDITOR", "VISUAL",
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        for (key, _) in env::vars() {
+            if !default_vars.contains(key.as_str())
+                && !key.starts_with("RUST")
+                && !key.starts_with("CARGO")
+            {
+                env::remove_var(&key);
+            }
         }
     }
 
