@@ -22,7 +22,7 @@ page.
 
 [Download the latest release for your platform.](https://github.com/EnigmaCurry/nifty-filter/releases)
 
-Or install via cargo ([crates.io/crates/hushcrumbs](https://crates.io/crates/nifty-filter)):
+Or install via cargo ([crates.io/crates/nifty-filter](https://crates.io/crates/nifty-filter)):
 
 ```
 cargo install nifty-filter
