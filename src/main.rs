@@ -31,12 +31,9 @@ struct Cli {
 struct RouterTemplate {
     interface_lan: Interface,
     interface_wan: Interface,
-    icmp_accept_lan: bool,
-    icmp_accept_wan: bool,
+    icmp_accept_lan: String,
+    icmp_accept_wan: String,
     subnet_lan: Subnet,
-    chain_input_policy: ChainPolicy,
-    chain_forward_policy: ChainPolicy,
-    chain_output_policy: ChainPolicy,
 }
 
 impl RouterTemplate {
@@ -46,14 +43,18 @@ impl RouterTemplate {
         let interface_wan = get_interface("INTERFACE_WAN", &mut errors);
         let subnet_lan = get_subnet("SUBNET_LAN", &mut errors);
 
-        let icmp_accept_lan = get_bool("ICMP_ACCEPT_LAN", &mut errors, Some(true));
-        let icmp_accept_wan = get_bool("ICMP_ACCEPT_WAN", &mut errors, Some(false));
-        let chain_input_policy =
-            get_chain_policy("CHAIN_INPUT_POLICY", &mut errors, ChainPolicy::Drop);
-        let chain_output_policy =
-            get_chain_policy("CHAIN_OUTPUT_POLICY", &mut errors, ChainPolicy::Accept);
-        let chain_forward_policy =
-            get_chain_policy("CHAIN_FORWARD_POLICY", &mut errors, ChainPolicy::Drop);
+        let icmp_accept_lan = IcmpType::vec_to_string(&get_icmp_types(
+            "ICMP_ACCEPT_LAN",
+            &mut errors,
+            vec![
+                IcmpType::EchoRequest,
+                IcmpType::EchoReply,
+                IcmpType::DestinationUnreachable,
+                IcmpType::TimeExceeded,
+            ],
+        ));
+        let icmp_accept_wan =
+            IcmpType::vec_to_string(&get_icmp_types("ICMP_ACCEPT_WAN", &mut errors, vec![]));
 
         if !errors.is_empty() {
             return Err(errors);
@@ -65,9 +66,6 @@ impl RouterTemplate {
             subnet_lan,
             icmp_accept_lan,
             icmp_accept_wan,
-            chain_input_policy,
-            chain_forward_policy,
-            chain_output_policy,
         })
     }
 }

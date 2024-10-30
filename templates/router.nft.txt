@@ -1,41 +1,38 @@
 #!/usr/sbin/nft -f
 
-# Flush existing rules
 flush ruleset
 
-# Define table
 table ip filter {
     chain input {
-        type filter hook input priority 0; policy {{ chain_input_policy }};
+        type filter hook input priority 0; policy drop;
         # Allow established and related connections
         ct state established,related accept
 
-        # Allow ICMP
-        {% if icmp_accept_lan %}
-        ip protocol icmp iif "{{ interface_lan }}" accept
+        {% if icmp_accept_lan != "" %}
+        # Allow specific ICMP queries on lan interface
+        ip protocol icmp icmp type { {{ icmp_accept_lan }} } iif "{{ interface_lan }}" accept
         {% endif %}
-        {% if icmp_accept_wan %}
-        ip protocol icmp iif "{{ interface_wan }}" accept
+        {% if icmp_accept_wan != "" %}
+        # Allow specific ICMP queries on wan interface
+        ip protocol icmp icmp type { {{ icmp_accept_wan }} } iif "{{ interface_wan }}" accept
         {% endif %}
-
-        # Drop everything else
-        drop
     }
 
     chain forward {
-        type filter hook forward priority 0; policy {{ chain_forward_policy }};
+        type filter hook forward priority 0; policy drop;
         # Allow established and related connections
         ct state established,related accept
         # Allow traffic from local network to internet
         ip saddr {{ subnet_lan }} accept
+        # Log and drop all other packets
+        log prefix "Dropped forward packet: " drop
     }
 
     chain output {
-        type filter hook output priority 0; policy {{ chain_output_policy }};
+        type filter hook output priority 0; policy drop;
     }
 }
 
-# Define NAT table
 table ip nat {
     # DNAT for incoming traffic
     chain prerouting {
@@ -51,5 +48,4 @@ table ip nat {
     }
 }
 
-# Enable IP forwarding
 sysctl -w net.ipv4.ip_forward=1

@@ -1,11 +1,13 @@
 use std::env;
 
 pub mod chain_policy;
+pub mod icmp_type;
 pub mod interface;
 pub mod port;
 pub mod subnet;
 
 pub use chain_policy::ChainPolicy;
+pub use icmp_type::IcmpType;
 pub use interface::Interface;
 #[allow(unused_imports)]
 pub use port::Port;
@@ -64,6 +66,26 @@ pub fn get_subnet(var_name: &str, errors: &mut Vec<String>) -> Subnet {
             errors.push(err);
             Subnet::new("0.0.0.0/32").unwrap() // Dummy value
         }
+    }
+}
+
+pub fn get_icmp_types(
+    var_name: &str,
+    errors: &mut Vec<String>,
+    default: Vec<IcmpType>,
+) -> Vec<IcmpType> {
+    match get_string_var(var_name) {
+        Ok(val) => val
+            .split(',')
+            .filter_map(|s| match IcmpType::new(s.trim()) {
+                Ok(icmp_type) => Some(icmp_type),
+                Err(err) => {
+                    errors.push(err);
+                    None
+                }
+            })
+            .collect(),
+        Err(_) => default,
     }
 }
 
