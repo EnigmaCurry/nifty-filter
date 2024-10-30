@@ -1,6 +1,8 @@
-use std::str::FromStr;
+use strum::IntoEnumIterator;
+use strum_macros::{Display, EnumIter, EnumString};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, EnumString, EnumIter, Display)]
+#[strum(serialize_all = "lowercase")]
 #[allow(dead_code)]
 pub enum ChainPolicy {
     Accept,
@@ -14,57 +16,18 @@ pub enum ChainPolicy {
 
 impl ChainPolicy {
     pub fn new(input: &str) -> Result<Self, String> {
-        input.parse::<ChainPolicy>()
+        input.to_lowercase().parse::<ChainPolicy>().map_err(|_| {
+            format!(
+                "Invalid chain policy value: '{}'. Acceptable values are: {}",
+                input,
+                ChainPolicy::variants().join(", ")
+            )
+        })
     }
 
     fn variants() -> Vec<String> {
-        vec![
-            "accept".to_string(),
-            "drop".to_string(),
-            "reject".to_string(),
-            "continue".to_string(),
-            "return".to_string(),
-            "queue".to_string(),
-            "log".to_string(),
-        ]
-    }
-}
-
-impl FromStr for ChainPolicy {
-    type Err = String;
-
-    fn from_str(input: &str) -> Result<Self, Self::Err> {
-        match input.to_lowercase().as_str() {
-            "accept" => Ok(ChainPolicy::Accept),
-            "drop" => Ok(ChainPolicy::Drop),
-            "reject" => Ok(ChainPolicy::Reject),
-            "continue" => Ok(ChainPolicy::Continue),
-            "return" => Ok(ChainPolicy::Return),
-            "queue" => Ok(ChainPolicy::Queue),
-            "log" => Ok(ChainPolicy::Log),
-            _ => Err(format!(
-                "Invalid chain policy: '{}'. Acceptable values are: {}",
-                input,
-                ChainPolicy::variants().join(", ")
-            )),
-        }
-    }
-}
-
-impl std::fmt::Display for ChainPolicy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                ChainPolicy::Accept => "accept",
-                ChainPolicy::Drop => "drop",
-                ChainPolicy::Reject => "reject",
-                ChainPolicy::Continue => "continue",
-                ChainPolicy::Return => "return",
-                ChainPolicy::Queue => "queue",
-                ChainPolicy::Log => "log",
-            }
-        )
+        ChainPolicy::iter()
+            .map(|variant| variant.to_string())
+            .collect()
     }
 }
