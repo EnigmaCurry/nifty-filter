@@ -6,7 +6,7 @@ flush ruleset
 # Define table
 table ip filter {
     chain input {
-        type filter hook input priority 0; policy drop;
+        type filter hook input priority 0; policy {{ chain_input_policy }};
         # Allow established and related connections
         ct state established,related accept
 
@@ -23,7 +23,7 @@ table ip filter {
     }
 
     chain forward {
-        type filter hook forward priority 0; policy drop;
+        type filter hook forward priority 0; policy {{ chain_forward_policy }};
         # Allow established and related connections
         ct state established,related accept
         # Allow traffic from local network to internet
@@ -47,8 +47,7 @@ table ip nat {
     # SNAT for outgoing traffic
     chain postrouting {
         type nat hook postrouting priority 100; policy accept;
-        # Replace with your external interface IP
-        oifname "{{ interface_wan }}" masquerade
+        oifname "{{ interface_wan }}" iifname "{{ interface_lan }}" masquerade
     }
 }
 

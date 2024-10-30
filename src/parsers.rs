@@ -31,14 +31,14 @@ pub fn get_interface(var_name: &str, errors: &mut Vec<String>) -> Interface {
     }
 }
 
-pub fn get_chain_policy(var_name: &str, errors: &mut Vec<String>) -> ChainPolicy {
+pub fn get_chain_policy(
+    var_name: &str,
+    errors: &mut Vec<String>,
+    default: ChainPolicy,
+) -> ChainPolicy {
     let val = match get_string_var(var_name) {
         Ok(val) => val,
-        Err(err) => {
-            errors.push(err.clone());
-            println!("Error fetching variable {}: {}", var_name, err);
-            return ChainPolicy::Drop; // Dummy value
-        }
+        Err(_) => return default,
     };
 
     match ChainPolicy::new(&val) {
@@ -67,7 +67,7 @@ pub fn get_subnet(var_name: &str, errors: &mut Vec<String>) -> Subnet {
     }
 }
 
-pub fn get_bool(var_name: &str, errors: &mut Vec<String>) -> bool {
+pub fn get_bool(var_name: &str, errors: &mut Vec<String>, default: Option<bool>) -> bool {
     match get_string_var(var_name) {
         Ok(val) => {
             if val == "true" {
@@ -75,13 +75,23 @@ pub fn get_bool(var_name: &str, errors: &mut Vec<String>) -> bool {
             } else if val == "false" {
                 false
             } else {
-                errors.push(format!("Invalid boolean variable: {var_name}={val}"));
-                false // Dummy value
+                match default {
+                    Some(default) => return default,
+                    None => {
+                        errors.push(format!("Invalid boolean variable: {var_name}={val}"));
+                        false // Dummy value
+                    }
+                }
             }
         }
         Err(err) => {
-            errors.push(err);
-            false // Dummy value
+            match default {
+                Some(default) => return default,
+                None => {
+                    errors.push(err);
+                    false // Dummy value
+                }
+            }
         }
     }
 }

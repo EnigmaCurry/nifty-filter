@@ -5,6 +5,7 @@ use env_logger;
 use log::{error, info};
 use std::collections::HashSet;
 use std::env;
+use std::process::exit;
 mod parsers;
 use parsers::*;
 
@@ -33,6 +34,8 @@ struct RouterTemplate {
     icmp_accept_lan: bool,
     icmp_accept_wan: bool,
     subnet_lan: Subnet,
+    chain_input_policy: ChainPolicy,
+    chain_forward_policy: ChainPolicy,
     chain_output_policy: ChainPolicy,
 }
 
@@ -43,9 +46,14 @@ impl RouterTemplate {
         let interface_wan = get_interface("INTERFACE_WAN", &mut errors);
         let subnet_lan = get_subnet("SUBNET_LAN", &mut errors);
 
-        let icmp_accept_lan = get_bool("ICMP_ACCEPT_LAN", &mut errors);
-        let icmp_accept_wan = get_bool("ICMP_ACCEPT_WAN", &mut errors);
-        let chain_output_policy = get_chain_policy("CHAIN_OUTPUT_POLICY", &mut errors);
+        let icmp_accept_lan = get_bool("ICMP_ACCEPT_LAN", &mut errors, Some(true));
+        let icmp_accept_wan = get_bool("ICMP_ACCEPT_WAN", &mut errors, Some(false));
+        let chain_input_policy =
+            get_chain_policy("CHAIN_INPUT_POLICY", &mut errors, ChainPolicy::Drop);
+        let chain_output_policy =
+            get_chain_policy("CHAIN_OUTPUT_POLICY", &mut errors, ChainPolicy::Accept);
+        let chain_forward_policy =
+            get_chain_policy("CHAIN_FORWARD_POLICY", &mut errors, ChainPolicy::Drop);
 
         if !errors.is_empty() {
             return Err(errors);
@@ -57,6 +65,8 @@ impl RouterTemplate {
             subnet_lan,
             icmp_accept_lan,
             icmp_accept_wan,
+            chain_input_policy,
+            chain_forward_policy,
             chain_output_policy,
         })
     }
@@ -96,10 +106,15 @@ fn app() {
 
     // Load the specified .env file if provided
     if let Some(env_file) = cli.env_file {
-        if from_filename(&env_file).is_ok() {
-            info!("Loaded environment from file: {}", env_file);
-        } else {
-            error!("Failed to load environment from file: {}", env_file);
+        match from_filename(&env_file) {
+            Ok(_) => {
+                info!("Loaded environment from file: {}", env_file);
+            }
+            Err(err) => {
+                error!("Error parsing {} : {}", env_file, err);
+                error!("Failed to load environment from file: {}", env_file);
+                exit(1);
+            }
         }
     }
 
