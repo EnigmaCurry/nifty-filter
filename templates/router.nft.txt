@@ -31,7 +31,7 @@ table ip filter {
     }
 
     chain output {
-        type filter hook output priority 0; policy drop;
+        type filter hook output priority 0; policy {{ chain_output_policy }};
     }
 }
 

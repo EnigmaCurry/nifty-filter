@@ -4,9 +4,9 @@ use dotenvy::from_filename;
 use env_logger;
 use log::{error, info};
 use std::collections::HashSet;
-use std::env::{self};
+use std::env;
 mod parsers;
-use parsers::Subnet;
+use parsers::*;
 
 #[derive(Parser)]
 #[command(name = "RouterConfig")]
@@ -28,50 +28,24 @@ struct Cli {
 #[derive(Template)]
 #[template(path = "router.nft.txt")]
 struct RouterTemplate {
-    interface_lan: String,
-    interface_wan: String,
+    interface_lan: Interface,
+    interface_wan: Interface,
     icmp_accept_lan: bool,
     icmp_accept_wan: bool,
     subnet_lan: Subnet,
+    chain_output_policy: ChainPolicy,
 }
 
 impl RouterTemplate {
     fn from_env() -> Result<Self, Vec<String>> {
         let mut errors = Vec::new();
+        let interface_lan = get_interface("INTERFACE_LAN", &mut errors);
+        let interface_wan = get_interface("INTERFACE_WAN", &mut errors);
+        let subnet_lan = get_subnet("SUBNET_LAN", &mut errors);
 
-        let interface_lan = match get_string_var("INTERFACE_LAN") {
-            Ok(val) => val,
-            Err(err) => {
-                errors.push(err);
-                String::new() // Dummy value to proceed; won't be used if there are errors
-            }
-        };
-
-        let interface_wan = match get_string_var("INTERFACE_WAN") {
-            Ok(val) => val,
-            Err(err) => {
-                errors.push(err);
-                String::new() // Dummy value to proceed; won't be used if there are errors
-            }
-        };
-
-        let subnet_lan = match get_subnet_var("SUBNET_LAN") {
-            Ok(val) => val,
-            Err(err) => {
-                errors.push(err);
-                Subnet::new("0.0.0.0/0").unwrap() // Dummy value to proceed; won't be used if there are errors
-            }
-        };
-
-        let icmp_accept_lan = get_bool_var("ICMP_ACCEPT_LAN").unwrap_or_else(|err| {
-            errors.push(err);
-            true // Default value
-        });
-
-        let icmp_accept_wan = get_bool_var("ICMP_ACCEPT_WAN").unwrap_or_else(|err| {
-            errors.push(err);
-            false // Default value
-        });
+        let icmp_accept_lan = get_bool("ICMP_ACCEPT_LAN", &mut errors);
+        let icmp_accept_wan = get_bool("ICMP_ACCEPT_WAN", &mut errors);
+        let chain_output_policy = get_chain_policy("CHAIN_OUTPUT_POLICY", &mut errors);
 
         if !errors.is_empty() {
             return Err(errors);
@@ -83,33 +57,12 @@ impl RouterTemplate {
             subnet_lan,
             icmp_accept_lan,
             icmp_accept_wan,
+            chain_output_policy,
         })
     }
 }
 
-/// Helper function to get a string environment variable with a custom error message.
-fn get_string_var(var_name: &str) -> Result<String, String> {
-    env::var(var_name).map_err(|_| format!("{} environment variable is not set.", var_name))
-}
-
-/// Helper function to get a subnet environment variable with detailed error messages.
-fn get_subnet_var(var_name: &str) -> Result<Subnet, String> {
-    let value = get_string_var(var_name)?;
-    Subnet::new(&value).map_err(|_| format!("Invalid subnet format: {}={}", var_name, value))
-}
-
-/// Helper function to get a boolean environment variable with error handling.
-fn get_bool_var(var_name: &str) -> Result<bool, String> {
-    let value =
-        env::var(var_name).map_err(|_| format!("{} environment variable is not set.", var_name))?;
-    match value.as_str() {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        _ => Err(format!("Invalid boolean format: {}={}", var_name, value)),
-    }
-}
-
-fn main() {
+fn app() {
     // Parse command-line arguments
     let cli = Cli::parse();
 
@@ -152,7 +105,10 @@ fn main() {
 
     // Attempt to create the RouterTemplate from environment variables
     match RouterTemplate::from_env() {
-        Ok(router) => println!("{}", router.render().unwrap()),
+        Ok(router) => {
+            //
+            println!("{}", router.render().unwrap())
+        }
         Err(errors) => {
             for err in errors {
                 eprintln!("Error: {}", err);
@@ -160,4 +116,8 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn main() {
+    app()
 }
