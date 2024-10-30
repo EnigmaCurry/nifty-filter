@@ -17,3 +17,42 @@ binary. However, the default template is designed to cover most of the
 use cases for a typical home LAN router, so if that suits your needs
 then you can simply download the precompiled binary from the releases
 page.
+
+## Install
+
+[Download the latest release for your platform.](https://github.com/EnigmaCurry/nifty-filter/releases)
+
+Or install via cargo ([crates.io/crates/hushcrumbs](https://crates.io/crates/nifty-filter)):
+
+```
+cargo install nifty-filter
+```
+
+## Run
+
+You can supply your configuration in two ways: set environment
+variables and/or provide a `.env` file.
+
+Example with a `.env` file that ignores all other environment
+variables:
+
+```bash
+nifty-filter --env-file .env --ignore-env
+```
+
+Example with a `.env` file and superceding it with some environment
+variables:
+
+```bash
+INTERFACE_LAN=eth0 \
+INTERFACE_WAN=eth1 \
+nifty-filter --env-file .env
+```
+
+Example with only environment variables (incomplete config):
+
+```bash
+INTERFACE_LAN=eth0 \
+INTERFACE_WAN=eth1 \
+nifty-filter
+```
