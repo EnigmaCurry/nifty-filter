@@ -11,6 +11,7 @@ mod parsers;
 use parsers::*;
 #[allow(unused_imports)]
 use std::net::IpAddr;
+use std::process::{Command, Stdio};
 
 #[derive(Parser)]
 #[command(name = "RouterConfig")]
@@ -23,6 +24,10 @@ struct Cli {
     /// Ignore the environment (combine this with --env-file)
     #[arg(long)]
     strict_env: bool,
+
+    /// Validate with nft -c (only works if interfaces exist on this host)
+    #[arg(long)]
+    validate: bool,
 
     /// Enable verbose output
     #[arg(short, long)]
@@ -123,6 +128,31 @@ impl RouterTemplate {
     }
 }
 
+pub fn validate_nftables_config(config: &str) -> Result<(), String> {
+    let output = Command::new("nft")
+        .arg("-c")
+        .arg("-f")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(stdin) = child.stdin.as_mut() {
+                use std::io::Write;
+                stdin.write_all(config.as_bytes())?;
+            }
+            child.wait_with_output()
+        })
+        .map_err(|e| format!("Failed to run nft command: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
 fn app() {
     // Parse command-line arguments
     let cli = Cli::parse();
@@ -171,7 +201,19 @@ fn app() {
 
     // Attempt to create the RouterTemplate from environment variables
     match RouterTemplate::from_env() {
-        Ok(router) => println!("{}", format::reduce_blank_lines(&router.render().unwrap())),
+        Ok(router) => {
+            let text = format::reduce_blank_lines(&router.render().unwrap());
+            if cli.validate {
+                match validate_nftables_config(&text) {
+                    Ok(_valid) => {}
+                    Err(e) => {
+                        error!("Error validating nftables config: {}", e);
+                        exit(1)
+                    }
+                }
+            }
+            println!("{}", text)
+        }
         Err(errors) => {
             for err in errors {
                 eprintln!("Error: {}", err);

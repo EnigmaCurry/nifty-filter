@@ -74,3 +74,11 @@ INTERFACE_LAN=eth0 \
 INTERFACE_WAN=eth1 \
 nifty-filter
 ```
+
+Run with extra validation which passes the output to `nft -c -f -` for
+sanity checking:
+
+```
+#...
+nifty-filter --validate
+```

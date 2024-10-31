@@ -6,38 +6,39 @@ table ip filter {
     # Filter traffic destined for the router itself:
     chain input {
         type filter hook input priority 0; policy drop;
-        # Accept existing established and related connections
+        # Allow existing established and related connections
         ct state established,related accept
         
         {% if icmp_accept_lan != "" %}
-        # Accept specific ICMP queries on lan interface
+        # Allow specific ICMP queries on lan interface
         iif "{{ interface_lan }}" ip saddr {{ subnet_lan }} icmp type { {{ icmp_accept_lan }} } accept
         {% endif %}
 
         {% if icmp_accept_wan != "" %}
-        # Accept specific ICMP queries on wan interface
+        # Allow specific ICMP queries on wan interface
         iif "{{ interface_wan }}" ip icmp type { {{ icmp_accept_wan }} } accept
         {% endif %}
 
         {% if tcp_accept_lan != "" %}
-        # Accept access to specific TCP ports from the lan interface
+        # Allow access to specific TCP ports from the lan interface
         ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" tcp dport { {{ tcp_accept_lan }} } accept
         {% endif %}
         {% if udp_accept_lan != "" %}
-        # Accept access to specific UDP ports from the lan interface
+        # Allow access to specific UDP ports from the lan interface
         ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" udp dport { {{ udp_accept_lan }} } accept
         {% endif %}
         
         {% if tcp_accept_wan != "" %}
-        # Accept access to specific TCP ports from the wan interface
+        # Allow access to specific TCP ports from the wan interface
         ip iif "{{ interface_wan }}" tcp dport { {{ tcp_accept_wan }} } accept
         {% endif %}
         
         {% if udp_accept_wan != "" %}
-        # Accept access to specific UDP port from the wan interface
+        # Allow access to specific UDP port from the wan interface
         ip iif "{{ interface_wan }}" udp dport { {{ udp_accept_lan }} } accept
         {% endif %}
 
+        # Drop and log everything else
         log prefix "Dropped input packet: " drop
     }
 
@@ -46,9 +47,9 @@ table ip filter {
     # This filters traffic before the postrouting chain.
     chain forward {
         type filter hook forward priority 0; policy drop;
-        # Accept existing established and related connections
+        # Allow existing established and related connections
         ct state established,related accept
-        # Accept all egress from lan to wan
+        # Allow all egress from lan to wan
         ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" oif "{{ interface_wan }}" accept
 
         {% if tcp_forward_lan.len() > 0 %}
@@ -104,8 +105,6 @@ table ip nat {
     # Modify source address after the forwarding chain, before leaving the router:
     chain postrouting {
         type nat hook postrouting priority 100; policy accept;
-        oifname "{{ interface_wan }}" iifname "{{ interface_lan }}" masquerade
+        oif "{{ interface_wan }}" iif "{{ interface_lan }}" masquerade
     }
 }
-
-# sysctl -w net.ipv4.ip_forward=1
