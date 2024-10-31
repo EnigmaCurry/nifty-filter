@@ -13,6 +13,7 @@ authors = ["EnigmaCurry <ryan@enigmacurry.com>"]
 [dependencies]
 askama = "0.12.1"
 clap = { version = "4.5.20", features = ["derive", "env"] }
+cursive = "0.21.1"
 dotenvy = "0.15.7"
 env_logger = "0.11.5"
 ipnetwork = "0.20.0"
