@@ -8,6 +8,9 @@ table ip filter {
         type filter hook input priority 0; policy drop;
         # Allow existing established and related connections
         ct state established,related accept
+
+        # Allow localhost loopback traffic
+        iif "lo" accept
         
         {% if icmp_accept_lan != "" %}
         # Allow specific ICMP queries on lan interface
@@ -84,7 +87,12 @@ table ip filter {
 
     # Filter traffic whose source is the router itself:
     chain output {
-        type filter hook output priority 0; policy accept;
+        type filter hook output priority 0; policy drop;
+        # Allow all loopback traffic
+        oif "lo" accept
+
+        # Allow all outgoing wan traffic
+        oif "{{ interface_wan }}" accept
     }
 }
 
