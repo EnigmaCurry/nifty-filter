@@ -1,6 +1,6 @@
 use askama::Template;
-use dotenvy::from_filename;
 use clap::{Parser, Subcommand};
+use dotenvy::from_filename;
 use env_logger;
 use log::{error, info};
 use parsers::port::PortList;
@@ -9,21 +9,26 @@ use std::env;
 use std::process::exit;
 mod format;
 mod parsers;
+mod tui;
 use parsers::*;
 #[allow(unused_imports)]
 use std::net::IpAddr;
-use std::process::{Command, Stdio};
+use std::process::{self, Stdio};
+use tui::main as config_main;
 
 #[derive(Parser)]
 #[command(name = "RouterConfig")]
 #[command(about = "Generates router configuration from environment or .env file")]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
-enum Commands {
+enum Command {
+    /// Config menu (default action)
+    #[command()]
+    Config {},
     /// Generate nftables configuration
     #[command(alias = "nft")]
     Nftables {
@@ -140,7 +145,7 @@ impl RouterTemplate {
 }
 
 pub fn validate_nftables_config(config: &str) -> Result<(), String> {
-    let output = Command::new("nft")
+    let output = process::Command::new("nft")
         .arg("-c")
         .arg("-f")
         .arg("-")
@@ -168,8 +173,11 @@ fn app() {
     // Parse command-line arguments
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Nftables {
+    match cli.command.unwrap_or_else(|| Command::Config {}) {
+        Command::Config {} => {
+            config_main();
+        }
+        Command::Nftables {
             env_file,
             strict_env,
             validate,
