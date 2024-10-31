@@ -1,6 +1,6 @@
 [package]
 name = "nifty-filter"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A nifty tool to configure netfilter/nftables"
 license = "MIT"
