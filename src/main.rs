@@ -22,7 +22,7 @@ struct Cli {
 
     /// Ignore the environment (combine this with --env-file)
     #[arg(long)]
-    ignore_env: bool,
+    strict_env: bool,
 
     /// Enable verbose output
     #[arg(short, long)]
@@ -135,8 +135,8 @@ fn app() {
     // Initialize the logger
     env_logger::init();
 
-    // Ignore non-default environment variables if `--ignore-env` is set
-    if cli.ignore_env {
+    // Ignore non-default environment variables if `--strict-env` is set
+    if cli.env_file.is_some() && cli.strict_env {
         let default_vars: HashSet<&str> = [
             "HOME", "USER", "PWD", "OLDPWD", "SHELL", "PATH", "LANG", "TERM", "UID", "EUID",
             "LOGNAME", "HOSTNAME", "EDITOR", "VISUAL",

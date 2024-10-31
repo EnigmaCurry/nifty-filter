@@ -11,12 +11,12 @@ table ip filter {
         
         {% if icmp_accept_lan != "" %}
         # Accept specific ICMP queries on lan interface
-        ip saddr {{ subnet_lan }} protocol icmp icmp type { {{ icmp_accept_lan }} } iif "{{ interface_lan }}" accept
+        iif "{{ interface_lan }}" ip saddr {{ subnet_lan }} icmp type { {{ icmp_accept_lan }} } accept
         {% endif %}
 
         {% if icmp_accept_wan != "" %}
         # Accept specific ICMP queries on wan interface
-        ip protocol icmp icmp type { {{ icmp_accept_wan }} } iif "{{ interface_wan }}" accept
+        iif "{{ interface_wan }}" ip icmp type { {{ icmp_accept_wan }} } accept
         {% endif %}
 
         {% if tcp_accept_lan != "" %}
@@ -108,4 +108,4 @@ table ip nat {
     }
 }
 
-sysctl -w net.ipv4.ip_forward=1
+# sysctl -w net.ipv4.ip_forward=1
