@@ -4,6 +4,8 @@
 # 1) This example is a shell script that uses env vars only.
 # 2) The other example is in home_router.sh
 
+## Example output: https://gist.githubusercontent.com/EnigmaCurry/17d5c56fbc9d1c647e4de3814fcbca03/raw/7670c02049a77410eea514fd0c7c553cbf9ff811/example.nft
+
 export INTERFACE_LAN=lan
 export INTERFACE_WAN=wan
 export SUBNET_LAN=192.168.10.1/24
