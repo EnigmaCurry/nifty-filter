@@ -5,15 +5,15 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
-    types: [opened, synchronize, reopened, ready_for_review]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-
+    
     steps:
     - name: Update Rust stable
       run: rustup toolchain install stable
