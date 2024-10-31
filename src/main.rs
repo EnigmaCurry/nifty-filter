@@ -1,6 +1,7 @@
 use askama::Template;
-use clap::Parser;
 use dotenvy::from_filename;
+use clap::{Parser, Subcommand};
+use env_logger;
 use log::{error, info};
 use parsers::port::PortList;
 use std::collections::HashSet;
@@ -17,21 +18,31 @@ use std::process::{Command, Stdio};
 #[command(name = "RouterConfig")]
 #[command(about = "Generates router configuration from environment or .env file")]
 struct Cli {
-    /// Path to the .env file (actual environment vars supercede this)
-    #[arg(long)]
-    env_file: Option<String>,
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    /// Ignore the environment (combine this with --env-file)
-    #[arg(long)]
-    strict_env: bool,
+#[derive(Subcommand)]
+enum Commands {
+    /// Generate nftables configuration
+    #[command(alias = "nft")]
+    Nftables {
+        /// Path to the .env file (actual environment vars supersede this)
+        #[arg(long)]
+        env_file: Option<String>,
 
-    /// Validate with nft -c (only works if interfaces exist on this host)
-    #[arg(long)]
-    validate: bool,
+        /// Ignore the environment (combine this with --env-file)
+        #[arg(long)]
+        strict_env: bool,
 
-    /// Enable verbose output
-    #[arg(short, long)]
-    verbose: bool,
+        /// Validate with nft -c (only works if interfaces exist on this host)
+        #[arg(long)]
+        validate: bool,
+
+        /// Enable verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 #[derive(Template)]
@@ -157,68 +168,77 @@ fn app() {
     // Parse command-line arguments
     let cli = Cli::parse();
 
-    // Set RUST_LOG to info if verbose is enabled
-    if cli.verbose {
-        env::set_var("RUST_LOG", "info");
-    }
-
-    // Initialize the logger
-    env_logger::init();
-
-    // Ignore non-default environment variables if `--strict-env` is set
-    if cli.env_file.is_some() && cli.strict_env {
-        let default_vars: HashSet<&str> = [
-            "HOME", "USER", "PWD", "OLDPWD", "SHELL", "PATH", "LANG", "TERM", "UID", "EUID",
-            "LOGNAME", "HOSTNAME", "EDITOR", "VISUAL",
-        ]
-        .iter()
-        .cloned()
-        .collect();
-
-        for (key, _) in env::vars() {
-            if !default_vars.contains(key.as_str())
-                && !key.starts_with("RUST")
-                && !key.starts_with("CARGO")
-            {
-                env::remove_var(&key);
+    match cli.command {
+        Commands::Nftables {
+            env_file,
+            strict_env,
+            validate,
+            verbose,
+        } => {
+            // Set RUST_LOG to info if verbose is enabled
+            if verbose {
+                env::set_var("RUST_LOG", "info");
             }
-        }
-    }
 
-    // Load the specified .env file if provided
-    if let Some(env_file) = cli.env_file {
-        match from_filename(&env_file) {
-            Ok(_) => {
-                info!("Loaded environment from file: {}", env_file);
-            }
-            Err(err) => {
-                error!("Error parsing {} : {}", env_file, err);
-                error!("Failed to load environment from file: {}", env_file);
-                exit(1);
-            }
-        }
-    }
+            // Initialize the logger
+            env_logger::init();
 
-    // Attempt to create the RouterTemplate from environment variables
-    match RouterTemplate::from_env() {
-        Ok(router) => {
-            let text = format::reduce_blank_lines(&router.render().unwrap());
-            if cli.validate {
-                match validate_nftables_config(&text) {
-                    Ok(_valid) => {}
-                    Err(e) => {
-                        error!("Error validating nftables config: {}", e);
-                        exit(1)
+            // Ignore non-default environment variables if `--strict-env` is set
+            if env_file.is_some() && strict_env {
+                let default_vars: HashSet<&str> = [
+                    "HOME", "USER", "PWD", "OLDPWD", "SHELL", "PATH", "LANG", "TERM", "UID",
+                    "EUID", "LOGNAME", "HOSTNAME", "EDITOR", "VISUAL",
+                ]
+                .iter()
+                .cloned()
+                .collect();
+
+                for (key, _) in env::vars() {
+                    if !default_vars.contains(key.as_str())
+                        && !key.starts_with("RUST")
+                        && !key.starts_with("CARGO")
+                    {
+                        env::remove_var(&key);
                     }
                 }
             }
-            println!("{}", text)
-        }
-        Err(errors) => {
-            for err in errors {
-                eprintln!("Error: {}", err);
+
+            // Load the specified .env file if provided
+            if let Some(env_file) = env_file {
+                match from_filename(&env_file) {
+                    Ok(_) => {
+                        info!("Loaded environment from file: {}", env_file);
+                    }
+                    Err(err) => {
+                        error!("Error parsing {} : {}", env_file, err);
+                        error!("Failed to load environment from file: {}", env_file);
+                        exit(1);
+                    }
+                }
             }
-            std::process::exit(1);
+
+            // Attempt to create the RouterTemplate from environment variables
+            match RouterTemplate::from_env() {
+                Ok(router) => {
+                    let text = format::reduce_blank_lines(&router.render().unwrap());
+                    if validate {
+                        match validate_nftables_config(&text) {
+                            Ok(_valid) => {}
+                            Err(e) => {
+                                error!("Error validating nftables config: {}", e);
+                                exit(1)
+                            }
+                        }
+                    }
+                    println!("{}", text)
+                }
+                Err(errors) => {
+                    for err in errors {
+                        eprintln!("Error: {}", err);
+                    }
+                    std::process::exit(1);
+                }
+            }
         }
     }
 }
