@@ -46,6 +46,7 @@ table ip filter {
         ct state established,related accept
         # Accept all egress from lan to wan
         ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" oif "{{ interface_wan }}" accept
+
         # Log and drop all other packets
         log prefix "Dropped forward packet: " drop
     }
@@ -61,8 +62,12 @@ table ip nat {
     # Modify destination address before routing decision in forwarding chain:
     chain prerouting {
         type nat hook prerouting priority 0; policy accept;
-        # Example for port forwarding (change as needed)
-        # tcp dport 80 dnat to 192.168.1.100:80
+        {% if tcp_forward_lan.len() > 0 %}
+        # DNAT from lan
+            {% for route in tcp_forward_lan.routes %}
+        iif "{{ interface_lan }}" ip saddr {{ subnet_lan }} tcp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }}
+            {% endfor %}
+        {% endif %}
     }
 
     # SNAT for outgoing traffic:

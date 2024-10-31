@@ -1,19 +1,20 @@
 use std::env;
 
 pub mod chain_policy;
+pub mod forward_route;
 pub mod icmp_type;
 pub mod interface;
 pub mod port;
 pub mod subnet;
 
+use self::port::PortList;
 pub use chain_policy::ChainPolicy;
+pub use forward_route::ForwardRouteList;
 pub use icmp_type::IcmpType;
 pub use interface::Interface;
 #[allow(unused_imports)]
 pub use port::Port;
 pub use subnet::Subnet;
-
-use self::port::PortList;
 
 fn get_string_var(var_name: &str) -> Result<String, String> {
     env::var(var_name).map_err(|_| format!("{} environment variable is not set.", var_name))
@@ -99,7 +100,22 @@ pub fn get_port_accept(var_name: &str, _errors: &mut Vec<String>, default: PortL
             Err(_) => default,
         },
         Err(_) => default,
-    }b
+    }
+}
+
+/// Gets a `ForwardRouteList` from an environment variable, or returns a default.
+pub fn get_forward_routes(
+    var_name: &str,
+    _errors: &mut Vec<String>,
+    default: ForwardRouteList,
+) -> ForwardRouteList {
+    match get_string_var(var_name) {
+        Ok(val) => match ForwardRouteList::new(&val) {
+            Ok(route_list) => route_list,
+            Err(_) => default,
+        },
+        Err(_) => default,
+    }
 }
 
 pub fn get_bool(var_name: &str, errors: &mut Vec<String>, default: Option<bool>) -> bool {
