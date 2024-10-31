@@ -54,7 +54,7 @@ Example with a `.env` file that ignores all other environment
 variables:
 
 ```bash
-nifty-filter --env-file .env --ignore-env
+nifty-filter nftables --env-file .env --ignore-env
 ```
 
 Example with a `.env` file and mixing it with some outside environment
@@ -63,7 +63,7 @@ variables:
 ```bash
 INTERFACE_LAN=eth0 \
 INTERFACE_WAN=eth1 \
-nifty-filter --env-file .env
+nifty-filter nftables --env-file .env
 ```
 
 Example with only environment variables (but this is an incomplete
@@ -72,7 +72,7 @@ config):
 ```bash
 INTERFACE_LAN=eth0 \
 INTERFACE_WAN=eth1 \
-nifty-filter
+nifty-filter nftables
 ```
 
 Run with extra validation which passes the output to `nft -c -f -` for
@@ -80,5 +80,5 @@ sanity checking:
 
 ```
 #...
-nifty-filter --validate
+nifty-filter nftables --validate
 ```

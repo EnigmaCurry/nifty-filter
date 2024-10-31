@@ -1,5 +1,5 @@
 #!/bin/bash
-# This is an example nifty-router config for a home router.
+# This is an example nifty-filter config for a home router.
 # This is one of two configuration styles.
 # 1) This example is a shell script that uses env vars only.
 # 2) The other example is in home_router.env
@@ -42,7 +42,7 @@ if ! command -v nifty-filter; then
 fi
 
 ## Print the rendered template to stdout:
-nifty-filter
+nifty-filter nftables
 
 ## Run with extra validations (requires nft):
-#nifty-filter --validate
+#nifty-filter nftables --validate
