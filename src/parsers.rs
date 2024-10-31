@@ -13,6 +13,8 @@ pub use interface::Interface;
 pub use port::Port;
 pub use subnet::Subnet;
 
+use self::port::PortList;
+
 fn get_string_var(var_name: &str) -> Result<String, String> {
     env::var(var_name).map_err(|_| format!("{} environment variable is not set.", var_name))
 }
@@ -87,6 +89,17 @@ pub fn get_icmp_types(
             .collect(),
         Err(_) => default,
     }
+}
+
+/// Gets a `PortList` from an environment variable, or returns a default.
+pub fn get_port_accept(var_name: &str, _errors: &mut Vec<String>, default: PortList) -> PortList {
+    match get_string_var(var_name) {
+        Ok(val) => match PortList::new(&val) {
+            Ok(port_list) => port_list,
+            Err(_) => default,
+        },
+        Err(_) => default,
+    }b
 }
 
 pub fn get_bool(var_name: &str, errors: &mut Vec<String>, default: Option<bool>) -> bool {

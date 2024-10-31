@@ -3,6 +3,7 @@ use clap::Parser;
 use dotenvy::from_filename;
 use env_logger;
 use log::{error, info};
+use parsers::port::PortList;
 use std::collections::HashSet;
 use std::env;
 use std::process::exit;
@@ -31,9 +32,13 @@ struct Cli {
 struct RouterTemplate {
     interface_lan: Interface,
     interface_wan: Interface,
-    icmp_accept_lan: String,
     icmp_accept_wan: String,
+    icmp_accept_lan: String,
     subnet_lan: Subnet,
+    tcp_accept_lan: String,
+    udp_accept_lan: String,
+    tcp_accept_wan: String,
+    udp_accept_wan: String,
 }
 
 impl RouterTemplate {
@@ -56,6 +61,19 @@ impl RouterTemplate {
         let icmp_accept_wan =
             IcmpType::vec_to_string(&get_icmp_types("ICMP_ACCEPT_WAN", &mut errors, vec![]));
 
+        let tcp_accept_lan = get_port_accept(
+            "TCP_ACCEPT_LAN",
+            &mut errors,
+            PortList::new("22,80,443").unwrap(),
+        )
+        .to_string();
+        let udp_accept_lan =
+            get_port_accept("UDP_ACCEPT_LAN", &mut errors, PortList::new("").unwrap()).to_string();
+        let tcp_accept_wan =
+            get_port_accept("TCP_ACCEPT_WAN", &mut errors, PortList::new("").unwrap()).to_string();
+        let udp_accept_wan =
+            get_port_accept("UDP_ACCEPT_WAN", &mut errors, PortList::new("").unwrap()).to_string();
+
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -66,8 +84,40 @@ impl RouterTemplate {
             subnet_lan,
             icmp_accept_lan,
             icmp_accept_wan,
+            tcp_accept_lan,
+            udp_accept_lan,
+            tcp_accept_wan,
+            udp_accept_wan,
         })
     }
+}
+
+pub fn reduce_blank_lines(input: &str) -> String {
+    let mut result = String::new();
+    let mut previous_blank = false;
+
+    for line in input.lines() {
+        if line.trim().is_empty() {
+            if !previous_blank {
+                result.push('\n');
+            }
+            previous_blank = true;
+        } else {
+            if previous_blank && line.trim() == "}" {
+                // Remove the previous blank line if the current line is `}`
+                if let Some(pos) = result.rfind('\n') {
+                    result.truncate(pos);
+                }
+            }
+            if !result.is_empty() {
+                result.push('\n');
+            }
+            result.push_str(line);
+            previous_blank = false;
+        }
+    }
+
+    result
 }
 
 fn app() {
@@ -120,7 +170,7 @@ fn app() {
     match RouterTemplate::from_env() {
         Ok(router) => {
             //
-            println!("{}", router.render().unwrap())
+            println!("{}", reduce_blank_lines(&router.render().unwrap()))
         }
         Err(errors) => {
             for err in errors {

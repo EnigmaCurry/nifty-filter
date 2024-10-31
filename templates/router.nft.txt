@@ -3,45 +3,70 @@
 flush ruleset
 
 table ip filter {
+    # Filter traffic destined for the router itself:
     chain input {
         type filter hook input priority 0; policy drop;
-        # Allow established and related connections
+        # Accept existing established and related connections
         ct state established,related accept
-
+        
         {% if icmp_accept_lan != "" %}
-        # Allow specific ICMP queries on lan interface
-        ip protocol icmp icmp type { {{ icmp_accept_lan }} } iif "{{ interface_lan }}" accept
+        # Accept specific ICMP queries on lan interface
+        ip saddr {{ subnet_lan }} protocol icmp icmp type { {{ icmp_accept_lan }} } iif "{{ interface_lan }}" accept
         {% endif %}
+
         {% if icmp_accept_wan != "" %}
-        # Allow specific ICMP queries on wan interface
+        # Accept specific ICMP queries on wan interface
         ip protocol icmp icmp type { {{ icmp_accept_wan }} } iif "{{ interface_wan }}" accept
+        {% endif %}
+
+        {% if tcp_accept_lan != "" %}
+        # Accept access to specific TCP ports from the lan interface
+        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" tcp dport { {{ tcp_accept_lan }} } accept
+        {% endif %}
+        {% if udp_accept_lan != "" %}
+        # Accept access to specific UDP ports from the lan interface
+        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" udp dport { {{ udp_accept_lan }} } accept
+        {% endif %}
+        
+        {% if tcp_accept_wan != "" %}
+        # Accept access to specific TCP ports from the wan interface
+        ip iif "{{ interface_wan }}" tcp dport { {{ tcp_accept_wan }} } accept
+        {% endif %}
+        
+        {% if udp_accept_wan != "" %}
+        # Accept access to specific UDP port from the wan interface
+        ip iif "{{ interface_wan }}" udp dport { {{ udp_accept_lan }} } accept
         {% endif %}
     }
 
+    # Filter forwarded traffic (traffic passing through the router):
     chain forward {
         type filter hook forward priority 0; policy drop;
-        # Allow established and related connections
+        # Accept existing established and related connections
         ct state established,related accept
-        # Allow traffic from local network to internet
-        ip saddr {{ subnet_lan }} accept
+        # Accept all egress from lan to wan
+        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" oif "{{ interface_wan }}" accept
         # Log and drop all other packets
         log prefix "Dropped forward packet: " drop
     }
 
+    # Filter traffic whose source is the router itself:
     chain output {
-        type filter hook output priority 0; policy drop;
+        type filter hook output priority 0; policy accept;
     }
 }
 
 table ip nat {
-    # DNAT for incoming traffic
+    # DNAT for incoming traffic:
+    # Modify destination address before routing decision in forwarding chain:
     chain prerouting {
         type nat hook prerouting priority 0; policy accept;
         # Example for port forwarding (change as needed)
         # tcp dport 80 dnat to 192.168.1.100:80
     }
 
-    # SNAT for outgoing traffic
+    # SNAT for outgoing traffic:
+    # Modify source address after the forwarding chain, before leaving the router:
     chain postrouting {
         type nat hook postrouting priority 100; policy accept;
         oifname "{{ interface_wan }}" iifname "{{ interface_lan }}" masquerade
