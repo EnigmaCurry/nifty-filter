@@ -74,15 +74,6 @@ impl ForwardRouteList {
         self.routes.clone()
     }
 
-    /// Converts the `ForwardRouteList` to a comma-separated string.
-    pub fn to_string(&self) -> String {
-        self.routes
-            .iter()
-            .map(|r| r.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-
     /// Get the length of the forward routes list.
     pub fn len(&self) -> usize {
         self.routes.len()
@@ -91,7 +82,15 @@ impl ForwardRouteList {
 
 impl fmt::Display for ForwardRouteList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(
+            f,
+            "{}",
+            self.routes
+                .iter()
+                .map(|r| r.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 }
 

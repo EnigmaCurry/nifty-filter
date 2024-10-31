@@ -1,7 +1,4 @@
-use std::env;
-use std::str::FromStr;
 use strum::IntoEnumIterator;
-use strum::ParseError;
 use strum_macros::{Display, EnumIter, EnumString};
 
 #[derive(Debug, Clone, EnumString, EnumIter, Display)]
@@ -42,7 +39,7 @@ impl IcmpType {
 }
 
 impl IcmpType {
-    pub fn vec_to_string(vec: &Vec<IcmpType>) -> String {
+    pub fn vec_to_string(vec: &[IcmpType]) -> String {
         vec.iter()
             .map(|t| t.to_string())
             .collect::<Vec<_>>()

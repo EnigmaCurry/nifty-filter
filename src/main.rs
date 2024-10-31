@@ -1,7 +1,6 @@
 use askama::Template;
 use clap::Parser;
 use dotenvy::from_filename;
-use env_logger;
 use log::{error, info};
 use parsers::port::PortList;
 use std::collections::HashSet;
@@ -10,6 +9,7 @@ use std::process::exit;
 mod format;
 mod parsers;
 use parsers::*;
+#[allow(unused_imports)]
 use std::net::IpAddr;
 
 #[derive(Parser)]

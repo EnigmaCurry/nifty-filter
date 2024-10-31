@@ -63,14 +63,6 @@ impl PortList {
     pub fn get_ports(&self) -> Vec<u16> {
         self.ports.iter().map(|port| port.get()).collect()
     }
-
-    pub fn to_string(&self) -> String {
-        self.ports
-            .iter()
-            .map(|p| p.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
 }
 
 impl fmt::Display for PortList {
@@ -106,5 +98,12 @@ mod tests {
     fn test_port_list_invalid() {
         let input = "22, abc, 443";
         assert!(PortList::new(input).is_err());
+    }
+
+    #[test]
+    fn test_to_string() {
+        let input = "22,80,443";
+        let route_list = PortList::new(input).unwrap();
+        assert_eq!(route_list.to_string(), "22, 80, 443");
     }
 }
