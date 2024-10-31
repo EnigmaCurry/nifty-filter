@@ -2,7 +2,7 @@
 # This is an example nifty-router config for a home router.
 # This is one of two configuration styles.
 # 1) This example is a shell script that uses env vars only.
-# 2) The other example is in home_router.sh
+# 2) The other example is in home_router.env
 
 export INTERFACE_LAN=lan
 export INTERFACE_WAN=wan
