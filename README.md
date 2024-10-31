@@ -17,3 +17,68 @@ binary. However, the default template is designed to cover most of the
 use cases for a typical home LAN router, so if that suits your needs
 then you can simply download the precompiled binary from the releases
 page.
+
+## Install
+
+[Download the latest release for your platform.](https://github.com/EnigmaCurry/nifty-filter/releases)
+
+Or install via cargo ([crates.io/crates/nifty-filter](https://crates.io/crates/nifty-filter)):
+
+```
+cargo install nifty-filter
+```
+
+## Examples
+
+There are several included [examples](examples):
+
+ * [home_router.sh](examples/home_router.sh) - This example is a
+   self-contained bash script where all config is defined inside the
+   script as environment variables.
+   
+ * [home_router.env](examples/home_router.env) - This example is a
+   "dot env" file containging all the config variables. You can pass
+   this to `nifty-router --ignore-env --env-file [FILE]`.
+   
+ 
+You can mix the two styles together as long you don't specify
+`--ignore-env`, in which case only the file passed to `--env-file`
+will be used.
+   
+## Config styles
+
+You can supply your configuration in two ways: set environment
+variables and/or provide a `.env` file.
+
+Example with a `.env` file that ignores all other environment
+variables:
+
+```bash
+nifty-filter --env-file .env --ignore-env
+```
+
+Example with a `.env` file and mixing it with some outside environment
+variables:
+
+```bash
+INTERFACE_LAN=eth0 \
+INTERFACE_WAN=eth1 \
+nifty-filter --env-file .env
+```
+
+Example with only environment variables (but this is an incomplete
+config):
+
+```bash
+INTERFACE_LAN=eth0 \
+INTERFACE_WAN=eth1 \
+nifty-filter
+```
+
+Run with extra validation which passes the output to `nft -c -f -` for
+sanity checking:
+
+```
+#...
+nifty-filter --validate
+```

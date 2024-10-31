@@ -4,6 +4,7 @@ current_dir := `pwd`
 RUST_LOG := "debug"
 RUST_BACKTRACE := "1"
 GIT_REMOTE := "origin"
+#RUSTFLAGS := "-D warnings"
 
 # print help for Just targets
 help:
@@ -40,7 +41,7 @@ watch *args:
 
 # Build + args
 build *args:
-    RUSTFLAGS="-D warnings" cargo build {{args}}
+    cargo build {{args}}
 
 # Build continuously on file change
 build-watch *args:
