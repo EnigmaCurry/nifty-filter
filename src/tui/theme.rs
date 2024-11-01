@@ -1,4 +1,5 @@
 use cursive::theme::*;
+use cursive::Cursive;
 
 pub fn theme1() -> Theme {
     let mut palette = Palette::default();
@@ -14,4 +15,11 @@ pub fn theme1() -> Theme {
         borders: BorderStyle::None,
         palette,
     };
+}
+
+pub fn set_highlight_disabled(siv: &mut Cursive) {
+    siv.with_theme(|theme| {
+        theme.palette[PaletteColor::Highlight] = Color::Rgb(50, 50, 50);
+        theme.palette[PaletteColor::HighlightText] = Color::Dark(BaseColor::White);
+    });
 }
