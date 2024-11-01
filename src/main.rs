@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::env;
 use std::process::exit;
 mod format;
+mod info;
 mod parsers;
 mod tui;
 use parsers::*;
@@ -29,6 +30,12 @@ enum Command {
     /// Config menu (default action)
     #[command()]
     Config {},
+    /// Information commands
+    #[command()]
+    Info {
+        #[command(subcommand)]
+        info_command: InfoCommand,
+    },
     /// Generate nftables configuration
     #[command(alias = "nft")]
     Nftables {
@@ -48,6 +55,13 @@ enum Command {
         #[arg(short, long)]
         verbose: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum InfoCommand {
+    /// Print network info
+    #[command()]
+    Network,
 }
 
 #[derive(Template)]
@@ -177,6 +191,11 @@ fn app() {
         Command::Config {} => {
             config_main();
         }
+        Command::Info { info_command } => match info_command {
+            InfoCommand::Network => {
+                info::network::network_info().expect("failed to get network info")
+            }
+        },
         Command::Nftables {
             env_file,
             strict_env,
