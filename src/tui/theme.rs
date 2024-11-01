@@ -7,7 +7,7 @@ pub fn theme1() -> Theme {
     palette[PaletteColor::Primary] = Color::Light(BaseColor::White);
     palette[PaletteColor::TitlePrimary] = Color::Light(BaseColor::Yellow);
     palette[PaletteColor::Highlight] = Color::Dark(BaseColor::Red);
-    palette[PaletteColor::HighlightText] = Color::Light(BaseColor::White);
+    palette[PaletteColor::HighlightText] = Color::Dark(BaseColor::Black);
 
     return Theme {
         shadow: false,

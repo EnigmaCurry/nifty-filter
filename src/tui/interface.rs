@@ -5,7 +5,7 @@ use cursive::CursiveExt;
 
 use super::overlay::show_overlay_dialog;
 
-pub fn main(siv: &mut Cursive) {
+pub fn main(siv: &mut Cursive) -> LinearLayout {
     let mut menu =
         SelectView::new().on_submit(|siv: &mut Cursive, choice: &String| menu_action(siv, choice));
 
@@ -14,9 +14,7 @@ pub fn main(siv: &mut Cursive) {
     menu.add_item("Assign Interfaces", "Assign Interfaces".to_string());
     menu.add_item("Set IP Addresses", "Set IP Addresses".to_string());
 
-    let dialog = Dialog::new().title("Network Settings").content(menu);
-
-    show_overlay_dialog(siv, dialog);
+    LinearLayout::vertical().child(Dialog::new().content(menu))
 }
 
 // Function to handle menu actions

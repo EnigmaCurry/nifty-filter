@@ -3,6 +3,10 @@ use cursive::traits::*;
 use cursive::views::*;
 use cursive::Cursive;
 use cursive::CursiveExt;
+use strum::IntoEnumIterator;
+use strum::{AsRefStr, Display, EnumIter, EnumString};
+
+use self::overlay::show_overlay_dialog;
 
 mod dhcp;
 mod dns;
@@ -12,6 +16,20 @@ mod interface;
 pub mod overlay;
 mod theme;
 
+#[derive(EnumIter, AsRefStr, EnumString, Debug, Clone, Display)]
+enum MenuItem {
+    #[strum(serialize = "Network Interfaces")]
+    Interfaces,
+    #[strum(serialize = "Firewall and Router")]
+    Firewall,
+    #[strum(serialize = "DHCP")]
+    DHCP,
+    #[strum(serialize = "DNS")]
+    DNS,
+    #[strum(serialize = "Help")]
+    Help,
+}
+
 pub fn main() {
     let mut siv = Cursive::default();
 
@@ -19,33 +37,36 @@ pub fn main() {
     siv.set_theme(theme::theme1());
 
     // Title for the entire screen
-    let title = TextView::new("nifty-filter")
-        .h_align(cursive::align::HAlign::Center) // Center-align the title
-        .fixed_height(1); // Limit title height to 1 line
+    let title = TextView::new(format!(
+        "{} v{}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    ))
+    .h_align(cursive::align::HAlign::Center) // Center-align the title
+    .fixed_height(1); // Limit title height to 1 line
 
     // Define the SelectView for the main menu and set an action on submit
-    let mut menu =
-        SelectView::new().on_submit(|siv: &mut Cursive, choice: &String| menu_action(siv, choice));
+    let mut menu = SelectView::new()
+        .on_submit(|siv: &mut Cursive, choice: &MenuItem| menu_action(siv, choice));
 
-    // Populate the menu with items
-    menu.add_item("Interfaces", "Interfaces".to_string());
-    menu.add_item("Firewall", "Firewall".to_string());
-    menu.add_item("DHCP", "DHCP".to_string());
-    menu.add_item("DNS", "DNS".to_string());
-    menu.add_item("Help", "Help".to_string());
+    // Populate the menu with items using the enum
+    for item in MenuItem::iter() {
+        menu.add_item(item.as_ref(), item.clone());
+    }
+
+    let menu = LinearLayout::vertical()
+        .child(Dialog::new().content(menu).full_height())
+        .child(TextView::new("Press ESC to quit").fixed_height(1))
+        .child(DummyView.fixed_height(1));
 
     // Wrap the SelectView in a Dialog to give it a title and a Quit button
-    let dialog = Dialog::new()
-        .title("Main Menu")
-        .content(menu)
-        .button("ESC", |s| s.quit())
-        .full_height();
+    let dialog = Dialog::new().title("Main Menu").content(menu).full_height();
 
     // Use a vertical layout with the title at the top
     let layout = LinearLayout::vertical()
         .child(title) // Add the screen title
         .child(DummyView.fixed_height(1)) // Add some padding
-        .child(dialog.full_screen()); // Center the main content
+        .child(dialog.full_screen());
 
     // Add the dialog to the cursive root
     siv.add_fullscreen_layer(layout);
@@ -93,13 +114,14 @@ pub fn main() {
 }
 
 // Function to handle menu actions
-fn menu_action(siv: &mut Cursive, choice: &str) {
-    match choice {
-        "Interfaces" => interface::main(siv),
-        "Firewall" => firewall::main(siv),
-        "DHCP" => dhcp::main(siv),
-        "DNS" => dns::main(siv),
-        "Help" => help::main(siv),
-        _ => {}
-    }
+fn menu_action(siv: &mut Cursive, choice: &MenuItem) {
+    let content: LinearLayout = match choice {
+        MenuItem::Interfaces => interface::main(siv),
+        MenuItem::Firewall => firewall::main(siv),
+        MenuItem::DHCP => dhcp::main(siv),
+        MenuItem::DNS => dns::main(siv),
+        MenuItem::Help => help::main(siv),
+    };
+    let dialog = Dialog::new().title(choice.to_string()).content(content);
+    show_overlay_dialog(siv, dialog);
 }

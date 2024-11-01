@@ -12,17 +12,19 @@ pub fn show_overlay_dialog(siv: &mut Cursive, dialog: Dialog) {
     let mut stack = StackView::new();
 
     // Add the fullscreen background overlay as the bottom layer in the stack
-    stack.add_fullscreen_layer(TextView::new("").full_screen());
+    //stack.add_fullscreen_layer(TextView::new("").full_screen());
 
-    // Add the dialog as the top layer with an ESC button
-    let dialog_with_esc = dialog
-        .button("ESC", |s| {
-            s.pop_layer(); // Close the overlay when ESC is pressed
-        })
-        .full_screen();
+    // Create a new layout with the original content at the top and the ESC text at the bottom
+    let layout = LinearLayout::vertical()
+        .child(dialog) // Add the original dialog content at the top
+        .child(DummyView.full_screen())
+        .child(TextView::new("Press ESC to go back").fixed_height(1)); // Add the text message
+
+    // Create a new dialog with the updated content
+    let dialog_with_esc_text = Dialog::around(layout).full_screen();
 
     // Add the dialog with ESC as the top layer in the stack
-    stack.add_layer(dialog_with_esc);
+    stack.add_fullscreen_layer(dialog_with_esc_text);
 
     // Add the StackView as a single layer, with a name for easy management
     siv.add_layer(stack.with_name("overlay_dialog").full_screen());
