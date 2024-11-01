@@ -1,5 +1,6 @@
 //use super::overlay::show_overlay_dialog;
 use crate::info::network::{get_interfaces, InterfaceInfo};
+use crate::systemd::check_service_status;
 use cursive::view::Nameable;
 use cursive::view::Resizable;
 use cursive::views::*;
@@ -25,16 +26,35 @@ fn format_interface_info(info: &InterfaceInfo) -> String {
 pub fn main(siv: &mut Cursive) -> LinearLayout {
     let interfaces = get_interfaces();
 
+    // Check services and create warnings if necessary
+    let mut warnings = String::new();
+    for service in [
+        "NetworkManager",
+        "cloud-init",
+        "wicd",
+        "connman",
+        "dhclient",
+        "isc-dhcp-client",
+        "ifupdown",
+        "netplan",
+    ]
+    .iter()
+    {
+        if check_service_status(service) {
+            warnings.push_str(&format!(
+                "Warning: service {} is active which may interfere with network config.\n",
+                service
+            ));
+        }
+    }
+
     // Create the SelectView for the interface names
     let mut menu = SelectView::<String>::new().on_select({
-        let interfaces = interfaces.clone(); // Clone interfaces to move into closure
+        let interfaces = interfaces.clone();
         move |siv, selected_name| {
-            // Find the selected interface and update the info box
             let interface_info = interfaces.iter().find(|i| &i.name == selected_name);
             if let Some(info) = interface_info {
                 let details = format_interface_info(info);
-
-                // Update the content of the info box
                 siv.call_on_name("info_box", |view: &mut TextView| {
                     view.set_content(details);
                 });
@@ -42,7 +62,6 @@ pub fn main(siv: &mut Cursive) -> LinearLayout {
         }
     });
 
-    // Populate the SelectView with only the interface names
     for interface_info in &interfaces {
         menu.add_item(interface_info.name.clone(), interface_info.name.clone());
     }
@@ -56,8 +75,19 @@ pub fn main(siv: &mut Cursive) -> LinearLayout {
 
     let info_box = TextView::new(initial_info).with_name("info_box");
 
-    // Wrap the menu and info box in a layout
-    LinearLayout::vertical()
-        .child(Dialog::around(menu))
-        .child(Dialog::around(info_box).title("Interface Details"))
+    // Conditionally create the warnings box
+    let warnings_box = if !warnings.is_empty() {
+        Some(Dialog::around(TextView::new(warnings)).title("Warnings"))
+    } else {
+        None
+    };
+
+    // Build the layout with the menu, warnings (if any), and info box
+    let mut layout = LinearLayout::vertical().child(Dialog::around(menu));
+
+    if let Some(warnings_dialog) = warnings_box {
+        layout.add_child(warnings_dialog.padding_top(1));
+    }
+
+    layout.child(Dialog::around(info_box).title("Interface Details"))
 }

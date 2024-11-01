@@ -10,6 +10,7 @@ use std::process::exit;
 mod format;
 mod info;
 mod parsers;
+mod systemd;
 mod tui;
 use parsers::*;
 #[allow(unused_imports)]
