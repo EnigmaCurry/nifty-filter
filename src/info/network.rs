@@ -1,5 +1,4 @@
 use pnet::datalink;
-use serde;
 use serde::Serialize;
 use std::fs;
 use std::io;
@@ -8,17 +7,17 @@ use std::path::Path;
 
 use super::pretty_print_json;
 
-#[derive(Serialize)]
-struct InterfaceInfo {
-    name: String,
-    status: String,
-    mtu: u32,
-    state: String,
-    group: String,
-    tx_queue_len: u32,
-    types: Vec<String>,
-    mac_address: Option<String>,
-    ip_addresses: Vec<String>,
+#[derive(Serialize, Clone)]
+pub struct InterfaceInfo {
+    pub name: String,
+    pub status: String,
+    pub mtu: u32,
+    pub state: String,
+    pub group: String,
+    pub tx_queue_len: u32,
+    pub types: Vec<String>,
+    pub mac_address: Option<String>,
+    pub ip_addresses: Vec<String>,
 }
 
 pub fn get_mtu(interface: &str) -> io::Result<u32> {
@@ -61,61 +60,71 @@ pub fn get_tx_queue_len(interface: &str) -> io::Result<u32> {
     Ok(qlen)
 }
 
+pub fn get_interfaces() -> Vec<InterfaceInfo> {
+    datalink::interfaces()
+        .into_iter()
+        .map(|iface| get_interface_info(&iface))
+        .collect()
+}
+
+pub fn get_interface_info(iface: &datalink::NetworkInterface) -> InterfaceInfo {
+    let is_up = iface.is_up();
+    let is_broadcast = iface.is_broadcast();
+    let is_multicast = iface.is_multicast();
+    let is_loopback = iface.is_loopback();
+    let is_point_to_point = iface.is_point_to_point();
+
+    let mtu = get_mtu(&iface.name).unwrap_or(0);
+    let state = get_state(&iface.name).unwrap_or_else(|_| "unknown".to_string());
+    let group = get_group(&iface.name).unwrap_or_else(|_| "default".to_string());
+    let qlen = get_tx_queue_len(&iface.name).unwrap_or(0);
+
+    let mut types = Vec::new();
+    if is_broadcast {
+        types.push("Broadcast".to_string());
+    }
+    if is_multicast {
+        types.push("Multicast".to_string());
+    }
+    if is_loopback {
+        types.push("Loopback".to_string());
+    }
+    if is_point_to_point {
+        types.push("Point-to-Point".to_string());
+    }
+
+    let mac_address = iface.mac.map(|mac| mac.to_string());
+    let ip_addresses = iface
+        .ips
+        .iter()
+        .map(|ip| match ip.ip() {
+            IpAddr::V4(ipv4) => ipv4.to_string(),
+            IpAddr::V6(ipv6) => ipv6.to_string(),
+        })
+        .collect();
+
+    InterfaceInfo {
+        name: iface.name.clone(),
+        status: if is_up {
+            "Up".to_string()
+        } else {
+            "Down".to_string()
+        },
+        mtu,
+        state,
+        group,
+        tx_queue_len: qlen,
+        types,
+        mac_address,
+        ip_addresses,
+    }
+}
+
 pub fn network_info() -> io::Result<()> {
     let mut interfaces_info = Vec::new();
 
     for iface in datalink::interfaces() {
-        let is_up = iface.is_up();
-        let is_broadcast = iface.is_broadcast();
-        let is_multicast = iface.is_multicast();
-        let is_loopback = iface.is_loopback();
-        let is_point_to_point = iface.is_point_to_point();
-
-        let mtu = get_mtu(&iface.name).unwrap_or(0);
-        let state = get_state(&iface.name).unwrap_or_else(|_| "unknown".to_string());
-        let group = get_group(&iface.name).unwrap_or_else(|_| "default".to_string());
-        let qlen = get_tx_queue_len(&iface.name).unwrap_or(0);
-
-        let mut types = Vec::new();
-        if is_broadcast {
-            types.push("Broadcast".to_string());
-        }
-        if is_multicast {
-            types.push("Multicast".to_string());
-        }
-        if is_loopback {
-            types.push("Loopback".to_string());
-        }
-        if is_point_to_point {
-            types.push("Point-to-Point".to_string());
-        }
-
-        let mac_address = iface.mac.map(|mac| mac.to_string());
-
-        let ip_addresses = iface
-            .ips
-            .iter()
-            .map(|ip| match ip.ip() {
-                IpAddr::V4(ipv4) => ipv4.to_string(),
-                IpAddr::V6(ipv6) => ipv6.to_string(),
-            })
-            .collect();
-
-        interfaces_info.push(InterfaceInfo {
-            name: iface.name.clone(),
-            status: if is_up {
-                "Up".to_string()
-            } else {
-                "Down".to_string()
-            },
-            mtu,
-            state,
-            group,
-            tx_queue_len: qlen,
-            types,
-            mac_address,
-            ip_addresses,
-        });
+        interfaces_info.push(get_interface_info(&iface));
     }
 
     let json_value = serde_json::to_value(&interfaces_info)?;
