@@ -8,7 +8,7 @@ mod dhcp;
 mod dns;
 mod firewall;
 mod help;
-mod network;
+mod interface;
 pub mod overlay;
 mod theme;
 
@@ -28,7 +28,7 @@ pub fn main() {
         SelectView::new().on_submit(|siv: &mut Cursive, choice: &String| menu_action(siv, choice));
 
     // Populate the menu with items
-    menu.add_item("Network", "Network".to_string());
+    menu.add_item("Interfaces", "Interfaces".to_string());
     menu.add_item("Firewall", "Firewall".to_string());
     menu.add_item("DHCP", "DHCP".to_string());
     menu.add_item("DNS", "DNS".to_string());
@@ -95,7 +95,7 @@ pub fn main() {
 // Function to handle menu actions
 fn menu_action(siv: &mut Cursive, choice: &str) {
     match choice {
-        "Network" => network::main(siv),
+        "Interfaces" => interface::main(siv),
         "Firewall" => firewall::main(siv),
         "DHCP" => dhcp::main(siv),
         "DNS" => dns::main(siv),
