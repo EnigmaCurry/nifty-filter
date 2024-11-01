@@ -1,4 +1,4 @@
-use cursive::event::Key;
+use cursive::event::{Event, Key};
 use cursive::traits::*;
 use cursive::views::*;
 use cursive::Cursive;
@@ -57,6 +57,35 @@ pub fn main() {
         } else {
             s.pop_layer();
         }
+    });
+
+    // Add keyboard shortcuts:
+    // Emacs :
+    siv.add_global_callback(Event::CtrlChar('n'), |s| {
+        // Simulate pressing down arrow
+        s.on_event(Event::Key(Key::Down));
+    });
+    siv.add_global_callback(Event::CtrlChar('p'), |s| {
+        // Simulate pressing up arrow
+        s.on_event(Event::Key(Key::Up));
+    });
+    siv.add_global_callback(Event::CtrlChar('j'), |s| {
+        // Simulate pressing Enter
+        s.on_event(Event::Key(Key::Enter));
+    });
+    siv.add_global_callback(Event::CtrlChar('g'), |s| {
+        // Simulate pressing Enter
+        s.on_event(Event::Key(Key::Esc));
+    });
+
+    // Vim :
+    siv.add_global_callback('j', |s| {
+        // Simulate pressing down arrow
+        s.on_event(Event::Key(Key::Down));
+    });
+    siv.add_global_callback('k', |s| {
+        // Simulate pressing up arrow
+        s.on_event(Event::Key(Key::Up));
     });
 
     // Start the TUI
