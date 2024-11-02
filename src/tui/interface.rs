@@ -2,6 +2,7 @@
 use crate::info::interfaces::{
     get_interfaces, InterfaceInfo, InterfaceType, MANAGED_INTERFACE_TYPES,
 };
+use crate::info::network::get_systemd_networks;
 use crate::systemd::check_service_status;
 use crate::tui::theme::get_borderless_layout;
 use cursive::theme::{BaseColor, Color, Effect, PaletteColor, Style};
@@ -12,6 +13,7 @@ use cursive::views::*;
 use cursive::Cursive;
 #[allow(unused_imports)]
 use cursive::CursiveExt;
+use std::fs;
 use strum::{AsRefStr, Display, EnumIter, EnumString, IntoEnumIterator};
 
 use super::overlay::show_overlay_dialog;
@@ -77,8 +79,12 @@ fn rename_interface(_siv: &mut Cursive, interface_name: String) {}
 pub fn configure_interface(siv: &mut Cursive, interface_name: String) {
     #[derive(EnumIter, AsRefStr, EnumString, Debug, Clone, Display)]
     enum MenuItem {
+        #[strum(serialize = "Reset Config")]
+        ResetConfig,
         #[strum(serialize = "Rename Interface")]
         RenameInterface,
+        #[strum(serialize = "Change Priority")]
+        ChangePriority,
         #[strum(serialize = "Change IPv4 address")]
         ChangeIpv4Address,
         #[strum(serialize = "Change Gateway address")]
@@ -98,14 +104,67 @@ pub fn configure_interface(siv: &mut Cursive, interface_name: String) {
         menu.add_item(item.as_ref(), item.clone());
     }
 
-    let link_config_text = "[Not configured]";
-    let network_config_text = "[Not configured]";
+    let link_config_text;
+    let network_config_text;
+
+    let network_info = get_systemd_networks().expect("Could not read systemd network files");
+    let systemd_link = network_info.links.get(&interface_name);
+    let systemd_network = network_info.networks.get(&interface_name);
+    match systemd_link {
+        Some(link) => {
+            let file_name = link.file_name.clone();
+            match fs::read_to_string(file_name.clone()) {
+                Ok(content) => {
+                    link_config_text = StyledString::styled(
+                        format!("## {file_name}\n{content}"),
+                        Style::from(Color::Dark(BaseColor::Blue)),
+                    );
+                }
+                Err(_) => {
+                    link_config_text = StyledString::styled(
+                        format!("## {file_name}\n[ERROR READING FILE]"),
+                        Style::from(Effect::Bold),
+                    )
+                }
+            };
+        }
+        None => {
+            link_config_text =
+                StyledString::styled("[Not configured]".to_string(), Style::from(Effect::Bold));
+        }
+    }
+
+    match systemd_network {
+        Some(network) => {
+            let file_name = network.file_name.clone();
+            match fs::read_to_string(file_name.clone()) {
+                Ok(content) => {
+                    network_config_text = StyledString::styled(
+                        format!("## {file_name}\n{content}"),
+                        Style::from(Color::Dark(BaseColor::Blue)),
+                    );
+                }
+                Err(_) => {
+                    network_config_text = StyledString::styled(
+                        format!("## {file_name}\n[ERROR READING FILE]"),
+                        Style::from(Effect::Bold),
+                    )
+                }
+            };
+        }
+        None => {
+            network_config_text =
+                StyledString::styled("[Not configured]".to_string(), Style::from(Effect::Bold));
+        }
+    }
 
     let link_config = Dialog::around(TextView::new(link_config_text))
+        .padding_left(5)
         .padding_top(1)
         .title("Link Config")
         .full_screen();
     let network_config = Dialog::around(TextView::new(network_config_text))
+        .padding_left(5)
         .padding_top(1)
         .title("Network Config")
         .full_screen();

@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
@@ -7,29 +6,34 @@ use std::io::BufRead;
 use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct LinkFile {
-    file_name: String,
-    priority: i32,
-    name: Option<String>,
-    mac_address: Option<String>,
+pub struct LinkFile {
+    pub file_name: String,
+    pub priority: i32,
+    pub name: Option<String>,
+    pub mac_address: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct NetworkFile {
-    file_name: String,
-    priority: i32,
-    name: Option<String>,
-    address: Option<String>,
-    gateway: Option<String>,
-    dns: Vec<String>,
-    kind: Option<String>,
-    ip_masquerade: Option<String>,
-    dhcp_server: Option<String>,
+pub struct NetworkFile {
+    pub file_name: String,
+    pub priority: i32,
+    pub name: Option<String>,
+    pub address: Option<String>,
+    pub gateway: Option<String>,
+    pub dns: Vec<String>,
+    pub kind: Option<String>,
+    pub ip_masquerade: Option<String>,
+    pub dhcp_server: Option<String>,
 }
 
-pub fn network() -> io::Result<()> {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NetworkInfo {
+    pub links: HashMap<String, LinkFile>,
+    pub networks: HashMap<String, NetworkFile>,
+}
+
+pub fn get_systemd_networks() -> io::Result<NetworkInfo> {
     let directories = vec![
-        Path::new("/tmp/network"),
         Path::new("/etc/systemd/network"),
         Path::new("/run/systemd/network"),
         Path::new("/usr/local/lib/systemd/network"),
@@ -96,33 +100,34 @@ pub fn network() -> io::Result<()> {
         }
     }
 
-    // Sort network and link files by priority and name
-    networks_vec.sort_by_key(|nf| (nf.priority, nf.name.clone()));
+    // Sort and insert into HashMaps while retaining order
+    let mut links_map: HashMap<String, LinkFile> = HashMap::new();
     links_vec.sort_by_key(|lf| (lf.priority, lf.name.clone()));
-
-    // Build the maps by adding items one by one in sorted order
-    let mut links_map: HashMap<String, serde_json::Value> = HashMap::new();
     for link in links_vec {
         if let Some(name) = link.name.clone() {
-            links_map.insert(name, json!(link));
+            links_map.insert(name, link);
         }
     }
 
-    let mut networks_map: HashMap<String, serde_json::Value> = HashMap::new();
+    let mut networks_map: HashMap<String, NetworkFile> = HashMap::new();
+    networks_vec.sort_by_key(|nf| (nf.priority, nf.name.clone()));
     for network in networks_vec {
         if let Some(name) = network.name.clone() {
-            networks_map.insert(name, json!(network));
+            networks_map.insert(name, network);
         }
     }
 
-    // Final JSON output
-    let json_output = json!({
-        "links": links_map,
-        "networks": networks_map,
-    });
+    // Return the structured data
+    Ok(NetworkInfo {
+        links: links_map,
+        networks: networks_map,
+    })
+}
 
-    println!("{}", serde_json::to_string_pretty(&json_output)?);
-
+pub fn network() -> io::Result<()> {
+    let network_info = get_systemd_networks()?;
+    let json_output = serde_json::to_string_pretty(&network_info)?;
+    println!("{}", json_output);
     Ok(())
 }
 
