@@ -1,6 +1,7 @@
 use colored_json::ToColoredJson;
 use serde_json::Value;
 pub mod interfaces;
+pub mod network;
 
 pub fn pretty_print_json(json: Value) {
     let json_string = serde_json::to_string_pretty(&json).expect("Invalid JSON");

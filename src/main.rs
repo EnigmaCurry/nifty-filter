@@ -63,6 +63,7 @@ enum InfoCommand {
     /// Print network interface information
     #[command()]
     Interfaces,
+    Network,
 }
 
 #[derive(Template)]
@@ -194,8 +195,9 @@ fn app() {
         }
         Command::Info { info_command } => match info_command {
             InfoCommand::Interfaces => {
-                info::interfaces::interfaces().expect("failed to get network info")
+                info::interfaces::interfaces().expect("failed to get interfaces info")
             }
+            InfoCommand::Network => info::network::network().expect("failed to get network info"),
         },
         Command::Nftables {
             env_file,
