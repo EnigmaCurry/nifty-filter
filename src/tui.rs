@@ -1,4 +1,5 @@
 use cursive::event::{Event, Key};
+use cursive::theme::BorderStyle;
 use cursive::traits::*;
 use cursive::views::*;
 use cursive::Cursive;
@@ -7,6 +8,7 @@ use strum::IntoEnumIterator;
 use strum::{AsRefStr, Display, EnumIter, EnumString};
 
 use self::overlay::show_overlay_dialog;
+use self::theme::{get_borderless_dialog, get_borderless_layout};
 
 mod dhcp;
 mod dns;
@@ -60,16 +62,18 @@ pub fn main() {
         .child(DummyView.fixed_height(1));
 
     // Wrap the SelectView in a Dialog to give it a title and a Quit button
-    let dialog = Dialog::new().title("Main Menu").content(menu).full_height();
+    let main_window = get_borderless_layout(&mut siv, menu, Some("Main Menu".to_string()));
 
     // Use a vertical layout with the title at the top
     let layout = LinearLayout::vertical()
         .child(title) // Add the screen title
-        .child(DummyView.fixed_height(1)) // Add some padding
-        .child(dialog.full_screen());
+        .child(main_window.full_screen());
 
     // Add the dialog to the cursive root
-    siv.add_fullscreen_layer(layout);
+    let theme = siv.current_theme().clone().with(|theme| {
+        theme.borders = BorderStyle::Outset;
+    });
+    siv.add_fullscreen_layer(ThemedView::new(theme, layout));
 
     // Add global ESC key callback
     siv.add_global_callback(Key::Esc, |s| {
@@ -122,6 +126,6 @@ fn menu_action(siv: &mut Cursive, choice: &MenuItem) {
         MenuItem::DNS => dns::main(siv),
         MenuItem::Help => help::main(siv),
     };
-    let dialog = Dialog::new().title(choice.to_string()).content(content);
+    let dialog = get_borderless_layout(siv, content, Some(choice.to_string()));
     show_overlay_dialog(siv, dialog);
 }

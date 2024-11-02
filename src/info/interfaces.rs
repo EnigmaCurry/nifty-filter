@@ -44,6 +44,7 @@ pub const MANAGED_INTERFACE_TYPES: &[InterfaceType] = &[
 pub struct InterfaceInfo {
     pub name: String,
     pub status: String,
+    pub carrier: bool,
     pub mtu: u32,
     pub state: String,
     pub group: String,
@@ -109,6 +110,12 @@ pub fn get_state(interface: &str) -> io::Result<String> {
     fs::read_to_string(&path).map(|state| state.trim().to_string())
 }
 
+fn has_carrier(interface: &str) -> Result<bool, std::io::Error> {
+    let path = format!("/sys/class/net/{}/carrier", interface);
+    let content = fs::read_to_string(path)?;
+    Ok(content.trim() == "1")
+}
+
 pub fn get_group(interface: &str) -> io::Result<String> {
     let path = Path::new("/sys/class/net")
         .join(interface)
@@ -146,6 +153,7 @@ pub fn get_interface(iface: &datalink::NetworkInterface) -> InterfaceInfo {
 
     let mtu = get_mtu(&iface.name).unwrap_or(0);
     let state = get_state(&iface.name).unwrap_or_else(|_| "Unknown".to_string());
+    let carrier = has_carrier(&iface.name).unwrap_or(false);
     let group = get_group(&iface.name).unwrap_or_else(|_| "default".to_string());
     let qlen = get_tx_queue_len(&iface.name).unwrap_or(0);
     let pci_info = get_pci_info(&iface.name).unwrap_or_else(|_| "Unknown".to_string());
@@ -211,6 +219,7 @@ pub fn get_interface(iface: &datalink::NetworkInterface) -> InterfaceInfo {
         },
         mtu,
         state,
+        carrier,
         group,
         pci_info,
         interface_type,

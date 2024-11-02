@@ -3,9 +3,11 @@ use crate::info::interfaces::{
     get_interfaces, InterfaceInfo, InterfaceType, MANAGED_INTERFACE_TYPES,
 };
 use crate::systemd::check_service_status;
+use crate::tui::theme::get_borderless_layout;
 use cursive::theme::{BaseColor, Color, Effect, PaletteColor, Style};
 use cursive::utils::markup::StyledString;
 use cursive::view::Nameable;
+use cursive::view::Resizable;
 use cursive::views::*;
 use cursive::Cursive;
 #[allow(unused_imports)]
@@ -13,9 +15,9 @@ use cursive::CursiveExt;
 use strum::{AsRefStr, Display, EnumIter, EnumString, IntoEnumIterator};
 
 use super::overlay::show_overlay_dialog;
-use super::theme::{self, set_highlight_disabled, theme1};
+use super::theme::{self, set_highlight_disabled, set_highlight_enabled, theme1};
 
-fn format_interface_info(info: &InterfaceInfo) -> String {
+fn format_interface_info(info: &InterfaceInfo) -> StyledString {
     let interface_type = match info.interface_type {
         InterfaceType::Loopback => "Loopback",
         InterfaceType::Bridge => "Bridge",
@@ -25,28 +27,49 @@ fn format_interface_info(info: &InterfaceInfo) -> String {
         InterfaceType::Tap => "TAP device",
         InterfaceType::Unknown => "Unknown",
     };
-    let message;
-    if MANAGED_INTERFACE_TYPES.contains(&info.interface_type) {
-        message = "Press Enter to configure this interface.";
-    } else {
-        message = "This interface cannot be configured by this tool."
-    }
 
-    format!(
-        "Name: {}\nType: {}\nMAC: {}\nStatus: {}\nIPv4: {}\nHardware: {}\n\n{}",
+    let mut text = StyledString::new();
+    let mut hardware = "".to_string();
+    let mut status = info.status.clone();
+    if info.status.clone() == "Up" && !info.carrier {
+        status = format!("{} - NO CARRIER", status)
+    }
+    if info.pci_info != "Unknown" {
+        hardware = format!("Hardware: {}", info.pci_info);
+    }
+    text.append_plain(format!(
+        "Name: {}\nType: {}\nMAC: {}\nStatus: {}\nIPv4: {}\n{}\n\n",
         info.name,
         interface_type,
         info.mac_address
             .clone()
             .unwrap_or_else(|| "N/A".to_string()),
-        info.status,
+        status,
         info.ip_addresses
             .iter()
             .find(|ip| ip.contains('.'))
             .unwrap_or(&"none".to_string()),
-        info.pci_info,
-        message
-    )
+        hardware,
+    ));
+
+    let green = Color::Rgb(50, 250, 50);
+    let bold_green = Style::merge(&[
+        Style::from(Effect::Bold),
+        Style::from(Color::Rgb(50, 250, 50)),
+    ]);
+
+    if MANAGED_INTERFACE_TYPES.contains(&info.interface_type) {
+        text.append_styled("Press ", green);
+        text.append_styled("Enter", bold_green);
+        text.append_styled(" to configure this interface.", green);
+    } else {
+        text.append_styled(
+            "This interface cannot be configured by this tool.",
+            Color::Rgb(250, 50, 50),
+        );
+    }
+
+    text
 }
 
 fn rename_interface(_siv: &mut Cursive, interface_name: String) {}
@@ -75,11 +98,23 @@ pub fn configure_interface(siv: &mut Cursive, interface_name: String) {
         menu.add_item(item.as_ref(), item.clone());
     }
 
-    let layout = LinearLayout::vertical().child(menu);
+    let link_config_text = "[Not configured]";
+    let network_config_text = "[Not configured]";
 
-    let dialog = Dialog::around(layout)
-        .title(format!("Configure Interface"))
-        .padding_top(1);
+    let link_config = Dialog::around(TextView::new(link_config_text))
+        .padding_top(1)
+        .title("Link Config")
+        .full_screen();
+    let network_config = Dialog::around(TextView::new(network_config_text))
+        .padding_top(1)
+        .title("Network Config")
+        .full_screen();
+    let layout = LinearLayout::vertical()
+        .child(Dialog::around(menu))
+        .child(link_config)
+        .child(network_config);
+
+    let dialog = get_borderless_layout(siv, layout, Some("Configure Interface".to_string()));
     show_overlay_dialog(siv, dialog);
 }
 
@@ -122,14 +157,6 @@ pub fn main(siv: &mut Cursive) -> LinearLayout {
                     siv.call_on_name("info_box", |view: &mut TextView| {
                         view.set_content(details);
                     });
-
-                    // Change the highlight color to show ounmanaged devices as grey:
-                    if !MANAGED_INTERFACE_TYPES.contains(&info.interface_type) {
-                        // Update the theme for the highlight color dynamically
-                        set_highlight_disabled(siv);
-                    } else {
-                        siv.set_theme(theme1());
-                    }
                 }
             }
         })
@@ -156,22 +183,18 @@ pub fn main(siv: &mut Cursive) -> LinearLayout {
         }
     }
 
-    // Disable highlight if first interface is unmanageable:
-    match interfaces.first() {
-        Some(interface) => {
-            if !MANAGED_INTERFACE_TYPES.contains(&interface.interface_type) {
-                set_highlight_disabled(siv);
-            }
-        }
-        None => {}
-    }
+    // Disable highlight :
+    set_highlight_disabled(siv);
 
     // Create an initial info box with details of the first interface if available
-    let initial_info = interfaces
-        .first()
-        .map_or("No interfaces available".to_string(), |info| {
-            format_interface_info(info)
-        });
+    let initial_info = interfaces.first().map_or_else(
+        || {
+            let mut s = StyledString::new();
+            s.append_plain("No interfaces available");
+            s
+        },
+        |info| format_interface_info(info),
+    );
 
     let info_box = TextView::new(initial_info).with_name("info_box");
 
@@ -182,12 +205,17 @@ pub fn main(siv: &mut Cursive) -> LinearLayout {
         None
     };
 
+    let menu_dialog = Dialog::around(menu);
     // Build the layout with the menu, warnings (if any), and info box
-    let mut layout = LinearLayout::vertical().child(Dialog::around(menu));
+    let mut layout = LinearLayout::vertical().child(menu_dialog);
 
     if let Some(warnings_dialog) = warnings_box {
         layout.add_child(warnings_dialog.padding_top(1));
     }
 
-    layout.child(Dialog::around(info_box).title("Interface Details"))
+    let details_dialog = Dialog::new()
+        .content(info_box)
+        .title("Interface Details")
+        .full_screen();
+    layout.child(details_dialog)
 }

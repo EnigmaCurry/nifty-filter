@@ -1,4 +1,5 @@
 use super::overlay::show_overlay_dialog;
+use super::theme::get_borderless_dialog;
 use cursive::view::Resizable;
 use cursive::views::*;
 use cursive::Cursive;
@@ -35,16 +36,13 @@ pub fn main(_siv: &mut Cursive) -> LinearLayout {
 
     // Wrap the menu in a Dialog to give it a title and a Quit button
     let dialog = Dialog::new().content(menu).full_screen();
-
     LinearLayout::vertical()
         .child(dialog.full_screen())
         .child(about)
 }
 
 fn nftables(siv: &mut Cursive) {
-    let dialog = Dialog::new()
-        .title("Nftables")
-        .content(TextView::new("TODO"));
+    let dialog = get_borderless_dialog(siv, "TODO", Some("Nftables".to_string()));
     show_overlay_dialog(siv, dialog);
 }
 
