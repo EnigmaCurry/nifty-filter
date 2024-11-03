@@ -36,7 +36,7 @@ impl InterfaceType {
 
 pub const MANAGED_INTERFACE_TYPES: &[InterfaceType] = &[
     InterfaceType::PhysicalEthernet,
-    InterfaceType::PhysicalWifi,
+    //InterfaceType::PhysicalWifi,
     InterfaceType::Virtual,
 ];
 

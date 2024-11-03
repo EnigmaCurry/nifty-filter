@@ -16,7 +16,8 @@ use cursive::CursiveExt;
 use std::fs;
 use strum::{AsRefStr, Display, EnumIter, EnumString, IntoEnumIterator};
 
-use super::overlay::show_overlay_dialog;
+use super::dialog::confirm;
+use super::dialog::show_overlay_view;
 use super::theme::{self, set_highlight_disabled, set_highlight_enabled, theme1};
 
 fn format_interface_info(info: &InterfaceInfo) -> StyledString {
@@ -74,6 +75,19 @@ fn format_interface_info(info: &InterfaceInfo) -> StyledString {
     text
 }
 
+fn reset_interface(siv: &mut Cursive, interface_name: String) {
+    // Create a dialog with Yes and No buttons
+    fn cb(_siv: &mut Cursive) {}
+    confirm(
+        siv,
+        &format!(
+            "Do you want to reset the interface config files for {}?",
+            interface_name,
+        ),
+        cb,
+    );
+}
+
 fn rename_interface(_siv: &mut Cursive, interface_name: String) {}
 
 pub fn configure_interface(siv: &mut Cursive, interface_name: String) {
@@ -96,6 +110,7 @@ pub fn configure_interface(siv: &mut Cursive, interface_name: String) {
     let mut menu =
         SelectView::<MenuItem>::new().on_submit(move |siv: &mut Cursive, choice: &MenuItem| {
             match choice {
+                &MenuItem::ResetConfig => reset_interface(siv, ifname.clone()),
                 &MenuItem::RenameInterface => rename_interface(siv, ifname.clone()),
                 _ => {}
             }
@@ -174,7 +189,7 @@ pub fn configure_interface(siv: &mut Cursive, interface_name: String) {
         .child(network_config);
 
     let dialog = get_borderless_layout(siv, layout, Some("Configure Interface".to_string()));
-    show_overlay_dialog(siv, dialog);
+    show_overlay_view(siv, dialog);
 }
 
 pub fn main(siv: &mut Cursive) -> LinearLayout {

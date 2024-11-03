@@ -1,4 +1,4 @@
-use super::overlay::show_overlay_dialog;
+use super::dialog::show_overlay_view;
 use super::theme::get_borderless_dialog;
 use cursive::view::Resizable;
 use cursive::views::*;
@@ -43,7 +43,7 @@ pub fn main(_siv: &mut Cursive) -> LinearLayout {
 
 fn nftables(siv: &mut Cursive) {
     let dialog = get_borderless_dialog(siv, "TODO", Some("Nftables".to_string()));
-    show_overlay_dialog(siv, dialog);
+    show_overlay_view(siv, dialog);
 }
 
 // Function to handle menu actions

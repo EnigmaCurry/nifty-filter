@@ -7,15 +7,15 @@ use cursive::CursiveExt;
 use strum::IntoEnumIterator;
 use strum::{AsRefStr, Display, EnumIter, EnumString};
 
-use self::overlay::show_overlay_dialog;
+use self::dialog::show_overlay_view;
 use self::theme::{get_borderless_dialog, get_borderless_layout};
 
 mod dhcp;
+pub mod dialog;
 mod dns;
 mod firewall;
 mod help;
 mod interface;
-pub mod overlay;
 mod theme;
 
 #[derive(EnumIter, AsRefStr, EnumString, Debug, Clone, Display)]
@@ -127,5 +127,5 @@ fn menu_action(siv: &mut Cursive, choice: &MenuItem) {
         MenuItem::Help => help::main(siv),
     };
     let dialog = get_borderless_layout(siv, content, Some(choice.to_string()));
-    show_overlay_dialog(siv, dialog);
+    show_overlay_view(siv, dialog);
 }
