@@ -11,6 +11,11 @@ table ip filter {
 
         # Allow localhost loopback traffic
         iif "lo" accept
+
+        {% if interface_mgmt.is_some() %}
+        # allow management interface traffic
+        iif "{{ interface_mgmt.as_ref().unwrap() }}" accept
+        {% endif %}
         
         {% if icmp_accept_lan != "" %}
         # Allow specific ICMP queries on lan interface
@@ -91,6 +96,11 @@ table ip filter {
         # Allow all loopback traffic
         oif "lo" accept
 
+        {% if interface_mgmt.is_some() %}
+        # Allow management interface traffic
+        oif "{{ interface_mgmt.as_ref().unwrap() }}" accept
+        {% endif %}
+        
         # Allow all outgoing wan traffic
         oif "{{ interface_wan }}" accept
     }

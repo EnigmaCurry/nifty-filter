@@ -70,6 +70,7 @@ enum InfoCommand {
 #[derive(Template)]
 #[template(path = "router.nft.txt")]
 struct RouterTemplate {
+    interface_mgmt: Option<Interface>,
     interface_lan: Interface,
     interface_wan: Interface,
     icmp_accept_wan: String,
@@ -88,6 +89,11 @@ struct RouterTemplate {
 impl RouterTemplate {
     fn from_env() -> Result<Self, Vec<String>> {
         let mut errors = Vec::new();
+        // Optional management interface
+        let interface_mgmt = env::var("INTERFACE_MGMT")
+            .ok()
+            .filter(|val| !val.is_empty())
+            .map(|_val| get_interface("INTERFACE_MGMT", &mut errors));
         let interface_lan = get_interface("INTERFACE_LAN", &mut errors);
         let interface_wan = get_interface("INTERFACE_WAN", &mut errors);
         let subnet_lan = get_subnet("SUBNET_LAN", &mut errors);
@@ -144,6 +150,7 @@ impl RouterTemplate {
         }
 
         Ok(RouterTemplate {
+            interface_mgmt,
             interface_lan,
             interface_wan,
             subnet_lan,
@@ -247,6 +254,16 @@ fn app() {
                     }
                 }
             }
+
+            // // Initialize default values for env vars:
+            // fn set_default(key: &str, default: &str) {
+            //     if env::var(key).map(|v| v.is_empty()).unwrap_or(true) {
+            //         env::set_var(key, default);
+            //     }
+            // }
+            // set_default("INTERFACE_MGMT", "mgmt");
+            // set_default("INTERFACE_LAN", "lan");
+            // set_default("INTERFACE_WAN", "wan");
 
             // Attempt to create the RouterTemplate from environment variables
             match RouterTemplate::from_env() {
