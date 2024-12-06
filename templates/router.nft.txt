@@ -93,6 +93,9 @@ table ip filter {
     # Filter traffic whose source is the router itself:
     chain output {
         type filter hook output priority 0; policy drop;
+        # Allow existing established and related connections
+        ct state established,related accept
+
         # Allow all loopback traffic
         oif "lo" accept
 
