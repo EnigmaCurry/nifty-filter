@@ -35,7 +35,7 @@ export UDP_FORWARD_WAN=
 
 ## Fix the path for demo purposes:
 ## (Remove this if nifty-filter is already built and on your PATH.)
-if ! command -v nifty-filter; then
+if ! command -v nifty-filter &>/dev/null; then
     cd $(dirname ${BASH_SOURCE})
     just build
     PATH="../target/debug:${PATH}"
