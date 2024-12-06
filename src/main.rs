@@ -11,6 +11,7 @@ mod format;
 mod info;
 mod parsers;
 mod systemd;
+mod systemd_network;
 mod tui;
 use parsers::*;
 #[allow(unused_imports)]

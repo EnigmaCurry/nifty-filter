@@ -58,26 +58,26 @@ table ip filter {
         {% if tcp_forward_lan.len() > 0 %}
         # DNAT forward TCP from lan
             {% for route in tcp_forward_lan.routes %}
-        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" ip daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
             {% endfor %}
         {% endif %}
         {% if udp_forward_lan.len() > 0 %}
         # DNAT forward UDP from lan
             {% for route in udp_forward_lan.routes %}
-        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" ip daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
             {% endfor %}
         {% endif %}
 
         {% if tcp_forward_wan.len() > 0 %}
         # DNAT forward TCP from wan
             {% for route in tcp_forward_wan.routes %}
-        iif "{{ interface_wan }}" daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+        iif "{{ interface_wan }}" ip daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
             {% endfor %}
         {% endif %}
         {% if udp_forward_wan.len() > 0 %}
         # DNAT forward UDP from wan
             {% for route in udp_forward_wan.routes %}
-        iif "{{ interface_wan }}" daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+        iif "{{ interface_wan }}" ip daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
             {% endfor %}
         {% endif %}
         

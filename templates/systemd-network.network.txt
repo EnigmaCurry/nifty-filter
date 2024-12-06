@@ -1,0 +1,10 @@
+[Match]
+Name={{ name }}
+
+[Network]
+Description={{ description }}
+{% if dhcp %}DHCP=yes{% else %}DHCP=no{% endif %}
+{% if address.is_some() %}Address={{ address.unwrap() }}{% endif %}
+{% if gateway.is_some() %}Gateway={{ gateway.unwrap() }}{% endif %}
+{% for entry in dns %}DNS={{ entry }}
+{% endfor %}
