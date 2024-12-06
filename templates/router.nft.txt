@@ -101,6 +101,9 @@ table ip filter {
         oif "{{ interface_mgmt.as_ref().unwrap() }}" accept
         {% endif %}
         
+        # Allow all outgoing lan traffic
+        oif "{{ interface_lan }}" accept
+        
         # Allow all outgoing wan traffic
         oif "{{ interface_wan }}" accept
     }
