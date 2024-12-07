@@ -8,8 +8,9 @@ pub struct Domain {
 
 impl Domain {
     pub fn new(name: &str) -> Result<Self, String> {
-        let domain_regex = Regex::new(r"^[A-Za-z0-9][A-Za-z0-9-]{0,61}[A-Za-z0-9]\.[A-Za-z]{2,}$")
-            .map_err(|_| "Failed to compile regex".to_string())?;
+        let domain_regex =
+            Regex::new(r"(?i)^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+                .map_err(|_| "Failed to compile regex".to_string())?;
         if domain_regex.is_match(name) {
             Ok(Self {
                 name: name.to_string(),
