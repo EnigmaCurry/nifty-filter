@@ -33,7 +33,7 @@ table ip filter {
         {% endif %}
         {% if udp_accept_lan != "" %}
         # Allow access to specific UDP ports from the lan interface
-        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" udp dport { {{ udp_accept_lan }} } accept
+        iif "{{ interface_lan }}" udp dport { {{ udp_accept_lan }} } accept
         {% endif %}
         
         {% if tcp_accept_wan != "" %}
