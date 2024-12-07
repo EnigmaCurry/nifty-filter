@@ -8,7 +8,8 @@ pub struct DnsmasqTemplate {
     dns_upstream_1: IpAddr,
     dns_upstream_2: IpAddr,
     domain_lan: domain::Domain,
-    interface_lan: Interface,
+    interface: Interface,
+    listen_address: IpAddr,
     dhcp_lan_range_start: IpAddr,
     dhcp_lan_range_end: IpAddr,
     dhcp_lan_lease: dhcp_lease_time::DHCPLeaseTime,
@@ -19,7 +20,8 @@ pub struct DnsmasqTemplate {
 impl DnsmasqTemplate {
     pub fn from_env() -> Result<Self, Vec<String>> {
         let mut errors = Vec::new();
-        let interface_lan = get_interface("INTERFACE_LAN", &mut errors);
+        let interface = get_interface("INTERFACE", &mut errors);
+        let listen_address = get_ip_address("LISTEN_ADDRESS", &mut errors);
         let dns_upstream_1 = get_ip_address("DNS_UPSTREAM_1", &mut errors);
         let dns_upstream_2 = get_ip_address("DNS_UPSTREAM_2", &mut errors);
         let domain_lan = get_domain_name("DOMAIN_LAN", &mut errors);
@@ -34,7 +36,8 @@ impl DnsmasqTemplate {
         }
 
         Ok(DnsmasqTemplate {
-            interface_lan,
+            interface,
+            listen_address,
             dns_upstream_1,
             dns_upstream_2,
             domain_lan,

@@ -12,7 +12,10 @@ impl fmt::Display for DHCPLeaseTime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DHCPLeaseTime::Infinite => write!(f, "infinite"),
-            DHCPLeaseTime::Finite(duration) => write!(f, "{} seconds", duration.as_secs()),
+            DHCPLeaseTime::Finite(duration) => {
+                let hours = duration.as_secs() / 3600;
+                write!(f, "{}h", hours)
+            }
         }
     }
 }
@@ -24,8 +27,7 @@ impl fmt::Display for DHCPLeaseTime {
 /// use validators::dhcp::{parse_dhcp_lease_time, DHCPLeaseTime};
 /// use std::time::Duration;
 ///
-/// assert_eq!(parse_dhcp_lease_time("30m").unwrap(), DHCPLeaseTime::Finite(Duration::from_secs(1800)));
-/// assert_eq!(parse_dhcp_lease_time("1d").unwrap(), DHCPLeaseTime::Finite(Duration::from_secs(86400)));
+/// assert_eq!(parse_dhcp_lease_time("12h").unwrap(), DHCPLeaseTime::Finite(Duration::from_secs(43200)));
 /// assert_eq!(parse_dhcp_lease_time("infinite").unwrap(), DHCPLeaseTime::Infinite);
 /// ```
 pub fn parse_dhcp_lease_time(input: &str) -> Result<DHCPLeaseTime, String> {
@@ -40,12 +42,18 @@ pub fn parse_dhcp_lease_time(input: &str) -> Result<DHCPLeaseTime, String> {
         .parse()
         .map_err(|_| format!("Invalid numeric value in lease time: {}", input))?;
 
-    match unit_part.as_str() {
-        "m" => Ok(DHCPLeaseTime::Finite(Duration::from_secs(value * 60))),
-        "h" => Ok(DHCPLeaseTime::Finite(Duration::from_secs(value * 3600))),
-        "d" => Ok(DHCPLeaseTime::Finite(Duration::from_secs(value * 86400))),
-        _ => Err(format!("Invalid unit in lease time: {}", unit_part)),
+    let seconds = match unit_part.as_str() {
+        "m" => value * 60,
+        "h" => value * 3600,
+        "d" => value * 86400,
+        _ => return Err(format!("Invalid unit in lease time: {}", unit_part)),
+    };
+
+    if seconds < 3600 {
+        return Err("Lease time must be at least 1 hour".to_string());
     }
+
+    Ok(DHCPLeaseTime::Finite(Duration::from_secs(seconds)))
 }
 
 #[cfg(test)]
@@ -55,10 +63,6 @@ mod tests {
 
     #[test]
     fn test_valid_lease_times() {
-        assert_eq!(
-            parse_dhcp_lease_time("30m").unwrap(),
-            DHCPLeaseTime::Finite(Duration::from_secs(1800))
-        );
         assert_eq!(
             parse_dhcp_lease_time("12h").unwrap(),
             DHCPLeaseTime::Finite(Duration::from_secs(43200))
@@ -75,8 +79,18 @@ mod tests {
 
     #[test]
     fn test_invalid_lease_times() {
-        assert!(parse_dhcp_lease_time("30x").is_err());
-        assert!(parse_dhcp_lease_time("1w").is_err());
-        assert!(parse_dhcp_lease_time("abc").is_err());
+        assert!(parse_dhcp_lease_time("30m").is_err()); // Less than 1 hour
+        assert!(parse_dhcp_lease_time("30x").is_err()); // Invalid unit
+        assert!(parse_dhcp_lease_time("1w").is_err()); // Invalid unit
+        assert!(parse_dhcp_lease_time("abc").is_err()); // Invalid format
+    }
+
+    #[test]
+    fn test_display() {
+        assert_eq!(
+            format!("{}", DHCPLeaseTime::Finite(Duration::from_secs(43200))),
+            "12h"
+        );
+        assert_eq!(format!("{}", DHCPLeaseTime::Infinite), "infinite");
     }
 }

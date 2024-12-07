@@ -1,15 +1,20 @@
+# dnsmasq.conf
+interface={{ interface }}
+bind-interfaces               # Bind only to explicit interface above
+listen-address={{ listen_address }}    # Local IP address to bind
+
 # DNS
-domain-needed       # Prevent upstream lookups for plain names
-bogus-priv          # Block RFC1918 private address lookups
-no-resolv           # Ignore /etc/resolv.conf, use upstream servers below
-server={{ dns_upstream_1 }}
-server={{ dns_upstream_2 }}
-local=/{{ domain_lan }}/
-expand-hosts        # Expand short hostnames found in /etc/hosts
+domain-needed                 # Prevent upstream lookups for plain names
+bogus-priv                    # Block RFC1918 private address lookups
+no-resolv                     # Ignore /etc/resolv.conf, use upstream servers below
+server={{ dns_upstream_1 }}                # Upstream DNS server
+server={{ dns_upstream_2 }}                # Upstream DNS server
+local=/{{ domain_lan }}/       # Authoritative local LAN domain name
+domain={{ domain_lan }}        # Expand short hostnames for domain_lan
+expand-hosts                  # Expand short hostnames found in /etc/hosts
 
 # DHCP
-interface={{ interface_lan }}
-dhcp-range={{ dhcp_lan_range_start }},{{ dhcp_lan_range_end }},{{ dhcp_lan_lease }}
-dhcp-option=option:router,{{ gateway_lan }}     # Default gateway
-dhcp-option=option:dns-server,{{ dns_lan }} # DNS server
-dhcp-authoritative                        # Authoritative mode
+dhcp-range={{ dhcp_lan_range_start }},{{ dhcp_lan_range_end }},{{ dhcp_lan_lease }}  # DHCP lease IP range start,end,duration
+dhcp-authoritative                         # Tell clients we are in charge of this network
+dhcp-option=option:router,{{ gateway_lan }}      # Tell clients to use this default gateway
+dhcp-option=option:dns-server,{{ dns_lan }}  # Tell clients to use this default DNS server
