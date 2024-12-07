@@ -12,7 +12,7 @@ pub struct DnsmasqTemplate {
     listen_address: IpAddr,
     dhcp_lan_range_start: IpAddr,
     dhcp_lan_range_end: IpAddr,
-    dhcp_lan_lease: dhcp_lease_time::DHCPLeaseTime,
+    dhcp_lan_lease_time: dhcp_lease_time::DHCPLeaseTime,
     gateway_lan: IpAddr,
     dns_lan: IpAddr,
 }
@@ -43,7 +43,7 @@ impl DnsmasqTemplate {
             domain_lan,
             dhcp_lan_range_start,
             dhcp_lan_range_end,
-            dhcp_lan_lease,
+            dhcp_lan_lease_time: dhcp_lan_lease,
             gateway_lan,
             dns_lan,
         })

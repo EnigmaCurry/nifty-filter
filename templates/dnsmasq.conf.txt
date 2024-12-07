@@ -18,7 +18,10 @@ domain={{ domain_lan }}        # Expand short hostnames for domain_lan
 expand-hosts                  # Expand short hostnames found in /etc/hosts
 
 # DHCP
-dhcp-range={{ dhcp_lan_range_start }},{{ dhcp_lan_range_end }},{{ dhcp_lan_lease }}  # DHCP lease IP range start,end,duration
+dhcp-range={{ dhcp_lan_range_start }},{{ dhcp_lan_range_end }},{{ dhcp_lan_lease_time }}  # DHCP lease IP range start,end,duration
 dhcp-authoritative                         # Tell clients we are in charge of this network
 dhcp-option=option:router,{{ gateway_lan }}      # Tell clients to use this default gateway
 dhcp-option=option:dns-server,{{ dns_lan }}  # Tell clients to use this default DNS server
+{% for lease in dhcp_lan_static_leases %}
+dhcp-host={{ lease }}
+{% endfor %}
