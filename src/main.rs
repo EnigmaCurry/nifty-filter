@@ -23,6 +23,18 @@ use tui::main as config_main;
 #[command(name = "RouterConfig")]
 #[command(about = "Generates router configuration from environment or .env file")]
 struct Cli {
+    /// Enable verbose output
+    #[arg(short, long)]
+    verbose: bool,
+
+    /// Path to the .env file (actual environment vars supersede this)
+    #[arg(long)]
+    env_file: Option<String>,
+
+    /// Ignore the environment (combine this with --env-file)
+    #[arg(long)]
+    strict_env: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -41,22 +53,11 @@ enum Command {
     /// Generate nftables configuration
     #[command(alias = "nft")]
     Nftables {
-        /// Path to the .env file (actual environment vars supersede this)
-        #[arg(long)]
-        env_file: Option<String>,
-
-        /// Ignore the environment (combine this with --env-file)
-        #[arg(long)]
-        strict_env: bool,
-
         /// Validate with nft -c (only works if interfaces exist on this host)
         #[arg(long)]
         validate: bool,
-
-        /// Enable verbose output
-        #[arg(short, long)]
-        verbose: bool,
     },
+    Dnsmasq {},
 }
 
 #[derive(Subcommand)]
@@ -197,6 +198,48 @@ fn app() {
     // Parse command-line arguments
     let cli = Cli::parse();
 
+    // Initialize the logger
+    env_logger::init();
+
+    // Set RUST_LOG to info if verbose is enabled
+    if cli.verbose {
+        env::set_var("RUST_LOG", "info");
+    }
+
+    // Ignore non-default environment variables if `--strict-env` is set
+    if cli.env_file.is_some() && cli.strict_env {
+        let default_vars: HashSet<&str> = [
+            "HOME", "USER", "PWD", "OLDPWD", "SHELL", "PATH", "LANG", "TERM", "UID", "EUID",
+            "LOGNAME", "HOSTNAME", "EDITOR", "VISUAL",
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        for (key, _) in env::vars() {
+            if !default_vars.contains(key.as_str())
+                && !key.starts_with("RUST")
+                && !key.starts_with("CARGO")
+            {
+                env::remove_var(&key);
+            }
+        }
+    }
+
+    // Load the specified .env file if provided
+    if let Some(env_file) = cli.env_file {
+        match from_filename(&env_file) {
+            Ok(_) => {
+                info!("Loaded environment from file: {}", env_file);
+            }
+            Err(err) => {
+                error!("Error parsing {} : {}", env_file, err);
+                error!("Failed to load environment from file: {}", env_file);
+                exit(1);
+            }
+        }
+    }
+
     match cli.command.unwrap_or_else(|| Command::Config {}) {
         Command::Config {} => {
             config_main();
@@ -207,64 +250,7 @@ fn app() {
             }
             InfoCommand::Network => info::network::network().expect("failed to get network info"),
         },
-        Command::Nftables {
-            env_file,
-            strict_env,
-            validate,
-            verbose,
-        } => {
-            // Set RUST_LOG to info if verbose is enabled
-            if verbose {
-                env::set_var("RUST_LOG", "info");
-            }
-
-            // Initialize the logger
-            env_logger::init();
-
-            // Ignore non-default environment variables if `--strict-env` is set
-            if env_file.is_some() && strict_env {
-                let default_vars: HashSet<&str> = [
-                    "HOME", "USER", "PWD", "OLDPWD", "SHELL", "PATH", "LANG", "TERM", "UID",
-                    "EUID", "LOGNAME", "HOSTNAME", "EDITOR", "VISUAL",
-                ]
-                .iter()
-                .cloned()
-                .collect();
-
-                for (key, _) in env::vars() {
-                    if !default_vars.contains(key.as_str())
-                        && !key.starts_with("RUST")
-                        && !key.starts_with("CARGO")
-                    {
-                        env::remove_var(&key);
-                    }
-                }
-            }
-
-            // Load the specified .env file if provided
-            if let Some(env_file) = env_file {
-                match from_filename(&env_file) {
-                    Ok(_) => {
-                        info!("Loaded environment from file: {}", env_file);
-                    }
-                    Err(err) => {
-                        error!("Error parsing {} : {}", env_file, err);
-                        error!("Failed to load environment from file: {}", env_file);
-                        exit(1);
-                    }
-                }
-            }
-
-            // // Initialize default values for env vars:
-            // fn set_default(key: &str, default: &str) {
-            //     if env::var(key).map(|v| v.is_empty()).unwrap_or(true) {
-            //         env::set_var(key, default);
-            //     }
-            // }
-            // set_default("INTERFACE_MGMT", "mgmt");
-            // set_default("INTERFACE_LAN", "lan");
-            // set_default("INTERFACE_WAN", "wan");
-
+        Command::Nftables { validate } => {
             // Attempt to create the RouterTemplate from environment variables
             match RouterTemplate::from_env() {
                 Ok(router) => {
@@ -288,6 +274,7 @@ fn app() {
                 }
             }
         }
+        Command::Dnsmasq {} => {}
     }
 }
 

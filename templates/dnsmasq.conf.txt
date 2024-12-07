@@ -1,0 +1,15 @@
+# DNS
+domain-needed       # Prevent upstream lookups for plain names
+bogus-priv          # Block RFC1918 private address lookups
+no-resolv           # Ignore /etc/resolv.conf, use upstream servers below
+server={{ dns_upstream_1 }}
+server={{ dns_upstream_2 }}
+local=/{{ domain_lan }}/
+expand-hosts        # Expand short hostnames in /etc/hosts
+
+# DHCP
+interface={{ interface_lan }}
+dhcp-range={{ dhcp_lan_range_start }},{{ dhcp_lan_range_end }},{{ dhcp_lan_lease }}
+dhcp-option=option:router,{{ gateway_lan }}     # Default gateway
+dhcp-option=option:dns-server,{{ dns_lan }} # DNS server
+dhcp-authoritative                        # Authoritative mode
