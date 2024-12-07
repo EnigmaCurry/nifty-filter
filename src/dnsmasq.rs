@@ -13,6 +13,7 @@ pub struct DnsmasqTemplate {
     dhcp_lan_range_start: IpAddr,
     dhcp_lan_range_end: IpAddr,
     dhcp_lan_lease_time: dhcp_lease_time::DHCPLeaseTime,
+    dhcp_lan_static_leases: Vec<Lease>,
     gateway_lan: IpAddr,
     dns_lan: IpAddr,
 }
@@ -30,6 +31,7 @@ impl DnsmasqTemplate {
         let dhcp_lan_lease = get_dhcp_lease_time("DHCP_LAN_LEASE", &mut errors);
         let gateway_lan = get_ip_address("GATEWAY_LAN", &mut errors);
         let dns_lan = get_ip_address("DNS_LAN", &mut errors);
+        let dhcp_lan_static_leases = get_static_leases("DHCP_LAN_STATIC_LEASES", &mut errors);
 
         if !errors.is_empty() {
             return Err(errors);
@@ -44,6 +46,7 @@ impl DnsmasqTemplate {
             dhcp_lan_range_start,
             dhcp_lan_range_end,
             dhcp_lan_lease_time: dhcp_lan_lease,
+            dhcp_lan_static_leases,
             gateway_lan,
             dns_lan,
         })
