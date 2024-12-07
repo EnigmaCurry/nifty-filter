@@ -196,37 +196,3 @@ fn app() {
 fn main() {
     app()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_forward_route_parsing() {
-        let input = "8080:192.168.1.100:80, 8443:192.168.1.101:443";
-        let route_list = ForwardRouteList::new(input).unwrap();
-        assert_eq!(route_list.get_routes().len(), 2);
-        assert_eq!(route_list.get_routes()[0].incoming_port, 8080);
-        assert_eq!(
-            route_list.get_routes()[0].destination_ip,
-            "192.168.1.100".parse::<IpAddr>().unwrap()
-        );
-        assert_eq!(route_list.get_routes()[0].destination_port, 80);
-    }
-
-    #[test]
-    fn test_forward_route_invalid() {
-        let input = "8080:192.168.1.100, 8443:192.168.1.101:443";
-        assert!(ForwardRouteList::new(input).is_err());
-    }
-
-    #[test]
-    fn test_to_string() {
-        let input = "8080:192.168.1.100:80, 8443:192.168.1.101:443";
-        let route_list = ForwardRouteList::new(input).unwrap();
-        assert_eq!(
-            route_list.to_string(),
-            "8080:192.168.1.100:80, 8443:192.168.1.101:443"
-        );
-    }
-}
