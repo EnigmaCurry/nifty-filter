@@ -1,6 +1,7 @@
 use regex::Regex;
 use std::fmt;
 
+#[derive(Clone, Debug)]
 pub struct Interface {
     name: String,
 }

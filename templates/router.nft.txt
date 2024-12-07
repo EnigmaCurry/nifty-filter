@@ -11,6 +11,11 @@ table ip filter {
 
         # Allow localhost loopback traffic
         iif "lo" accept
+
+        {% if interface_mgmt.is_some() %}
+        # allow management interface traffic
+        iif "{{ interface_mgmt.as_ref().unwrap() }}" accept
+        {% endif %}
         
         {% if icmp_accept_lan != "" %}
         # Allow specific ICMP queries on lan interface
@@ -28,7 +33,7 @@ table ip filter {
         {% endif %}
         {% if udp_accept_lan != "" %}
         # Allow access to specific UDP ports from the lan interface
-        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" udp dport { {{ udp_accept_lan }} } accept
+        iif "{{ interface_lan }}" udp dport { {{ udp_accept_lan }} } accept
         {% endif %}
         
         {% if tcp_accept_wan != "" %}
@@ -58,26 +63,26 @@ table ip filter {
         {% if tcp_forward_lan.len() > 0 %}
         # DNAT forward TCP from lan
             {% for route in tcp_forward_lan.routes %}
-        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" ip daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
             {% endfor %}
         {% endif %}
         {% if udp_forward_lan.len() > 0 %}
         # DNAT forward UDP from lan
             {% for route in udp_forward_lan.routes %}
-        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" ip daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
             {% endfor %}
         {% endif %}
 
         {% if tcp_forward_wan.len() > 0 %}
         # DNAT forward TCP from wan
             {% for route in tcp_forward_wan.routes %}
-        iif "{{ interface_wan }}" daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+        iif "{{ interface_wan }}" ip daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
             {% endfor %}
         {% endif %}
         {% if udp_forward_wan.len() > 0 %}
         # DNAT forward UDP from wan
             {% for route in udp_forward_wan.routes %}
-        iif "{{ interface_wan }}" daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+        iif "{{ interface_wan }}" ip daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
             {% endfor %}
         {% endif %}
         
@@ -88,9 +93,20 @@ table ip filter {
     # Filter traffic whose source is the router itself:
     chain output {
         type filter hook output priority 0; policy drop;
+        # Allow existing established and related connections
+        ct state established,related accept
+
         # Allow all loopback traffic
         oif "lo" accept
 
+        {% if interface_mgmt.is_some() %}
+        # Allow management interface traffic
+        oif "{{ interface_mgmt.as_ref().unwrap() }}" accept
+        {% endif %}
+        
+        # Allow all outgoing lan traffic
+        oif "{{ interface_lan }}" accept
+        
         # Allow all outgoing wan traffic
         oif "{{ interface_wan }}" accept
     }

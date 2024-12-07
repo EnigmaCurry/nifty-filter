@@ -34,7 +34,7 @@ bin-deps:
 # Build and run binary + args
 [no-cd]
 run *args:
-    cargo run --manifest-path "${current_dir}/Cargo.toml" -- --verbose --env-file dev.env {{args}}
+    cargo run --manifest-path "${current_dir}/Cargo.toml" -- {{args}}
 
 watch *args:
     cargo watch -s "cargo run --quiet --manifest-path \"${current_dir}/Cargo.toml\" -- --verbose --env-file dev.env {{args}} | tee ~/sshfs/router/nftables.nft | less"
