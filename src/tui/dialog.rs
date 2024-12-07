@@ -1,6 +1,6 @@
 use cursive::theme::{BorderStyle, Effect, Style, Theme};
 use cursive::utils::markup::StyledString;
-use cursive::view::{IntoBoxedView, Nameable, Resizable};
+use cursive::view::{Nameable, Resizable};
 use cursive::views::*;
 use cursive::Cursive;
 use cursive::View;

@@ -11,11 +11,11 @@ pub fn theme1() -> Theme {
     palette[PaletteColor::Highlight] = Color::Dark(BaseColor::Red);
     palette[PaletteColor::HighlightText] = Color::Dark(BaseColor::Black);
 
-    return Theme {
+    Theme {
         shadow: false,
         borders: BorderStyle::None,
         palette,
-    };
+    }
 }
 
 pub fn set_highlight_disabled(siv: &mut Cursive) {
@@ -25,13 +25,13 @@ pub fn set_highlight_disabled(siv: &mut Cursive) {
     });
 }
 
-pub fn set_highlight_enabled(siv: &mut Cursive) {
-    siv.with_theme(|theme| {
-        let t = theme1();
-        theme.palette[PaletteColor::Highlight] = t.palette[PaletteColor::Highlight];
-        theme.palette[PaletteColor::HighlightText] = t.palette[PaletteColor::HighlightText];
-    });
-}
+// pub fn set_highlight_enabled(siv: &mut Cursive) {
+//     siv.with_theme(|theme| {
+//         let t = theme1();
+//         theme.palette[PaletteColor::Highlight] = t.palette[PaletteColor::Highlight];
+//         theme.palette[PaletteColor::HighlightText] = t.palette[PaletteColor::HighlightText];
+//     });
+// }
 
 pub fn get_borderless_layout(
     siv: &mut Cursive,

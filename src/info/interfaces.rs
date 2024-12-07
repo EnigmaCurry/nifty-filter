@@ -17,10 +17,12 @@ pub enum InterfaceType {
     PhysicalWifi,
     Virtual,
     Tap,
+    #[allow(dead_code)]
     Unknown,
 }
 
 impl InterfaceType {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &str {
         match self {
             InterfaceType::Loopback => "Loopback",
@@ -85,7 +87,7 @@ pub fn get_pci_info(interface: &str) -> io::Result<String> {
 
     // Use `lspci` to get a human-readable name for the device
     let output = Command::new("lspci")
-        .args(&["-nnk", "-d", &device_str])
+        .args(["-nnk", "-d", &device_str])
         .output()?;
 
     if !output.status.success() {

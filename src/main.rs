@@ -2,7 +2,6 @@ use askama::Template;
 use clap::{Parser, Subcommand};
 use dnsmasq::DnsmasqTemplate;
 use dotenvy::from_filename;
-use env_logger;
 use log::{error, info};
 use nftables::RouterTemplate;
 use std::collections::HashSet;
@@ -141,7 +140,7 @@ fn app() {
         }
     }
 
-    match cli.command.unwrap_or_else(|| Command::Config {}) {
+    match cli.command.unwrap_or(Command::Config {}) {
         Command::Config {} => {
             config_main();
         }

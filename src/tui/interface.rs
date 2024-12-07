@@ -5,7 +5,7 @@ use crate::info::interfaces::{
 use crate::info::network::get_systemd_networks;
 use crate::systemd::check_service_status;
 use crate::tui::theme::get_borderless_layout;
-use cursive::theme::{BaseColor, Color, Effect, PaletteColor, Style};
+use cursive::theme::{BaseColor, Color, Effect, Style};
 use cursive::utils::markup::StyledString;
 use cursive::view::Nameable;
 use cursive::view::Resizable;
@@ -18,7 +18,7 @@ use strum::{AsRefStr, Display, EnumIter, EnumString, IntoEnumIterator};
 
 use super::dialog::confirm;
 use super::dialog::show_overlay_view;
-use super::theme::{self, set_highlight_disabled, set_highlight_enabled, theme1};
+use super::theme::set_highlight_disabled;
 
 fn format_interface_info(info: &InterfaceInfo) -> StyledString {
     let interface_type = match info.interface_type {
@@ -88,7 +88,7 @@ fn reset_interface(siv: &mut Cursive, interface_name: String) {
     );
 }
 
-fn rename_interface(_siv: &mut Cursive, interface_name: String) {}
+fn rename_interface(_siv: &mut Cursive, _interface_name: String) {}
 
 pub fn configure_interface(siv: &mut Cursive, interface_name: String) {
     #[derive(EnumIter, AsRefStr, EnumString, Debug, Clone, Display)]
@@ -109,9 +109,9 @@ pub fn configure_interface(siv: &mut Cursive, interface_name: String) {
     let ifname = interface_name.clone();
     let mut menu =
         SelectView::<MenuItem>::new().on_submit(move |siv: &mut Cursive, choice: &MenuItem| {
-            match choice {
-                &MenuItem::ResetConfig => reset_interface(siv, ifname.clone()),
-                &MenuItem::RenameInterface => rename_interface(siv, ifname.clone()),
+            match *choice {
+                MenuItem::ResetConfig => reset_interface(siv, ifname.clone()),
+                MenuItem::RenameInterface => rename_interface(siv, ifname.clone()),
                 _ => {}
             }
         });
@@ -267,7 +267,7 @@ pub fn main(siv: &mut Cursive) -> LinearLayout {
             s.append_plain("No interfaces available");
             s
         },
-        |info| format_interface_info(info),
+        format_interface_info,
     );
 
     let info_box = TextView::new(initial_info).with_name("info_box");

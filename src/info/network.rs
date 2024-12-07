@@ -140,13 +140,11 @@ fn parse_priority_from_filename(file_name: &str) -> Option<i32> {
 
 fn parse_link_file(path: &Path, link_file: &mut LinkFile) {
     if let Ok(file) = fs::File::open(path) {
-        for line in io::BufReader::new(file).lines() {
-            if let Ok(line) = line {
-                if line.starts_with("Name=") {
-                    link_file.name = line.split('=').nth(1).map(|s| s.trim().to_string());
-                } else if line.starts_with("MACAddress=") {
-                    link_file.mac_address = line.split('=').nth(1).map(|s| s.trim().to_string());
-                }
+        for line in io::BufReader::new(file).lines().map_while(Result::ok) {
+            if line.starts_with("Name=") {
+                link_file.name = line.split('=').nth(1).map(|s| s.trim().to_string());
+            } else if line.starts_with("MACAddress=") {
+                link_file.mac_address = line.split('=').nth(1).map(|s| s.trim().to_string());
             }
         }
     }
@@ -154,26 +152,23 @@ fn parse_link_file(path: &Path, link_file: &mut LinkFile) {
 
 fn parse_network_file(path: &Path, network_file: &mut NetworkFile) {
     if let Ok(file) = fs::File::open(path) {
-        for line in io::BufReader::new(file).lines() {
-            if let Ok(line) = line {
-                if line.starts_with("Name=") {
-                    network_file.name = line.split('=').nth(1).map(|s| s.trim().to_string());
-                } else if line.starts_with("Address=") {
-                    network_file.address = line.split('=').nth(1).map(|s| s.trim().to_string());
-                } else if line.starts_with("Gateway=") {
-                    network_file.gateway = line.split('=').nth(1).map(|s| s.trim().to_string());
-                } else if line.starts_with("DNS=") {
-                    if let Some(dns_entry) = line.split('=').nth(1) {
-                        network_file.dns.push(dns_entry.trim().to_string());
-                    }
-                } else if line.starts_with("Kind=") {
-                    network_file.kind = line.split('=').nth(1).map(|s| s.trim().to_string());
-                } else if line.starts_with("IPMasquerade=") {
-                    network_file.ip_masquerade =
-                        line.split('=').nth(1).map(|s| s.trim().to_string());
-                } else if line.starts_with("DHCPServer=") {
-                    network_file.dhcp_server = line.split('=').nth(1).map(|s| s.trim().to_string());
+        for line in io::BufReader::new(file).lines().map_while(Result::ok) {
+            if line.starts_with("Name=") {
+                network_file.name = line.split('=').nth(1).map(|s| s.trim().to_string());
+            } else if line.starts_with("Address=") {
+                network_file.address = line.split('=').nth(1).map(|s| s.trim().to_string());
+            } else if line.starts_with("Gateway=") {
+                network_file.gateway = line.split('=').nth(1).map(|s| s.trim().to_string());
+            } else if line.starts_with("DNS=") {
+                if let Some(dns_entry) = line.split('=').nth(1) {
+                    network_file.dns.push(dns_entry.trim().to_string());
                 }
+            } else if line.starts_with("Kind=") {
+                network_file.kind = line.split('=').nth(1).map(|s| s.trim().to_string());
+            } else if line.starts_with("IPMasquerade=") {
+                network_file.ip_masquerade = line.split('=').nth(1).map(|s| s.trim().to_string());
+            } else if line.starts_with("DHCPServer=") {
+                network_file.dhcp_server = line.split('=').nth(1).map(|s| s.trim().to_string());
             }
         }
     }

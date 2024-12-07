@@ -1,4 +1,3 @@
-use crate::env;
 use crate::parsers::*;
 use askama::Template;
 use std::net::IpAddr;

@@ -8,7 +8,7 @@ use strum::IntoEnumIterator;
 use strum::{AsRefStr, Display, EnumIter, EnumString};
 
 use self::dialog::show_overlay_view;
-use self::theme::{get_borderless_dialog, get_borderless_layout};
+use self::theme::get_borderless_layout;
 
 mod dhcp;
 pub mod dialog;
@@ -18,6 +18,7 @@ mod help;
 mod interface;
 mod theme;
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(EnumIter, AsRefStr, EnumString, Debug, Clone, Display)]
 enum MenuItem {
     #[strum(serialize = "Network Interfaces")]

@@ -33,8 +33,8 @@ pub fn parse_dhcp_lease_time(input: &str) -> Result<DHCPLeaseTime, String> {
         return Ok(DHCPLeaseTime::Infinite);
     }
 
-    let num_part: String = input.chars().take_while(|c| c.is_digit(10)).collect();
-    let unit_part: String = input.chars().skip_while(|c| c.is_digit(10)).collect();
+    let num_part: String = input.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let unit_part: String = input.chars().skip_while(|c| c.is_ascii_digit()).collect();
 
     let value: u64 = num_part
         .parse()
