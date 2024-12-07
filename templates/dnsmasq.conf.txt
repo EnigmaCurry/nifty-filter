@@ -8,7 +8,7 @@ listen-address={{ listen_address }}    # Local IP address to bind
 domain-needed                 # Prevent upstream lookups for plain names
 bogus-priv                    # Block RFC1918 private address lookups
 no-resolv                     # Ignore /etc/resolv.conf, use upstream servers below
-{% if dns_upstream_1 == "::1" || dns_upstream_1 == "127.0.0.1" %}
+{% if dns_upstream_1.to_string() == "::1" || dns_upstream_1.to_string() == "127.0.0.1" %}
 cache-size=0                  # Do not cache results, defer to localhost resolver
 {% endif %}
 server={{ dns_upstream_1 }}                # Upstream DNS server
