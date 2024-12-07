@@ -5,7 +5,7 @@ no-resolv           # Ignore /etc/resolv.conf, use upstream servers below
 server={{ dns_upstream_1 }}
 server={{ dns_upstream_2 }}
 local=/{{ domain_lan }}/
-expand-hosts        # Expand short hostnames in /etc/hosts
+expand-hosts        # Expand short hostnames found in /etc/hosts
 
 # DHCP
 interface={{ interface_lan }}

@@ -1,5 +1,7 @@
 use std::env;
 
+pub mod dhcp_lease_time;
+pub mod domain;
 pub mod forward_route;
 pub mod icmp_type;
 pub mod interface;
@@ -12,6 +14,8 @@ pub use icmp_type::IcmpType;
 pub use interface::Interface;
 #[allow(unused_imports)]
 pub use port::Port;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::str::FromStr;
 pub use subnet::Subnet;
 
 fn get_string_var(var_name: &str) -> Result<String, String> {
@@ -127,6 +131,40 @@ pub fn get_bool(var_name: &str, errors: &mut Vec<String>, default: Option<bool>)
                     false // Dummy value
                 }
             }
+        }
+    }
+}
+
+pub fn get_ip_address(var_name: &str, errors: &mut Vec<String>) -> IpAddr {
+    match get_string_var(var_name) {
+        Ok(val) => IpAddr::from_str(&val).expect(&format!("Failed to parse IP address: {val}")),
+        Err(err) => {
+            errors.push(err);
+            IpAddr::V4(Ipv4Addr::new(127, 255, 255, 255)) // Dummy value
+        }
+    }
+}
+
+pub fn get_domain_name(var_name: &str, errors: &mut Vec<String>) -> domain::Domain {
+    match get_string_var(var_name) {
+        Ok(val) => domain::Domain::new(&val).expect(&format!("Invalid domain name: {val}")),
+        Err(err) => {
+            errors.push(err);
+            domain::Domain::new("invalid.example.com").unwrap() // Dummy value
+        }
+    }
+}
+
+pub fn get_dhcp_lease_time(
+    var_name: &str,
+    errors: &mut Vec<String>,
+) -> dhcp_lease_time::DHCPLeaseTime {
+    match get_string_var(var_name) {
+        Ok(val) => dhcp_lease_time::parse_dhcp_lease_time(&val)
+            .expect(&format!("Invalid DHCP lease time: {val}")),
+        Err(err) => {
+            errors.push(err);
+            dhcp_lease_time::DHCPLeaseTime::Infinite // Dummy value
         }
     }
 }
