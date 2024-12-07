@@ -1,12 +1,16 @@
 # dnsmasq.conf
 interface={{ interface }}
 bind-interfaces               # Bind only to explicit interface above
+except-interface=lo           # Never run on localhost interface
 listen-address={{ listen_address }}    # Local IP address to bind
 
 # DNS
 domain-needed                 # Prevent upstream lookups for plain names
 bogus-priv                    # Block RFC1918 private address lookups
 no-resolv                     # Ignore /etc/resolv.conf, use upstream servers below
+{% if dns_upstream_1 == "::1" || dns_upstream_1 == "127.0.0.1" %}
+cache-size=0                  # Do not cache results, defer to localhost resolver
+{% endif %}
 server={{ dns_upstream_1 }}                # Upstream DNS server
 server={{ dns_upstream_2 }}                # Upstream DNS server
 local=/{{ domain_lan }}/       # Authoritative local LAN domain name
