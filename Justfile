@@ -168,7 +168,7 @@ upgrade host:
 
     if [ "${MISSING_COUNT}" -gt 0 ]; then
         echo "Copying ${MISSING_COUNT} store paths to {{host}}..."
-        echo "${MISSING}" | rsync -a -e "ssh ${SSH_OPTS}" --files-from=- / ${REMOTE}:/
+        echo "${MISSING}" | rsync -a -e "ssh ${SSH_OPTS}" --rsync-path="sudo rsync" --files-from=- / ${REMOTE}:/
     else
         echo "All store paths already present."
     fi
