@@ -33,12 +33,12 @@ table ip filter {
         
         {% if tcp_accept_wan != "" %}
         # Allow access to specific TCP ports from the wan interface
-        ip iif "{{ interface_wan }}" tcp dport { {{ tcp_accept_wan }} } accept
+        iif "{{ interface_wan }}" tcp dport { {{ tcp_accept_wan }} } accept
         {% endif %}
-        
+
         {% if udp_accept_wan != "" %}
-        # Allow access to specific UDP port from the wan interface
-        ip iif "{{ interface_wan }}" udp dport { {{ udp_accept_lan }} } accept
+        # Allow access to specific UDP ports from the wan interface
+        iif "{{ interface_wan }}" udp dport { {{ udp_accept_wan }} } accept
         {% endif %}
 
         # Drop and log everything else
