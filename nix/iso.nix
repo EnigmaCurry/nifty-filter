@@ -56,6 +56,9 @@
 
     Setup:
 
+     0. If network is not up, configure it:
+          sudo nmtui
+
      1. Add your SSH public key (from your workstation):
           ssh-copy-id admin@<this-host>
 
