@@ -35,6 +35,7 @@
     parted
     dosfstools
     e2fsprogs
+    git
   ];
 
   # Ship the default env file where the installer can find it
