@@ -10,6 +10,25 @@
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
       pkgsFor = system: nixpkgs.legacyPackages.${system};
+
+      # Build a NixOS system with nifty-filter for a given architecture
+      mkRouterSystem = system: nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          self.nixosModules.default
+          ./nix/system.nix
+        ];
+      };
+
+      # Build an ISO image for a given architecture
+      mkRouterIso = system: nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          self.nixosModules.default
+          ./nix/system.nix
+          ./nix/iso.nix
+        ];
+      };
     in
     {
       packages = forAllSystems (system:
@@ -26,9 +45,17 @@
               mainProgram = "nifty-filter";
             };
           };
+
+          iso = (mkRouterIso system).config.system.build.isoImage;
+
           default = self.packages.${system}.nifty-filter;
         }
       );
+
+      nixosConfigurations = {
+        router-x86_64 = mkRouterSystem "x86_64-linux";
+        router-aarch64 = mkRouterSystem "aarch64-linux";
+      };
 
       nixosModules.default = import ./nix/module.nix self;
 
