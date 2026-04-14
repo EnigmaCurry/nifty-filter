@@ -61,6 +61,9 @@ in
         mkdir -p ${configDir}
         cp ${./default-router.env} ${cfg.configPath}
         chmod 0600 ${cfg.configPath}
+        mkdir -p ${configDir}/ssh
+        touch ${configDir}/ssh/authorized_keys
+        chmod 0600 ${configDir}/ssh/authorized_keys
       '';
     };
 

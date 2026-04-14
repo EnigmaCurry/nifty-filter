@@ -141,3 +141,8 @@ clean *args: clean-profile
 # Clean profile artifacts only
 clean-profile:
     rm -rf *.profraw *.profdata
+
+# Clean old nix ISO builds
+clean-nix:
+    rm -f result
+    nix-collect-garbage -d

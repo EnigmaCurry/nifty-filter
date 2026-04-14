@@ -58,9 +58,19 @@
   # --- SSH ---
   services.openssh = {
     enable = true;
+    # Persist host keys on /var so they survive image upgrades
+    hostKeys = [
+      { path = "/var/nifty-filter/ssh/ssh_host_ed25519_key"; type = "ed25519"; }
+      { path = "/var/nifty-filter/ssh/ssh_host_rsa_key"; type = "rsa"; bits = 4096; }
+    ];
     settings = {
       PermitRootLogin = "no";
       PasswordAuthentication = false;
+      KbdInteractiveAuthentication = false;
+      X11Forwarding = false;
+      MaxAuthTries = 3;
+      ClientAliveInterval = 300;
+      ClientAliveCountMax = 2;
     };
   };
 
@@ -69,9 +79,10 @@
   users.users.admin = {
     isNormalUser = true;
     extraGroups = [ "wheel" ];
-    openssh.authorizedKeys.keys = [
-      # Populated from /var/nifty-filter/authorized_keys via bind mount
-      # or baked into the image at build time
+    openssh.authorizedKeys.keyFiles = [
+      # Reads authorized keys from /var at activation time.
+      # Place your public keys in this file on the /var partition.
+      /var/nifty-filter/ssh/authorized_keys
     ];
   };
   security.sudo.wheelNeedsPassword = false;
