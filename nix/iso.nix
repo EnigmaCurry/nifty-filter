@@ -30,8 +30,11 @@
   networking.networkmanager.enable = true;
 
   # Install script and tools available in PATH
-  environment.systemPackages = [
-    (pkgs.writeShellScriptBin "nifty-install" (builtins.readFile ./nifty-install.sh))
+  environment.systemPackages = with pkgs; [
+    (writeShellScriptBin "nifty-install" (builtins.readFile ./nifty-install.sh))
+    parted
+    dosfstools
+    e2fsprogs
   ];
 
   # Ship the default env file where the installer can find it
