@@ -177,7 +177,7 @@ upgrade host:
     ssh ${SSH_OPTS} ${REMOTE} bash -s -- "${SYSTEM_PATH}" <<'REMOTE_SCRIPT'
     set -eo pipefail
     SYSTEM_PATH="$1"
-    sudo nix-env -p /nix/var/nix/profiles/system --set "${SYSTEM_PATH}"
+    sudo ln -sfn "${SYSTEM_PATH}" /nix/var/nix/profiles/system
     sudo "${SYSTEM_PATH}/bin/switch-to-configuration" boot
     sudo mount -o remount,ro /nix/store
     sudo mount -o remount,ro /
