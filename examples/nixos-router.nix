@@ -1,57 +1,30 @@
-# Example NixOS router configuration using nifty-filter
+# Example: using the nifty-filter NixOS module in your own system
 #
-# This shows how to use the nifty-filter NixOS module in a flake-based config.
+# The module provides an immutable-friendly service that reads
+# /var/nifty-filter/router.env at boot and applies nftables rules.
 #
 # In your flake.nix:
 #
 #   inputs.nifty-filter.url = "github:EnigmaCurry/nifty-filter/nixos";
 #
-#   nixosConfigurations.router = nixpkgs.lib.nixosSystem {
-#     system = "x86_64-linux";
+#   nixosConfigurations.my-router = nixpkgs.lib.nixosSystem {
 #     modules = [
 #       nifty-filter.nixosModules.default
-#       ./configuration.nix  # this file
+#       ./configuration.nix
 #     ];
 #   };
+#
+# Then place your router.env on the /var partition:
+#
+#   /var/nifty-filter/router.env
+#
+# A default env file is seeded on first boot if none exists.
+# Edit it and reboot (or `systemctl restart nifty-filter`) to apply.
 { config, pkgs, ... }:
 
 {
-  networking.hostName = "router";
+  services.nifty-filter.enable = true;
 
-  services.nifty-filter = {
-    enable = true;
-
-    interfaces = {
-      lan = "enp1s0";
-      wan = "enp2s0";
-    };
-
-    subnet.lan = "192.168.10.1/24";
-
-    icmp.acceptLan = [
-      "echo-request"
-      "echo-reply"
-      "destination-unreachable"
-      "time-exceeded"
-    ];
-
-    tcp = {
-      acceptLan = [ 22 80 443 ];
-      # Forward port 8080 on LAN to an internal web server
-      forwardLan = [
-        { incomingPort = 8080; destinationIp = "192.168.10.50"; destinationPort = 80; }
-      ];
-      # Expose an internal service to the WAN
-      forwardWan = [
-        { incomingPort = 443; destinationIp = "192.168.10.50"; destinationPort = 443; }
-      ];
-    };
-
-    udp = {
-      # Forward DNS to an internal resolver
-      forwardLan = [
-        { incomingPort = 53; destinationIp = "192.168.10.2"; destinationPort = 53; }
-      ];
-    };
-  };
+  # Optional: override the config path
+  # services.nifty-filter.configPath = "/var/my-custom/firewall.env";
 }

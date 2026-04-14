@@ -1,153 +1,34 @@
-# NixOS module for nifty-filter
-# Usage: in your NixOS configuration flake, add nifty-filter as an input
-# and include this module:
+# NixOS module for nifty-filter (immutable system model)
 #
-#   nixosModules = [ nifty-filter.nixosModules.default ];
+# The system root is read-only. Router configuration lives as an env file
+# on the writable /var partition:
 #
-#   services.nifty-filter = {
-#     enable = true;
-#     interfaces.lan = "enp1s0";
-#     interfaces.wan = "enp2s0";
-#     subnet.lan = "192.168.10.1/24";
-#   };
+#   /var/nifty-filter/router.env
+#
+# A systemd service reads this file at boot and applies the nftables ruleset.
+# To reconfigure the router: edit the env file and reboot.
 self:
 
 { config, lib, pkgs, ... }:
 
 let
   cfg = config.services.nifty-filter;
-  inherit (lib) mkEnableOption mkOption types mkIf concatStringsSep;
-
-  # Build the env file content from NixOS options
-  mkEnvFile = ''
-    INTERFACE_LAN=${cfg.interfaces.lan}
-    INTERFACE_WAN=${cfg.interfaces.wan}
-    SUBNET_LAN=${cfg.subnet.lan}
-    ICMP_ACCEPT_LAN=${concatStringsSep "," cfg.icmp.acceptLan}
-    ICMP_ACCEPT_WAN=${concatStringsSep "," cfg.icmp.acceptWan}
-    TCP_ACCEPT_LAN=${concatStringsSep "," (map toString cfg.tcp.acceptLan)}
-    UDP_ACCEPT_LAN=${concatStringsSep "," (map toString cfg.udp.acceptLan)}
-    TCP_ACCEPT_WAN=${concatStringsSep "," (map toString cfg.tcp.acceptWan)}
-    UDP_ACCEPT_WAN=${concatStringsSep "," (map toString cfg.udp.acceptWan)}
-    TCP_FORWARD_LAN=${concatStringsSep "," (map formatForwardRoute cfg.tcp.forwardLan)}
-    UDP_FORWARD_LAN=${concatStringsSep "," (map formatForwardRoute cfg.udp.forwardLan)}
-    TCP_FORWARD_WAN=${concatStringsSep "," (map formatForwardRoute cfg.tcp.forwardWan)}
-    UDP_FORWARD_WAN=${concatStringsSep "," (map formatForwardRoute cfg.udp.forwardWan)}
-  '';
-
-  formatForwardRoute = r: "${toString r.incomingPort}:${r.destinationIp}:${toString r.destinationPort}";
+  inherit (lib) mkEnableOption mkOption types mkIf;
 
   nifty-filter = self.packages.${pkgs.system}.nifty-filter;
 
-  # Generate the nftables ruleset at build time
-  generatedRuleset = pkgs.runCommand "nifty-filter-ruleset" {
-    envFile = pkgs.writeText "nifty-filter.env" mkEnvFile;
-  } ''
-    ${nifty-filter}/bin/nifty-filter nftables --env-file $envFile --strict-env > $out
-  '';
-
-  forwardRouteType = types.submodule {
-    options = {
-      incomingPort = mkOption {
-        type = types.port;
-        description = "Port to listen on for incoming traffic.";
-      };
-      destinationIp = mkOption {
-        type = types.str;
-        description = "IP address to forward traffic to.";
-      };
-      destinationPort = mkOption {
-        type = types.port;
-        description = "Port on the destination host.";
-      };
-    };
-  };
+  configDir = "/var/nifty-filter";
+  envFile = "${configDir}/router.env";
 
 in
 {
   options.services.nifty-filter = {
     enable = mkEnableOption "nifty-filter nftables firewall";
 
-    interfaces = {
-      lan = mkOption {
-        type = types.str;
-        description = "LAN network interface name.";
-        example = "enp1s0";
-      };
-      wan = mkOption {
-        type = types.str;
-        description = "WAN network interface name.";
-        example = "enp2s0";
-      };
-    };
-
-    subnet = {
-      lan = mkOption {
-        type = types.str;
-        description = "LAN subnet in CIDR notation.";
-        example = "192.168.10.1/24";
-      };
-    };
-
-    icmp = {
-      acceptLan = mkOption {
-        type = types.listOf types.str;
-        default = [ "echo-request" "echo-reply" "destination-unreachable" "time-exceeded" ];
-        description = "ICMP types to accept on the LAN interface.";
-      };
-      acceptWan = mkOption {
-        type = types.listOf types.str;
-        default = [ ];
-        description = "ICMP types to accept on the WAN interface.";
-      };
-    };
-
-    tcp = {
-      acceptLan = mkOption {
-        type = types.listOf types.port;
-        default = [ 22 80 443 ];
-        description = "TCP ports to accept on the LAN interface.";
-      };
-      acceptWan = mkOption {
-        type = types.listOf types.port;
-        default = [ ];
-        description = "TCP ports to accept on the WAN interface.";
-      };
-      forwardLan = mkOption {
-        type = types.listOf forwardRouteType;
-        default = [ ];
-        description = "TCP port forwarding rules for LAN clients.";
-        example = [{ incomingPort = 8080; destinationIp = "192.168.1.100"; destinationPort = 80; }];
-      };
-      forwardWan = mkOption {
-        type = types.listOf forwardRouteType;
-        default = [ ];
-        description = "TCP port forwarding rules for WAN peers.";
-        example = [{ incomingPort = 1234; destinationIp = "192.168.1.1"; destinationPort = 1234; }];
-      };
-    };
-
-    udp = {
-      acceptLan = mkOption {
-        type = types.listOf types.port;
-        default = [ ];
-        description = "UDP ports to accept on the LAN interface.";
-      };
-      acceptWan = mkOption {
-        type = types.listOf types.port;
-        default = [ ];
-        description = "UDP ports to accept on the WAN interface.";
-      };
-      forwardLan = mkOption {
-        type = types.listOf forwardRouteType;
-        default = [ ];
-        description = "UDP port forwarding rules for LAN clients.";
-      };
-      forwardWan = mkOption {
-        type = types.listOf forwardRouteType;
-        default = [ ];
-        description = "UDP port forwarding rules for WAN peers.";
-      };
+    configPath = mkOption {
+      type = types.str;
+      default = envFile;
+      description = "Path to the router.env configuration file on the writable partition.";
     };
   };
 
@@ -155,15 +36,73 @@ in
     # Disable NixOS's built-in firewall (we replace it entirely)
     networking.firewall.enable = false;
 
-    # Enable nftables and inject the generated ruleset
-    networking.nftables = {
-      enable = true;
-      ruleset = builtins.readFile generatedRuleset;
-    };
+    # Enable nftables (we manage the ruleset ourselves via the boot service)
+    networking.nftables.enable = true;
 
-    # Ensure IP forwarding is enabled (it's a router)
+    # IP forwarding (it's a router)
     boot.kernel.sysctl = {
       "net.ipv4.ip_forward" = 1;
+    };
+
+    # Make the binary available system-wide
+    environment.systemPackages = [ nifty-filter ];
+
+    # Seed the default config on first boot if it doesn't exist
+    systemd.services.nifty-filter-init = {
+      description = "Initialize nifty-filter default configuration";
+      wantedBy = [ "multi-user.target" ];
+      before = [ "nifty-filter.service" ];
+      unitConfig.ConditionPathExists = "!${cfg.configPath}";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
+        mkdir -p ${configDir}
+        cp ${./default-router.env} ${cfg.configPath}
+        chmod 0600 ${cfg.configPath}
+      '';
+    };
+
+    # Apply nftables rules from the env file at every boot
+    systemd.services.nifty-filter = {
+      description = "Apply nifty-filter nftables ruleset";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-pre.target" "nifty-filter-init.service" ];
+      before = [ "network.target" ];
+      wants = [ "network-pre.target" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.bash}/bin/bash -c '${nifty-filter}/bin/nifty-filter nftables --env-file ${cfg.configPath} --strict-env | ${pkgs.nftables}/bin/nft -f -'";
+        ExecStop = "${pkgs.nftables}/bin/nft flush ruleset";
+      };
+
+      # If the env file is missing or invalid, don't leave the system unprotected
+      preStart = ''
+        if [ ! -f ${cfg.configPath} ]; then
+          echo "ERROR: ${cfg.configPath} not found. Applying emergency lockdown rules."
+          ${pkgs.nftables}/bin/nft -f - <<'LOCKDOWN'
+        flush ruleset
+        table ip filter {
+          chain input {
+            type filter hook input priority 0; policy drop;
+            ct state established,related accept
+            iif "lo" accept
+          }
+          chain forward {
+            type filter hook forward priority 0; policy drop;
+          }
+          chain output {
+            type filter hook output priority 0; policy drop;
+            oif "lo" accept
+          }
+        }
+        LOCKDOWN
+          exit 1
+        fi
+      '';
     };
   };
 }

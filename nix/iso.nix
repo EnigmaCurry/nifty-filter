@@ -1,5 +1,9 @@
-# ISO image configuration
-# Extends the base system with live ISO support.
+# ISO image configuration for nifty-router
+#
+# The ISO boots into an immutable system. The live environment
+# uses tmpfs for /var so edits to router.env persist until reboot.
+# Install to disk for persistent configuration.
+#
 # Build with: nix build .#iso
 { config, pkgs, lib, modulesPath, ... }:
 
@@ -9,7 +13,6 @@
     "${modulesPath}/profiles/all-hardware.nix"
   ];
 
-  # ISO settings
   isoImage = {
     isoName = "nifty-router-${config.system.nixos.label}.iso";
     volumeID = "NIFTY_ROUTER";
@@ -17,38 +20,35 @@
     makeBiosBootable = true;
   };
 
-  # Override the systemd-boot config from system.nix for the live ISO
-  # (the ISO uses its own bootloader)
+  # Override immutable filesystem mounts for the live ISO
+  # (the ISO has its own squashfs root and tmpfs overlay)
+  fileSystems = lib.mkForce {};
   boot.loader.systemd-boot.enable = lib.mkForce false;
   boot.loader.efi.canTouchEfiVariables = lib.mkForce false;
 
-  # Allow login on the console for initial setup
-  users.users.admin.initialPassword = "nifty";
+  # Allow console login for initial setup
+  users.users.admin.initialPassword = lib.mkForce "nifty";
+  services.openssh.settings.PasswordAuthentication = lib.mkForce true;
 
-  # Show setup instructions on login
   environment.etc."motd".text = ''
 
-    ┌──────────────────────────────────────────────┐
-    │          nifty-router live ISO                │
-    │                                              │
-    │  Login: admin / nifty                        │
-    │                                              │
-    │  1. Identify interfaces:  ip link            │
-    │  2. Edit config:                             │
-    │     sudo vim /etc/nixos/configuration.nix    │
-    │  3. Rebuild:                                 │
-    │     sudo nixos-rebuild switch                │
-    │  4. Install to disk:                         │
-    │     sudo nixos-install                       │
-    │                                              │
-    │  Config: /etc/nixos/configuration.nix        │
-    └──────────────────────────────────────────────┘
+    ================================
+     nifty-router live environment
+    ================================
+
+     Login: admin / nifty
+
+     Router config: /var/nifty-filter/router.env
+
+     1. Identify interfaces:   ip link
+     2. Edit config:           sudo vim /var/nifty-filter/router.env
+     3. Apply without reboot:  sudo systemctl restart nifty-filter
+     4. Install to disk:       sudo nifty-install /dev/sdX
+
+     Note: on the live ISO, /var is tmpfs.
+     Changes are lost on reboot until installed to disk.
+
+    ================================
 
   '';
-
-  # Copy the editable config into /etc/nixos on the live system
-  environment.etc."nixos/configuration.nix" = {
-    source = ./system.nix;
-    mode = "0644";
-  };
 }
