@@ -157,9 +157,9 @@ upgrade host:
     PATHS=$(nix-store -qR "${SYSTEM_PATH}")
     TOTAL=$(echo "${PATHS}" | wc -l)
 
-    # Remount root rw on the remote
-    echo "Remounting / as read-write on {{host}}..."
-    ssh ${SSH_OPTS} ${REMOTE} 'sudo mount -o remount,rw / && mount | grep "on / " | head -1'
+    # Remount root and nix store rw on the remote
+    echo "Remounting as read-write on {{host}}..."
+    ssh ${SSH_OPTS} ${REMOTE} 'sudo mount -o remount,rw / && sudo mount -o remount,rw /nix/store'
 
     # Find which paths are missing on the remote
     echo "Checking ${TOTAL} store paths..."
@@ -179,6 +179,7 @@ upgrade host:
     SYSTEM_PATH="$1"
     sudo nix-env -p /nix/var/nix/profiles/system --set "${SYSTEM_PATH}"
     sudo "${SYSTEM_PATH}/bin/switch-to-configuration" boot
+    sudo mount -o remount,ro /nix/store
     sudo mount -o remount,ro /
     REMOTE_SCRIPT
     echo ""
