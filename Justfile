@@ -134,6 +134,28 @@ iso:
     @echo "Flash to USB:"
     @echo "  sudo dd if=$(readlink -f result/iso/*.iso) of=/dev/sdX bs=4M status=progress"
 
+# Upgrade a remote router (builds locally, stages for next reboot)
+upgrade host:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    echo "Building system closure..."
+    nix build .#nixosConfigurations.router-x86_64.config.system.build.toplevel
+    SYSTEM_PATH="$(readlink -f result)"
+    echo "Copying closure to {{host}}..."
+    nix copy --to ssh://admin@{{host}} "${SYSTEM_PATH}"
+    echo "Setting boot profile on {{host}}..."
+    ssh admin@{{host}} bash -s -- "${SYSTEM_PATH}" <<'REMOTE'
+    set -eo pipefail
+    SYSTEM_PATH="$1"
+    sudo mount -o remount,rw /
+    sudo nix-env -p /nix/var/nix/profiles/system --set "${SYSTEM_PATH}"
+    sudo "${SYSTEM_PATH}/bin/switch-to-configuration" boot
+    sudo mount -o remount,ro /
+    REMOTE
+    echo ""
+    echo "Upgrade staged on {{host}}."
+    echo "Reboot to apply: ssh admin@{{host}} sudo reboot"
+
 # Clean all artifacts
 clean *args: clean-profile
     cargo clean {{args}}
