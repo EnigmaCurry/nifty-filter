@@ -159,7 +159,7 @@ upgrade host:
 
     # Remount root rw on the remote
     echo "Remounting / as read-write on {{host}}..."
-    ssh ${SSH_OPTS} ${REMOTE} sudo mount -o remount,rw /
+    ssh ${SSH_OPTS} ${REMOTE} 'sudo mount -o remount,rw / && mount | grep "on / " | head -1'
 
     # Find which paths are missing on the remote
     echo "Checking ${TOTAL} store paths..."
