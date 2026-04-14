@@ -26,7 +26,10 @@
   boot.loader.systemd-boot.enable = lib.mkForce false;
   boot.loader.efi.canTouchEfiVariables = lib.mkForce false;
 
-  # Install script available in PATH
+  # NetworkManager for live ISO network setup (nmtui)
+  networking.networkmanager.enable = true;
+
+  # Install script and tools available in PATH
   environment.systemPackages = [
     (pkgs.writeShellScriptBin "nifty-install" (builtins.readFile ./nifty-install.sh))
   ];
