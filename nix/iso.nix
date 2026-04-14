@@ -49,7 +49,7 @@
   '';
 
   # Post-login instructions
-  environment.etc."motd".text = ''
+  users.motd = ''
 
     Setup:
 
