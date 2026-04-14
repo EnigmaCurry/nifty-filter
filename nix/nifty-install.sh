@@ -253,8 +253,8 @@ chown -R 1000:100 "$MNT/var/home/admin"
 
 # Preserve host keys from the live session so the fingerprint doesn't change
 echo "==> Preserving SSH host keys..."
-for keyfile in /etc/ssh/ssh_host_*; do
-    cp "$keyfile" "$MNT/var/nifty-filter/ssh/"
+for keyfile in /var/nifty-filter/ssh/ssh_host_* /etc/ssh/ssh_host_*; do
+    [[ -f "$keyfile" ]] && cp "$keyfile" "$MNT/var/nifty-filter/ssh/"
 done
 echo "  Host fingerprint will be preserved across reboot"
 
