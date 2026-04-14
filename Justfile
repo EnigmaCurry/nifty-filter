@@ -173,12 +173,25 @@ upgrade host:
         echo "All store paths already present."
     fi
 
-    echo "Setting boot profile on {{host}}..."
+    echo "Setting boot profile and bootloader on {{host}}..."
     ssh ${SSH_OPTS} ${REMOTE} bash -s -- "${SYSTEM_PATH}" <<'REMOTE_SCRIPT'
     set -eo pipefail
     SYSTEM_PATH="$1"
     sudo ln -sfn "${SYSTEM_PATH}" /nix/var/nix/profiles/system
-    sudo "${SYSTEM_PATH}/bin/switch-to-configuration" boot
+
+    # Update kernel and initrd on the ESP
+    KERNEL=$(readlink -f "${SYSTEM_PATH}/kernel")
+    INITRD=$(readlink -f "${SYSTEM_PATH}/initrd")
+    KERNEL_PARAMS=$(cat "${SYSTEM_PATH}/kernel-params" 2>/dev/null || echo "")
+    sudo cp "${KERNEL}" /boot/kernel
+    sudo cp "${INITRD}" /boot/initrd
+    sudo tee /boot/loader/entries/nifty-filter.conf > /dev/null <<ENTRY
+title   nifty-filter
+linux   /kernel
+initrd  /initrd
+options init=${SYSTEM_PATH}/init ${KERNEL_PARAMS}
+ENTRY
+
     sudo mount -o remount,ro /nix/store
     sudo mount -o remount,ro /
     REMOTE_SCRIPT
