@@ -110,5 +110,4 @@
   # Keep it lean
   documentation.enable = false;
   services.xserver.enable = false;
-  sound.enable = false;
 }

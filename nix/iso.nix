@@ -20,9 +20,14 @@
     makeBiosBootable = true;
   };
 
-  # Override immutable filesystem mounts for the live ISO
-  # (the ISO has its own squashfs root and tmpfs overlay)
-  fileSystems = lib.mkForce {};
+  # Override immutable filesystem mounts from system.nix
+  # (the ISO module provides its own squashfs root and tmpfs overlay)
+  fileSystems."/" = lib.mkForce { };
+  fileSystems."/boot" = lib.mkForce { };
+  fileSystems."/var" = lib.mkForce { device = "tmpfs"; fsType = "tmpfs"; };
+  fileSystems."/home" = lib.mkForce { device = "tmpfs"; fsType = "tmpfs"; };
+  fileSystems."/root" = lib.mkForce { device = "tmpfs"; fsType = "tmpfs"; };
+  fileSystems."/tmp" = lib.mkForce { device = "tmpfs"; fsType = "tmpfs"; };
   boot.loader.systemd-boot.enable = lib.mkForce false;
   boot.loader.efi.canTouchEfiVariables = lib.mkForce false;
 
