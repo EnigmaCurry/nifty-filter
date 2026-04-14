@@ -79,13 +79,14 @@
   users.users.admin = {
     isNormalUser = true;
     extraGroups = [ "wheel" ];
-    openssh.authorizedKeys.keyFiles = [
-      # Reads authorized keys from /var at activation time.
-      # Place your public keys in this file on the /var partition.
-      /var/nifty-filter/ssh/authorized_keys
-    ];
+    # Authorized keys are read at runtime from /var via AuthorizedKeysFile below
   };
   security.sudo.wheelNeedsPassword = false;
+
+  # Read SSH authorized keys from /var at runtime (not build time)
+  services.openssh.authorizedKeysFiles = [
+    "/var/nifty-filter/ssh/%u_authorized_keys"
+  ];
 
   # --- Minimal packages ---
   environment.systemPackages = with pkgs; [
