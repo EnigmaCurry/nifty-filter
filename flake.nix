@@ -21,9 +21,12 @@
         ];
       };
 
+      version = self.shortRev or "dirty";
+
       # Build an ISO image for a given architecture
       mkRouterIso = system: nixpkgs.lib.nixosSystem {
         inherit system;
+        specialArgs = { inherit version; };
         modules = [
           self.nixosModules.default
           ./nix/system.nix

@@ -5,7 +5,7 @@
 # Install to disk for persistent configuration.
 #
 # Build with: nix build .#iso
-{ config, pkgs, lib, modulesPath, ... }:
+{ config, pkgs, lib, modulesPath, version ? "unknown", ... }:
 
 {
   imports = [
@@ -13,7 +13,7 @@
     "${modulesPath}/profiles/all-hardware.nix"
   ];
 
-  image.baseName = lib.mkForce "nifty-filter-${config.system.nixos.label}";
+  image.baseName = lib.mkForce "nifty-filter-${version}";
   isoImage = {
     volumeID = "NIFTY_FILTER";
     makeEfiBootable = true;
