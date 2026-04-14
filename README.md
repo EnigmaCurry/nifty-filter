@@ -29,11 +29,11 @@ reboot to apply.
 nix build .#iso
 ```
 
-The ISO image will be at `result/iso/nifty-router-*.iso`. Flash it to
+The ISO image will be at `result/iso/nifty-filter-*.iso`. Flash it to
 a USB drive:
 
 ```bash
-sudo dd if=result/iso/nifty-router-*.iso of=/dev/sdX bs=4M status=progress
+sudo dd if=result/iso/nifty-filter-*.iso of=/dev/sdX bs=4M status=progress
 ```
 
 ### Boot and initial setup

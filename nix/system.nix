@@ -7,7 +7,7 @@
 
 {
   system.stateVersion = "25.05";
-  networking.hostName = "nifty-router";
+  networking.hostName = "nifty-filter";
 
   # Boot (filesystem mounts are in filesystem.nix, not here,
   # so the ISO can provide its own without conflicts)

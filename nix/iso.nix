@@ -1,4 +1,4 @@
-# ISO image configuration for nifty-router
+# ISO image configuration for nifty-filter
 #
 # The ISO boots into an immutable system. The live environment
 # uses tmpfs for /var so edits to router.env persist until reboot.
@@ -15,7 +15,7 @@
 
   image.baseName = lib.mkForce "nifty-filter-${config.system.nixos.label}";
   isoImage = {
-    volumeID = "NIFTY_ROUTER";
+    volumeID = "NIFTY_FILTER";
     makeEfiBootable = true;
     makeBiosBootable = true;
   };
