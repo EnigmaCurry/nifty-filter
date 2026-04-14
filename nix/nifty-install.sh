@@ -183,8 +183,8 @@ fi
 
 echo "==> Formatting partitions..."
 mkfs.vfat -F 32 -n NIFTY_BOOT "$PART_BOOT"
-mkfs.ext4 -L NIFTY_ROOT -q "$PART_ROOT"
-mkfs.ext4 -L NIFTY_VAR -q "$PART_VAR"
+mkfs.ext4 -F -L NIFTY_ROOT -q "$PART_ROOT"
+mkfs.ext4 -F -L NIFTY_VAR -q "$PART_VAR"
 
 echo "==> Mounting filesystems..."
 mount "$PART_ROOT" "$MNT"
