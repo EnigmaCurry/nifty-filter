@@ -79,14 +79,11 @@
   users.users.admin = {
     isNormalUser = true;
     extraGroups = [ "wheel" ];
-    # Authorized keys are read at runtime from /var via AuthorizedKeysFile below
+    # SSH authorized keys live in ~/.ssh/authorized_keys (standard path).
+    # Since /home is bind-mounted from /var/home, this persists across reboots.
+    # Use ssh-copy-id to add keys.
   };
   security.sudo.wheelNeedsPassword = false;
-
-  # Read SSH authorized keys from /var at runtime (not build time)
-  services.openssh.authorizedKeysFiles = [
-    "/var/nifty-filter/ssh/%u_authorized_keys"
-  ];
 
   # --- Minimal packages ---
   environment.systemPackages = with pkgs; [

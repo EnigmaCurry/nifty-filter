@@ -62,8 +62,6 @@ in
         cp ${./default-router.env} ${cfg.configPath}
         chmod 0600 ${cfg.configPath}
         mkdir -p ${configDir}/ssh
-        touch ${configDir}/ssh/admin_authorized_keys
-        chmod 0644 ${configDir}/ssh/admin_authorized_keys
       '';
     };
 

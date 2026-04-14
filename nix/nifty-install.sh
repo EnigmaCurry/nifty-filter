@@ -6,14 +6,14 @@
 # for remote config management.
 #
 # Prerequisites:
-#   1. Add your SSH public key to /var/nifty-filter/ssh/admin_authorized_keys
+#   1. ssh-copy-id admin@<host>
 #   2. Reconnect over SSH using key auth
 #   3. Run this installer
 set -euo pipefail
 
 DISK=""
 GIT_REMOTE=""
-AUTH_KEYS="/var/nifty-filter/ssh/admin_authorized_keys"
+AUTH_KEYS="/home/admin/.ssh/authorized_keys"
 SSH_DIR="/var/nifty-filter/ssh"
 
 usage() {
@@ -24,7 +24,7 @@ Install nifty-filter to a disk from the running live ISO.
 
 Before running, you must:
   1. Add your SSH public key:
-       echo 'ssh-ed25519 AAAA...' | sudo tee -a $AUTH_KEYS
+       ssh-copy-id admin@<this-host>
   2. Reconnect using key authentication
 
 Arguments:
@@ -81,8 +81,8 @@ check_ssh_auth() {
         echo "trust is established before writing to disk."
         echo ""
         echo "Steps:"
-        echo "  1. Add your public key:"
-        echo "       echo 'ssh-ed25519 AAAA...' | sudo tee -a $AUTH_KEYS"
+        echo "  1. Add your public key (from your workstation):"
+        echo "       ssh-copy-id admin@<this-host>"
         echo "  2. Disconnect and reconnect with your key:"
         echo "       ssh admin@<this-host>"
         echo "  3. Run this installer again"
@@ -125,7 +125,7 @@ if [[ ! -s "$AUTH_KEYS" ]]; then
     echo "You must add at least one SSH public key before installing."
     echo "This key will be carried into the installed system."
     echo ""
-    echo "  echo 'ssh-ed25519 AAAA...' | sudo tee -a $AUTH_KEYS"
+    echo "  ssh-copy-id admin@<this-host>"
     echo ""
     echo "Then run this installer again."
     echo ""
@@ -245,8 +245,11 @@ chmod 0600 "$MNT/var/nifty-filter/router.env"
 
 # Carry over authorized keys from the live session
 echo "==> Copying SSH authorized keys..."
-cp "$AUTH_KEYS" "$MNT/var/nifty-filter/ssh/admin_authorized_keys"
-chmod 0644 "$MNT/var/nifty-filter/ssh/admin_authorized_keys"
+mkdir -p "$MNT/var/home/admin/.ssh"
+cp "$AUTH_KEYS" "$MNT/var/home/admin/.ssh/authorized_keys"
+chmod 0700 "$MNT/var/home/admin/.ssh"
+chmod 0600 "$MNT/var/home/admin/.ssh/authorized_keys"
+chown -R 1000:100 "$MNT/var/home/admin"
 
 # Preserve host keys from the live session so the fingerprint doesn't change
 echo "==> Preserving SSH host keys..."

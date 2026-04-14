@@ -55,8 +55,6 @@
 
      1. Add your SSH public key (from your workstation):
           ssh-copy-id admin@<this-host>
-        Or manually:
-          echo 'ssh-ed25519 AAAA...' | sudo tee -a /var/nifty-filter/ssh/admin_authorized_keys
 
      2. Reconnect with key auth:
           ssh admin@<this-host>
