@@ -79,10 +79,13 @@
      2. Reconnect with key auth:
           ssh admin@<this-host>
 
-     3. Install to disk:
+     3. Identify the target disk:
+          lsblk
+
+     4. Install to disk:
           sudo nifty-install /dev/sdX
 
-     4. Reboot into the installed system
+     5. Reboot into the installed system
 
     The installer will refuse to run under password auth.
     Your SSH key and host fingerprint are preserved in the install.
