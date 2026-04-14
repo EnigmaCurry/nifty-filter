@@ -26,6 +26,14 @@
   boot.loader.systemd-boot.enable = lib.mkForce false;
   boot.loader.efi.canTouchEfiVariables = lib.mkForce false;
 
+  # Install script available in PATH
+  environment.systemPackages = [
+    (pkgs.writeShellScriptBin "nifty-install" (builtins.readFile ./nifty-install.sh))
+  ];
+
+  # Ship the default env file where the installer can find it
+  environment.etc."nifty-filter/default-router.env".source = ./default-router.env;
+
   # Allow console login for initial setup
   users.users.admin.initialPassword = lib.mkForce "nifty";
   services.openssh.settings.PasswordAuthentication = lib.mkForce true;
@@ -46,8 +54,9 @@
     Router config: /var/nifty-filter/router.env
 
      1. Identify interfaces:   ip link
-     2. Edit config:           sudo vim /var/nifty-filter/router.env
-     3. Apply without reboot:  sudo systemctl restart nifty-filter
+     2. Install to disk:       sudo nifty-install /dev/sdX
+     3. Edit config:           sudo vim /var/nifty-filter/router.env
+     4. Apply without reboot:  sudo systemctl restart nifty-filter
 
     Note: on the live ISO, /var is tmpfs.
     Changes are lost on reboot until installed to disk.

@@ -2,20 +2,21 @@
 #
 # Root is read-only. /var is the only writable partition.
 # Mutable paths (/home, /root) are bind-mounted from /var.
+# Partitions are identified by label, not device path.
 { lib, ... }:
 
 {
   fileSystems."/" = {
-    device = lib.mkDefault "/dev/vda2";
+    device = "/dev/disk/by-label/NIFTY_ROOT";
     fsType = "ext4";
     options = [ "ro" ];
   };
   fileSystems."/boot" = {
-    device = lib.mkDefault "/dev/vda1";
+    device = "/dev/disk/by-label/NIFTY_BOOT";
     fsType = "vfat";
   };
   fileSystems."/var" = {
-    device = lib.mkDefault "/dev/vdb1";
+    device = "/dev/disk/by-label/NIFTY_VAR";
     fsType = "ext4";
     options = [ "rw" "noatime" ];
     neededForBoot = true;
