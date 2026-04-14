@@ -51,15 +51,23 @@
   # Post-login instructions
   environment.etc."motd".text = ''
 
-    Router config: /var/nifty-filter/router.env
+    Setup:
 
-     1. Identify interfaces:   ip link
-     2. Install to disk:       sudo nifty-install /dev/sdX
-     3. Edit config:           sudo vim /var/nifty-filter/router.env
-     4. Apply without reboot:  sudo systemctl restart nifty-filter
+     1. Add your SSH public key (from your workstation):
+          ssh-copy-id admin@<this-host>
+        Or manually:
+          echo 'ssh-ed25519 AAAA...' | sudo tee -a /var/nifty-filter/ssh/admin_authorized_keys
 
-    Note: on the live ISO, /var is tmpfs.
-    Changes are lost on reboot until installed to disk.
+     2. Reconnect with key auth:
+          ssh admin@<this-host>
+
+     3. Install to disk:
+          sudo nifty-install /dev/sdX
+
+     4. Reboot into the installed system
+
+    The installer will refuse to run under password auth.
+    Your SSH key and host fingerprint are preserved in the install.
 
   '';
 }
