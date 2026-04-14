@@ -15,6 +15,20 @@
   boot.loader.efi.canTouchEfiVariables = lib.mkDefault false;
   boot.kernelPackages = pkgs.linuxPackages_latest;
 
+  # Include common disk/filesystem drivers in initrd
+  boot.initrd.availableKernelModules = [
+    # Virtio (QEMU/KVM)
+    "virtio_pci" "virtio_blk" "virtio_scsi" "virtio_net"
+    # SATA/AHCI
+    "ahci" "sd_mod"
+    # NVMe
+    "nvme"
+    # USB storage
+    "usb_storage" "uas" "xhci_pci" "ehci_pci"
+    # SCSI
+    "sr_mod"
+  ];
+
   # Disable nix operations on the immutable system
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   nix.gc.automatic = false;
