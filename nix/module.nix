@@ -80,7 +80,6 @@ in
         ExecStop = "${pkgs.nftables}/bin/nft flush ruleset";
       };
 
-      # If the env file is missing or invalid, don't leave the system unprotected
       preStart = ''
         if [ ! -f ${cfg.configPath} ]; then
           echo "ERROR: ${cfg.configPath} not found. Applying emergency lockdown rules."
@@ -101,6 +100,23 @@ in
           }
         }
         LOCKDOWN
+          exit 1
+        fi
+
+        # Check ENABLED flag
+        ENABLED=$(${pkgs.gnugrep}/bin/grep -oP '^ENABLED=\K.*' ${cfg.configPath} || echo "false")
+        if [ "$ENABLED" != "true" ]; then
+          echo ""
+          echo "============================================"
+          echo " nifty-filter is not enabled."
+          echo ""
+          echo " Configure your router:"
+          echo "   sudo vim ${cfg.configPath}"
+          echo ""
+          echo " Set your interfaces (ip link to identify),"
+          echo " then set ENABLED=true and reboot."
+          echo "============================================"
+          echo ""
           exit 1
         fi
       '';
