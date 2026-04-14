@@ -13,7 +13,7 @@
     "${modulesPath}/profiles/all-hardware.nix"
   ];
 
-  image.baseName = "nifty-router-${config.system.nixos.label}";
+  image.baseName = lib.mkForce "nifty-router-${config.system.nixos.label}";
   isoImage = {
     volumeID = "NIFTY_ROUTER";
     makeEfiBootable = true;
