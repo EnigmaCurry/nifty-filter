@@ -17,6 +17,7 @@
         modules = [
           self.nixosModules.default
           ./nix/system.nix
+          ./nix/filesystem.nix
         ];
       };
 

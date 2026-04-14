@@ -9,31 +9,10 @@
   system.stateVersion = "25.05";
   networking.hostName = "nifty-router";
 
-  # --- Immutable root filesystem ---
-  fileSystems."/" = {
-    device = lib.mkDefault "/dev/vda2";
-    fsType = "ext4";
-    options = [ "ro" ];
-  };
-  fileSystems."/boot" = {
-    device = lib.mkDefault "/dev/vda1";
-    fsType = "vfat";
-  };
-  fileSystems."/var" = {
-    device = lib.mkDefault "/dev/vdb1";
-    fsType = "ext4";
-    options = [ "rw" "noatime" ];
-    neededForBoot = true;
-  };
-
-  # Bind-mount mutable paths from /var
-  fileSystems."/home" = { device = "/var/home"; options = [ "bind" ]; };
-  fileSystems."/root" = { device = "/var/root"; options = [ "bind" ]; };
-  fileSystems."/tmp" = { device = "tmpfs"; fsType = "tmpfs"; };
-
-  # Boot
-  boot.loader.systemd-boot.enable = true;
-  boot.loader.efi.canTouchEfiVariables = false;
+  # Boot (filesystem mounts are in filesystem.nix, not here,
+  # so the ISO can provide its own without conflicts)
+  boot.loader.systemd-boot.enable = lib.mkDefault true;
+  boot.loader.efi.canTouchEfiVariables = lib.mkDefault false;
   boot.kernelPackages = pkgs.linuxPackages_latest;
 
   # Disable nix operations on the immutable system
