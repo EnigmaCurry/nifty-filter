@@ -22,7 +22,7 @@
     neededForBoot = true;
   };
 
-  fileSystems."/home" = { device = "/var/home"; options = [ "bind" ]; };
-  fileSystems."/root" = { device = "/var/root"; options = [ "bind" ]; };
+  fileSystems."/home" = { device = "/var/home"; fsType = "none"; options = [ "bind" ]; };
+  fileSystems."/root" = { device = "/var/root"; fsType = "none"; options = [ "bind" ]; };
   fileSystems."/tmp" = { device = "tmpfs"; fsType = "tmpfs"; };
 }
