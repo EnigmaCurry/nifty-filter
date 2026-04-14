@@ -209,13 +209,42 @@ mkdir -p "$MNT/nix/var/nix/profiles"
 ln -sfn "$SYSTEM_PATH" "$MNT/nix/var/nix/profiles/system"
 
 echo "==> Installing bootloader..."
-NIXOS_INSTALL_BOOTLOADER=1 nixos-enter --root "$MNT" -- \
-    /run/current-system/bin/switch-to-configuration boot 2>/dev/null || true
 
-if ! ls "$MNT/boot/loader/entries/"*.conf &>/dev/null; then
-    echo "  Using bootctl to install systemd-boot..."
-    bootctl install --esp-path="$MNT/boot" --root="$MNT" 2>/dev/null || true
-fi
+# Install systemd-boot EFI binary to the ESP
+bootctl install --esp-path="$MNT/boot" --boot-path="$MNT/boot"
+
+# Find kernel and initrd from the system closure
+KERNEL=$(readlink -f "$SYSTEM_PATH/kernel")
+INITRD=$(readlink -f "$SYSTEM_PATH/initrd")
+
+echo "  Kernel: $KERNEL"
+echo "  Initrd: $INITRD"
+
+# Copy kernel and initrd to the ESP
+cp "$KERNEL" "$MNT/boot/kernel"
+cp "$INITRD" "$MNT/boot/initrd"
+
+# Read kernel params from the system
+KERNEL_PARAMS=$(cat "$SYSTEM_PATH/kernel-params" 2>/dev/null || echo "")
+
+# Create loader config
+mkdir -p "$MNT/boot/loader"
+cat > "$MNT/boot/loader/loader.conf" <<LOADER
+default nifty-filter.conf
+timeout 3
+editor no
+LOADER
+
+# Create boot entry
+mkdir -p "$MNT/boot/loader/entries"
+cat > "$MNT/boot/loader/entries/nifty-filter.conf" <<ENTRY
+title   nifty-filter
+linux   /kernel
+initrd  /initrd
+options init=$SYSTEM_PATH/init $KERNEL_PARAMS
+ENTRY
+
+echo "  Boot entry created"
 
 echo "==> Setting up /var..."
 mkdir -p "$MNT/var/nifty-filter/ssh"
