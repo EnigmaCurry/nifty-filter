@@ -141,13 +141,29 @@ upgrade host:
     echo "Building system closure..."
     nix build .#nixosConfigurations.router-x86_64.config.system.build.toplevel
     SYSTEM_PATH="$(readlink -f result)"
+    echo "System: ${SYSTEM_PATH}"
+
+    # Get all store paths in the closure
+    echo "Computing closure..."
+    PATHS=$(nix-store -qR "${SYSTEM_PATH}")
+
+    # Remount root rw on the remote
+    echo "Remounting / as read-write on {{host}}..."
+    ssh admin@{{host}} sudo mount -o remount,rw /
+
+    # Copy store paths that don't already exist on the remote
     echo "Copying closure to {{host}}..."
-    nix copy --to ssh://admin@{{host}} "${SYSTEM_PATH}"
+    for path in ${PATHS}; do
+        if ssh admin@{{host}} "[ ! -e '${path}' ]"; then
+            echo "  copying $(basename ${path})"
+            rsync -a "${path}" admin@{{host}}:/nix/store/
+        fi
+    done
+
     echo "Setting boot profile on {{host}}..."
     ssh admin@{{host}} bash -s -- "${SYSTEM_PATH}" <<'REMOTE'
     set -eo pipefail
     SYSTEM_PATH="$1"
-    sudo mount -o remount,rw /
     sudo nix-env -p /nix/var/nix/profiles/system --set "${SYSTEM_PATH}"
     sudo "${SYSTEM_PATH}/bin/switch-to-configuration" boot
     sudo mount -o remount,ro /
