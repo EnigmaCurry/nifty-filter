@@ -29,6 +29,9 @@
   # NetworkManager for live ISO network setup (nmtui)
   networking.networkmanager.enable = true;
 
+  # Disable nifty-filter service on the live ISO (no router config yet)
+  services.nifty-filter.enable = lib.mkForce false;
+
   # Install script and tools available in PATH
   environment.systemPackages = with pkgs; [
     (writeShellScriptBin "nifty-install" (builtins.readFile ./nifty-install.sh))
