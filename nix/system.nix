@@ -75,6 +75,9 @@
   };
 
   # --- User account ---
+  # SSH keys are provisioned at runtime from /var, not at build time.
+  # The installer ensures keys exist before writing to disk.
+  users.allowNoPasswordLogin = true;
   users.mutableUsers = false;
   users.users.admin = {
     isNormalUser = true;
