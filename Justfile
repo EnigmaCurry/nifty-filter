@@ -138,6 +138,15 @@ iso:
 upgrade host:
     #!/usr/bin/env bash
     set -eo pipefail
+
+    SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/nifty-upgrade-%C -o ControlPersist=60"
+    REMOTE="admin@{{host}}"
+
+    # Open persistent SSH connection (authenticates once)
+    echo "Connecting to {{host}}..."
+    ssh ${SSH_OPTS} -fN ${REMOTE}
+    trap 'ssh ${SSH_OPTS} -O exit ${REMOTE} 2>/dev/null || true' EXIT
+
     echo "Building system closure..."
     nix build .#nixosConfigurations.router-x86_64.config.system.build.toplevel
     SYSTEM_PATH="$(readlink -f result)"
@@ -146,31 +155,35 @@ upgrade host:
     # Get all store paths in the closure
     echo "Computing closure..."
     PATHS=$(nix-store -qR "${SYSTEM_PATH}")
+    TOTAL=$(echo "${PATHS}" | wc -l)
 
     # Remount root rw on the remote
     echo "Remounting / as read-write on {{host}}..."
-    ssh admin@{{host}} sudo mount -o remount,rw /
+    ssh ${SSH_OPTS} ${REMOTE} sudo mount -o remount,rw /
 
-    # Copy store paths that don't already exist on the remote
-    echo "Copying closure to {{host}}..."
-    for path in ${PATHS}; do
-        if ssh admin@{{host}} "[ ! -e '${path}' ]"; then
-            echo "  copying $(basename ${path})"
-            rsync -a "${path}" admin@{{host}}:/nix/store/
-        fi
-    done
+    # Find which paths are missing on the remote
+    echo "Checking ${TOTAL} store paths..."
+    MISSING=$(echo "${PATHS}" | ssh ${SSH_OPTS} ${REMOTE} 'while read p; do [ -e "$p" ] || echo "$p"; done')
+    MISSING_COUNT=$(echo "${MISSING}" | grep -c . || true)
+
+    if [ "${MISSING_COUNT}" -gt 0 ]; then
+        echo "Copying ${MISSING_COUNT} store paths to {{host}}..."
+        echo "${MISSING}" | rsync -a -e "ssh ${SSH_OPTS}" --files-from=- / ${REMOTE}:/
+    else
+        echo "All store paths already present."
+    fi
 
     echo "Setting boot profile on {{host}}..."
-    ssh admin@{{host}} bash -s -- "${SYSTEM_PATH}" <<'REMOTE'
+    ssh ${SSH_OPTS} ${REMOTE} bash -s -- "${SYSTEM_PATH}" <<'REMOTE_SCRIPT'
     set -eo pipefail
     SYSTEM_PATH="$1"
     sudo nix-env -p /nix/var/nix/profiles/system --set "${SYSTEM_PATH}"
     sudo "${SYSTEM_PATH}/bin/switch-to-configuration" boot
     sudo mount -o remount,ro /
-    REMOTE
+    REMOTE_SCRIPT
     echo ""
     echo "Upgrade staged on {{host}}."
-    echo "Reboot to apply: ssh admin@{{host}} sudo reboot"
+    echo "Reboot to apply: ssh ${SSH_OPTS} ${REMOTE} sudo reboot"
 
 # Clean all artifacts
 clean *args: clean-profile
