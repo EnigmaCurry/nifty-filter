@@ -170,7 +170,11 @@ upgrade host:
         echo "Copying ${MISSING_COUNT} store paths to {{host}}..."
         for path in ${MISSING}; do
             echo "  $(basename ${path})"
-            rsync -a -e "ssh ${SSH_OPTS}" --rsync-path="sudo rsync" "${path}/" "${REMOTE}:${path}/"
+            if [ -d "${path}" ]; then
+                rsync -a -e "ssh ${SSH_OPTS}" --rsync-path="sudo rsync" "${path}/" "${REMOTE}:${path}/"
+            else
+                rsync -a -e "ssh ${SSH_OPTS}" --rsync-path="sudo rsync" "${path}" "${REMOTE}:${path}"
+            fi
         done
     else
         echo "All store paths already present."
