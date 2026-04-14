@@ -30,25 +30,27 @@
   users.users.admin.initialPassword = lib.mkForce "nifty";
   services.openssh.settings.PasswordAuthentication = lib.mkForce true;
 
+  # Pre-login banner on console
+  environment.etc."issue".text = ''
+
+    \e[1mnifty-filter\e[0m live ISO (\n) \l
+    IP: \4
+
+    Login:  admin / nifty
+
+  '';
+
+  # Post-login instructions
   environment.etc."motd".text = ''
 
-    ================================
-     nifty-router live environment
-    ================================
-
-     Login: admin / nifty
-
-     Router config: /var/nifty-filter/router.env
+    Router config: /var/nifty-filter/router.env
 
      1. Identify interfaces:   ip link
      2. Edit config:           sudo vim /var/nifty-filter/router.env
      3. Apply without reboot:  sudo systemctl restart nifty-filter
-     4. Install to disk:       sudo nifty-install /dev/sdX
 
-     Note: on the live ISO, /var is tmpfs.
-     Changes are lost on reboot until installed to disk.
-
-    ================================
+    Note: on the live ISO, /var is tmpfs.
+    Changes are lost on reboot until installed to disk.
 
   '';
 }
