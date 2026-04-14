@@ -211,7 +211,7 @@ ln -sfn "$SYSTEM_PATH" "$MNT/nix/var/nix/profiles/system"
 echo "==> Installing bootloader..."
 
 # Install systemd-boot EFI binary to the ESP
-bootctl install --esp-path="$MNT/boot" --boot-path="$MNT/boot"
+bootctl install --esp-path="$MNT/boot"
 
 # Find kernel and initrd from the system closure
 KERNEL=$(readlink -f "$SYSTEM_PATH/kernel")
