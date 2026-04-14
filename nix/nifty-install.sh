@@ -193,7 +193,9 @@ mount "$PART_BOOT" "$MNT/boot"
 mount "$PART_VAR" "$MNT/var"
 
 echo "==> Copying system closure to disk..."
-SYSTEM_PATH=$(readlink -f /run/current-system)
+# Use the installed system closure (built for disk boot), not the live ISO system
+SYSTEM_PATH=$(cat /etc/nifty-filter/installed-system)
+echo "  System: $SYSTEM_PATH"
 
 mkdir -p "$MNT/nix/store"
 nix-store -qR "$SYSTEM_PATH" | while read -r path; do

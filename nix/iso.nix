@@ -5,7 +5,7 @@
 # Install to disk for persistent configuration.
 #
 # Build with: nix build .#iso
-{ config, pkgs, lib, modulesPath, version ? "unknown", ... }:
+{ config, pkgs, lib, modulesPath, version ? "unknown", installedToplevel, ... }:
 
 {
   imports = [
@@ -43,6 +43,13 @@
 
   # Ship the default env file where the installer can find it
   environment.etc."nifty-filter/default-router.env".source = ./default-router.env;
+
+  # Make the installed system closure available to the installer.
+  # This is the disk-based system (with filesystem.nix), not the live ISO system.
+  environment.etc."nifty-filter/installed-system".text = "${installedToplevel}";
+
+  # Include the installed system closure in the ISO's nix store
+  isoImage.storeContents = [ installedToplevel ];
 
   # Allow console login for initial setup
   users.users.admin.initialPassword = lib.mkForce "nifty";

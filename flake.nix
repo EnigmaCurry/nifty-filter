@@ -23,16 +23,24 @@
 
       version = self.shortRev or "dirty";
 
-      # Build an ISO image for a given architecture
-      mkRouterIso = system: nixpkgs.lib.nixosSystem {
-        inherit system;
-        specialArgs = { inherit version; };
-        modules = [
-          self.nixosModules.default
-          ./nix/system.nix
-          ./nix/iso.nix
-        ];
-      };
+      # Build an ISO image for a given architecture.
+      # The ISO embeds the installed system closure so the installer
+      # can copy it to disk (the ISO's own system boots from squashfs
+      # and can't be used as a disk-based system).
+      mkRouterIso = system:
+        let
+          installedSystem = mkRouterSystem system;
+          installedToplevel = installedSystem.config.system.build.toplevel;
+        in
+        nixpkgs.lib.nixosSystem {
+          inherit system;
+          specialArgs = { inherit version installedToplevel; };
+          modules = [
+            self.nixosModules.default
+            ./nix/system.nix
+            ./nix/iso.nix
+          ];
+        };
     in
     {
       packages = forAllSystems (system:
