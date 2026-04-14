@@ -124,6 +124,16 @@ release:
     git tag "v${CURRENT_VERSION}"; \
     git push "${GIT_REMOTE}" tag "v${CURRENT_VERSION}";
 
+# Build NixOS router ISO image
+iso:
+    nix build .#iso
+    @echo ""
+    @echo "ISO built successfully:"
+    @echo "  $(readlink -f result/iso/*.iso)"
+    @echo ""
+    @echo "Flash to USB:"
+    @echo "  sudo dd if=$(readlink -f result/iso/*.iso) of=/dev/sdX bs=4M status=progress"
+
 # Clean all artifacts
 clean *args: clean-profile
     cargo clean {{args}}

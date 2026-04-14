@@ -13,8 +13,8 @@
     "${modulesPath}/profiles/all-hardware.nix"
   ];
 
+  image.fileName = "nifty-router-${config.system.nixos.label}.iso";
   isoImage = {
-    isoName = "nifty-router-${config.system.nixos.label}.iso";
     volumeID = "NIFTY_ROUTER";
     makeEfiBootable = true;
     makeBiosBootable = true;
