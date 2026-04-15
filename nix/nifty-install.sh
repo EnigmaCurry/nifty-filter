@@ -175,7 +175,7 @@ fi
 # Configure LAN subnet
 echo ""
 echo "==> Configure LAN network:"
-SUBNET_LAN=$(script-wizard ask "LAN subnet (router IP/prefix)" --default "192.168.10.1/24")
+SUBNET_LAN=$(script-wizard ask "LAN subnet (router IP/prefix)" "192.168.10.1/24")
 echo "  Subnet: $SUBNET_LAN"
 
 # Extract network info for DHCP defaults
@@ -188,11 +188,11 @@ DHCP_END="${NETWORK_BASE}.250"
 
 echo ""
 echo "==> Configure DHCP pool:"
-DHCP_START=$(script-wizard ask "DHCP pool start" --default "$DHCP_START")
-DHCP_END=$(script-wizard ask "DHCP pool end" --default "$DHCP_END")
+DHCP_START=$(script-wizard ask "DHCP pool start" "$DHCP_START")
+DHCP_END=$(script-wizard ask "DHCP pool end" "$DHCP_END")
 echo "  Pool: $DHCP_START - $DHCP_END"
 
-DNS_SERVERS=$(script-wizard ask "DNS servers for DHCP clients" --default "1.1.1.1, 1.0.0.1")
+DNS_SERVERS=$(script-wizard ask "DNS servers for DHCP clients" "1.1.1.1, 1.0.0.1")
 echo "  DNS: $DNS_SERVERS"
 
 # --- Confirm ---
