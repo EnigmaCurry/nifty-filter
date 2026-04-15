@@ -166,6 +166,14 @@ upgrade host:
     MISSING=$(echo "${PATHS}" | ssh ${SSH_OPTS} ${REMOTE} 'while read p; do [ -e "$p" ] || echo "$p"; done')
     MISSING_COUNT=$(echo "${MISSING}" | grep -c . || true)
 
+    # Check if remote is already running this system
+    CURRENT=$(ssh ${SSH_OPTS} ${REMOTE} readlink -f /nix/var/nix/profiles/system 2>/dev/null || echo "")
+    if [ "${CURRENT}" = "${SYSTEM_PATH}" ] && [ "${MISSING_COUNT}" -eq 0 ]; then
+        echo ""
+        echo "{{host}} is already up to date."
+        exit 0
+    fi
+
     if [ "${MISSING_COUNT}" -gt 0 ]; then
         echo "Copying ${MISSING_COUNT} store paths to {{host}}..."
         for path in ${MISSING}; do
@@ -176,8 +184,6 @@ upgrade host:
                 rsync -a -e "ssh ${SSH_OPTS}" --rsync-path="sudo rsync" "${path}" "${REMOTE}:${path}"
             fi
         done
-    else
-        echo "All store paths already present."
     fi
 
     echo "Setting boot profile and bootloader on {{host}}..."
