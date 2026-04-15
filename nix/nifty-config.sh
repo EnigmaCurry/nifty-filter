@@ -143,45 +143,45 @@ while true; do
     ENABLED_LABEL="Enable firewall"
     [ "$ENABLED" = "true" ] && ENABLED_LABEL="Disable firewall"
 
-    CHOICE=$(script-wizard menu "nifty-filter configuration" \
-        "Show status = show_status" \
-        "Hostname ($(get_val HOSTNAME)) = edit_hostname" \
-        "LAN subnet ($(get_val SUBNET_LAN)) = edit_subnet" \
-        "DHCP pool ($(get_dhcp_val DHCP_POOL_START)-$(get_dhcp_val DHCP_POOL_END)) = edit_dhcp_pool" \
-        "DNS servers ($(get_dhcp_val DHCP_DNS)) = edit_dns" \
-        "TCP ports LAN ($(get_val TCP_ACCEPT_LAN)) = edit_tcp_lan" \
-        "UDP ports LAN ($(get_val UDP_ACCEPT_LAN)) = edit_udp_lan" \
-        "TCP ports WAN ($(get_val TCP_ACCEPT_WAN)) = edit_tcp_wan" \
-        "UDP ports WAN ($(get_val UDP_ACCEPT_WAN)) = edit_udp_wan" \
-        "TCP forward LAN ($(get_val TCP_FORWARD_LAN)) = edit_tcpfwd_lan" \
-        "UDP forward LAN ($(get_val UDP_FORWARD_LAN)) = edit_udpfwd_lan" \
-        "TCP forward WAN ($(get_val TCP_FORWARD_WAN)) = edit_tcpfwd_wan" \
-        "UDP forward WAN ($(get_val UDP_FORWARD_WAN)) = edit_udpfwd_wan" \
-        "$ENABLED_LABEL = toggle_enabled" \
-        "Apply changes = apply_changes" \
-        "Edit router.env = edit_raw" \
-        "Edit dhcp.env = edit_dhcp_raw" \
-        "Quit = quit" \
+    CHOICE=$(script-wizard choose "nifty-filter configuration:" \
+        "Show status" \
+        "Hostname ($(get_val HOSTNAME))" \
+        "LAN subnet ($(get_val SUBNET_LAN))" \
+        "DHCP pool ($(get_dhcp_val DHCP_POOL_START)-$(get_dhcp_val DHCP_POOL_END))" \
+        "DNS servers ($(get_dhcp_val DHCP_DNS))" \
+        "TCP ports LAN ($(get_val TCP_ACCEPT_LAN))" \
+        "UDP ports LAN ($(get_val UDP_ACCEPT_LAN))" \
+        "TCP ports WAN ($(get_val TCP_ACCEPT_WAN))" \
+        "UDP ports WAN ($(get_val UDP_ACCEPT_WAN))" \
+        "TCP forward LAN ($(get_val TCP_FORWARD_LAN))" \
+        "UDP forward LAN ($(get_val UDP_FORWARD_LAN))" \
+        "TCP forward WAN ($(get_val TCP_FORWARD_WAN))" \
+        "UDP forward WAN ($(get_val UDP_FORWARD_WAN))" \
+        "$ENABLED_LABEL" \
+        "Apply changes" \
+        "Edit router.env" \
+        "Edit dhcp.env" \
+        "Quit" \
     ) || break
 
     case "$CHOICE" in
-        show_status) show_status ;;
-        edit_hostname) edit_hostname ;;
-        edit_subnet) edit_subnet ;;
-        edit_dhcp_pool) edit_dhcp_pool ;;
-        edit_dns) edit_dns ;;
-        edit_tcp_lan) edit_ports TCP_ACCEPT_LAN "TCP ports LAN" ;;
-        edit_udp_lan) edit_ports UDP_ACCEPT_LAN "UDP ports LAN" ;;
-        edit_tcp_wan) edit_ports TCP_ACCEPT_WAN "TCP ports WAN" ;;
-        edit_udp_wan) edit_ports UDP_ACCEPT_WAN "UDP ports WAN" ;;
-        edit_tcpfwd_lan) edit_forwards TCP_FORWARD_LAN "TCP forward LAN" ;;
-        edit_udpfwd_lan) edit_forwards UDP_FORWARD_LAN "UDP forward LAN" ;;
-        edit_tcpfwd_wan) edit_forwards TCP_FORWARD_WAN "TCP forward WAN" ;;
-        edit_udpfwd_wan) edit_forwards UDP_FORWARD_WAN "UDP forward WAN" ;;
-        toggle_enabled) toggle_enabled ;;
-        apply_changes) apply_changes ;;
-        edit_raw) ${EDITOR:-nano} "$ENV_FILE" ;;
-        edit_dhcp_raw) ${EDITOR:-nano} "$DHCP_FILE" ;;
-        quit) break ;;
+        "Show status") show_status ;;
+        Hostname*) edit_hostname ;;
+        "LAN subnet"*) edit_subnet ;;
+        "DHCP pool"*) edit_dhcp_pool ;;
+        "DNS servers"*) edit_dns ;;
+        "TCP ports LAN"*) edit_ports TCP_ACCEPT_LAN "TCP ports LAN" ;;
+        "UDP ports LAN"*) edit_ports UDP_ACCEPT_LAN "UDP ports LAN" ;;
+        "TCP ports WAN"*) edit_ports TCP_ACCEPT_WAN "TCP ports WAN" ;;
+        "UDP ports WAN"*) edit_ports UDP_ACCEPT_WAN "UDP ports WAN" ;;
+        "TCP forward LAN"*) edit_forwards TCP_FORWARD_LAN "TCP forward LAN" ;;
+        "UDP forward LAN"*) edit_forwards UDP_FORWARD_LAN "UDP forward LAN" ;;
+        "TCP forward WAN"*) edit_forwards TCP_FORWARD_WAN "TCP forward WAN" ;;
+        "UDP forward WAN"*) edit_forwards UDP_FORWARD_WAN "UDP forward WAN" ;;
+        "Enable firewall"|"Disable firewall") toggle_enabled ;;
+        "Apply changes") apply_changes ;;
+        "Edit router.env") ${EDITOR:-nano} "$ENV_FILE" ;;
+        "Edit dhcp.env") ${EDITOR:-nano} "$DHCP_FILE" ;;
+        "Quit") break ;;
     esac
 done
