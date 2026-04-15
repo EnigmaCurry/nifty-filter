@@ -243,6 +243,8 @@
   # --- Minimal packages ---
   environment.systemPackages = with pkgs; [
     (writeShellScriptBin "nifty-maintenance" (builtins.readFile ./nifty-maintenance.sh))
+    (writeShellScriptBin "nifty-upgrade" (builtins.readFile ./nifty-upgrade.sh))
+    git
     vim
     htop
     ethtool
@@ -257,7 +259,9 @@
       export PS1='\[\e[1;31m\][MAINTENANCE]\[\e[0m\] \u@\h:\w\$ '
       echo ""
       echo -e "\e[1;31m  *** MAINTENANCE MODE — root filesystem is READ-WRITE ***\e[0m"
-      echo "  Reboot to return to normal (read-only) mode."
+      echo ""
+      echo "  Upgrade system:  sudo nifty-upgrade"
+      echo "  Return to normal: sudo reboot"
       echo ""
     fi
   '';
