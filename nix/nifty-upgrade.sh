@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # nifty-upgrade — upgrade the system from the router itself
 #
-# Must be run in maintenance mode (sudo nifty-maintenance first).
+# Must be run in maintenance mode (nifty-maintenance first).
 # Pulls the latest source, builds the system, updates boot entries,
 # and reboots back to normal (read-only) mode.
 set -euo pipefail
@@ -15,7 +15,7 @@ REPO_REMOTE=""
 if ! grep -q 'nifty.maintenance=1' /proc/cmdline 2>/dev/null; then
     echo "ERROR: Not in maintenance mode."
     echo ""
-    echo "Run 'sudo nifty-maintenance' first to reboot into maintenance mode,"
+    echo "Run 'nifty-maintenance' first to reboot into maintenance mode,"
     echo "then run this command again."
     exit 1
 fi
@@ -25,12 +25,8 @@ echo "==> Ensuring filesystems are writable..."
 mount -o remount,rw /
 mount -o remount,rw /nix/store
 
-echo "==> Collecting garbage..."
-nix-collect-garbage -d 2>/dev/null || true
-
 # Check the source repo exists
 if [ ! -d "$REPO_DIR/.git" ]; then
-    # Try to clone from the config repo's remote
     REPO_REMOTE=$(git -C /var/nifty-filter remote get-url origin 2>/dev/null || echo "https://github.com/EnigmaCurry/nifty-filter")
     echo "==> Cloning source repo from $REPO_REMOTE..."
     git clone "$REPO_REMOTE" "$REPO_DIR"
@@ -58,7 +54,7 @@ if [ "$CURRENT" = "$SYSTEM_PATH" ]; then
     echo ""
     echo "System is already up to date."
     echo "Rebooting into normal mode..."
-    reboot
+    systemctl reboot
 fi
 
 echo "==> Updating system profile..."
@@ -80,9 +76,11 @@ printf 'title   nifty-filter (maintenance)\nlinux   /kernel\ninitrd  /initrd\nop
 
 echo "  Boot entries updated"
 
+# GC only after new profile is set, so the new system is protected.
+# Use --delete-old to remove old generations but keep the current one.
 echo "==> Collecting garbage..."
-nix-collect-garbage -d 2>/dev/null || true
+nix-collect-garbage --delete-old 2>/dev/null || true
 
 echo ""
 echo "Upgrade complete. Rebooting into normal (read-only) mode..."
-reboot
+systemctl reboot

@@ -353,7 +353,7 @@ LINKEOF
 # Write router config with user's choices
 cat > "$MNT/var/nifty-filter/router.env" <<ENVEOF
 # nifty-filter router configuration
-# Edit this file and reboot to apply changes.
+# Edit this file and systemctl reboot to apply changes.
 #
 # This file lives on the writable /var partition.
 # The rest of the system is immutable (unless booted in maintenance mode).
@@ -409,7 +409,7 @@ echo "==> Preserving SSH host keys..."
 for keyfile in /var/nifty-filter/ssh/ssh_host_* /etc/ssh/ssh_host_*; do
     [[ -f "$keyfile" ]] && cp "$keyfile" "$MNT/var/nifty-filter/ssh/"
 done
-echo "  Host fingerprint will be preserved across reboot"
+echo "  Host fingerprint will be preserved across systemctl reboot"
 
 echo "==> Initializing git repo in /var/nifty-filter..."
 git -C "$MNT/var/nifty-filter" init -b main
@@ -440,4 +440,4 @@ eject /dev/sr0 2>/dev/null || eject /dev/cdrom 2>/dev/null || true
 
 echo ""
 echo "Installation complete. Rebooting..."
-reboot
+systemctl reboot

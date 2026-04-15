@@ -15,4 +15,4 @@ echo ""
 script-wizard confirm "Reboot into maintenance mode?" || { echo "Aborted."; exit 1; }
 
 bootctl set-oneshot nifty-filter-maintenance.conf
-reboot
+systemctl reboot
