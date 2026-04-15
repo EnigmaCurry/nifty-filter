@@ -193,10 +193,10 @@ upgrade host:
     printf 'title   nifty-filter\nlinux   /kernel\ninitrd  /initrd\noptions init=%s/init %s\n' "${SYSTEM_PATH}" "${KERNEL_PARAMS}" | sudo tee /boot/loader/entries/nifty-filter.conf > /dev/null
     sudo mount -o remount,ro /nix/store
     sudo mount -o remount,ro /
+    sudo reboot
     REMOTE_SCRIPT
     echo ""
-    echo "Upgrade staged on {{host}}."
-    echo "Reboot to apply: ssh ${SSH_OPTS} ${REMOTE} sudo reboot"
+    echo "Upgrade applied. {{host}} is rebooting..."
 
 # Clean all artifacts
 clean *args: clean-profile
