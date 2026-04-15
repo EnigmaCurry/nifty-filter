@@ -415,6 +415,9 @@ if [[ -n "$GIT_REMOTE" ]]; then
     echo "  Git remote set: $GIT_REMOTE"
 fi
 
+# Make config files owned by admin
+chown -R 1000:100 "$MNT/var/nifty-filter"
+
 echo "==> Unmounting..."
 umount -R "$MNT"
 
