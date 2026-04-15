@@ -35,6 +35,11 @@ fi
 
 echo "==> Pulling latest source..."
 cd "$REPO_DIR"
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+if [ "$BRANCH" != "nixos" ]; then
+    git fetch origin nixos
+    git checkout nixos
+fi
 git pull
 
 echo "==> Building system closure..."
