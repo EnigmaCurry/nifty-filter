@@ -356,9 +356,9 @@ cat > "$MNT/var/nifty-filter/router.env" <<ENVEOF
 # Edit this file and reboot to apply changes.
 #
 # This file lives on the writable /var partition.
-HOSTNAME=${HOSTNAME}
 # The rest of the system is immutable.
 ENABLED=true
+HOSTNAME=${HOSTNAME}
 
 # Network interfaces
 INTERFACE_LAN=${INTERFACE_LAN}
