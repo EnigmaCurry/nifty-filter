@@ -121,21 +121,38 @@
   # Use systemd-networkd for runtime network config
   networking.useNetworkd = true;
 
-  # --- DHCP server for LAN clients ---
-  # Kea config is generated at boot from /var/nifty-filter/dhcp.env
-  systemd.services.nifty-dhcp = {
-    description = "Configure and start DHCP server from env file";
+  # Router uses its own dnsmasq for DNS
+  networking.nameservers = [ "127.0.0.1" ];
+
+  # --- dnsmasq: DHCP + DNS for LAN ---
+  # Config is generated at boot from /var/nifty-filter/dhcp.env
+  # Forwards DNS to upstream (Cloudflare by default).
+  services.resolved.enable = false;
+
+  systemd.services.nifty-dnsmasq = {
+    description = "dnsmasq DHCP and DNS server from env file";
     wantedBy = [ "multi-user.target" ];
     after = [ "nifty-network.service" ];
     serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
+      Type = "forking";
+      PIDFile = "/run/dnsmasq.pid";
+      ExecStart = "${pkgs.dnsmasq}/bin/dnsmasq -C /run/dnsmasq.conf";
+      ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
+      Restart = "on-failure";
     };
-    path = [ pkgs.kea pkgs.coreutils pkgs.gnugrep pkgs.gnused ];
-    script = let d = "$"; in ''
+    path = [ pkgs.gnugrep pkgs.gnused pkgs.coreutils ];
+    preStart = let d = "$"; in ''
       DHCP_ENV="/var/nifty-filter/dhcp.env"
       if [ ! -f "${d}DHCP_ENV" ]; then
-        echo "No dhcp.env found, skipping DHCP server"
+        echo "No dhcp.env found, writing minimal DNS-only config"
+        cat > /run/dnsmasq.conf <<DNSEOF
+      pid-file=/run/dnsmasq.pid
+      listen-address=127.0.0.1
+      bind-interfaces
+      no-resolv
+      server=1.1.1.1
+      server=1.0.0.1
+      DNSEOF
         exit 0
       fi
 
@@ -144,45 +161,47 @@
       DHCP_POOL_START=${d}(grep -oP '^DHCP_POOL_START=\K.*' "${d}DHCP_ENV")
       DHCP_POOL_END=${d}(grep -oP '^DHCP_POOL_END=\K.*' "${d}DHCP_ENV")
       DHCP_ROUTER=${d}(grep -oP '^DHCP_ROUTER=\K.*' "${d}DHCP_ENV")
-      DHCP_DNS=${d}(grep -oP '^DHCP_DNS=\K.*' "${d}DHCP_ENV")
+      DHCP_DNS=${d}(grep -oP '^DHCP_DNS=\K.*' "${d}DHCP_ENV" || echo "1.1.1.1, 1.0.0.1")
 
-      # Derive network address from subnet CIDR
       IFS='/' read -r ROUTER_IP PREFIX <<< "${d}DHCP_SUBNET"
-      NETWORK_BASE=${d}(echo "${d}ROUTER_IP" | sed 's/\.[0-9]*${d}//')
-      NETWORK="${d}{NETWORK_BASE}.0/${d}{PREFIX}"
 
-      mkdir -p /run/kea
-      cat > /run/kea/kea-dhcp4.conf <<KEAEOF
-      {
-        "Dhcp4": {
-          "interfaces-config": { "interfaces": ["${d}DHCP_INTERFACE"] },
-          "lease-database": {
-            "type": "memfile",
-            "name": "/var/lib/kea/dhcp4.leases",
-            "persist": true
-          },
-          "subnet4": [{
-            "id": 1,
-            "subnet": "${d}NETWORK",
-            "pools": [{ "pool": "${d}DHCP_POOL_START - ${d}DHCP_POOL_END" }],
-            "option-data": [
-              { "name": "routers", "data": "${d}DHCP_ROUTER" },
-              { "name": "domain-name-servers", "data": "${d}DHCP_DNS" }
-            ]
-          }]
-        }
-      }
-      KEAEOF
+      # Build upstream server lines from DNS list
+      DNS_SERVERS=""
+      IFS=',' read -ra DNS_ARRAY <<< "${d}DHCP_DNS"
+      for dns in "${d}{DNS_ARRAY[@]}"; do
+        dns=${d}(echo "${d}dns" | tr -d ' ')
+        DNS_SERVERS="${d}{DNS_SERVERS}
+      server=${d}dns"
+      done
 
-      mkdir -p /var/lib/kea
-      kea-dhcp4 -c /run/kea/kea-dhcp4.conf &
+      mkdir -p /var/lib/dnsmasq
+      cat > /run/dnsmasq.conf <<DNSEOF
+      # Generated from /var/nifty-filter/dhcp.env
+      pid-file=/run/dnsmasq.pid
+
+      # DNS
+      no-resolv
+      ${d}DNS_SERVERS
+      domain-needed
+      bogus-priv
+      cache-size=1000
+
+      # Listen on LAN interface and localhost
+      interface=${d}DHCP_INTERFACE
+      listen-address=${d}ROUTER_IP
+      listen-address=127.0.0.1
+      bind-interfaces
+
+      # DHCP
+      dhcp-range=${d}DHCP_POOL_START,${d}DHCP_POOL_END,24h
+      dhcp-option=option:router,${d}DHCP_ROUTER
+      dhcp-option=option:dns-server,${d}ROUTER_IP
+      dhcp-leasefile=/var/lib/dnsmasq/dnsmasq.leases
+
+      # Logging
+      log-dhcp
+      DNSEOF
     '';
-  };
-
-  # --- DNS resolver ---
-  services.resolved = {
-    enable = true;
-    settings.Resolve.FallbackDNS = [ "1.1.1.1" "1.0.0.1" ];
   };
 
   # --- SSH ---
