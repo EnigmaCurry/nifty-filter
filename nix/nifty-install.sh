@@ -394,6 +394,11 @@ DHCP_POOL_START=${DHCP_START}
 DHCP_POOL_END=${DHCP_END}
 DHCP_ROUTER=${ROUTER_IP}
 DHCP_DNS=${DNS_SERVERS}
+
+# DHCPv6 (enable and configure via nifty-config after install)
+DHCPV6_ENABLED=false
+DHCPV6_POOL_START=
+DHCPV6_POOL_END=
 DHCPEOF
 chmod 0600 "$MNT/var/nifty-filter/dhcp.env"
 

@@ -115,6 +115,53 @@ edit_dns() {
     echo "  Set DNS=$val"
 }
 
+toggle_dhcpv6() {
+    local current=$(get_dhcp_val DHCPV6_ENABLED)
+    if [ "$current" = "true" ]; then
+        set_dhcp_val DHCPV6_ENABLED false
+        # Remove DHCPv6 ports from UDP_ACCEPT_LAN
+        local udp_lan=$(get_val UDP_ACCEPT_LAN)
+        udp_lan=$(echo "$udp_lan" | sed 's/,546,547//;s/^546,547,//;s/^546,547$//')
+        set_val UDP_ACCEPT_LAN "$udp_lan"
+        echo "  DHCPv6 disabled. Removed ports 546,547 from UDP_ACCEPT_LAN."
+    else
+        set_dhcp_val DHCPV6_ENABLED true
+        # Add DHCPv6 ports to UDP_ACCEPT_LAN if not already present
+        local udp_lan=$(get_val UDP_ACCEPT_LAN)
+        if ! echo "$udp_lan" | grep -q '546'; then
+            if [ -n "$udp_lan" ]; then
+                set_val UDP_ACCEPT_LAN "${udp_lan},546,547"
+            else
+                set_val UDP_ACCEPT_LAN "546,547"
+            fi
+            echo "  Added ports 546,547 to UDP_ACCEPT_LAN."
+        fi
+        local pool_start=$(get_dhcp_val DHCPV6_POOL_START)
+        if [ -z "$pool_start" ]; then
+            echo "  DHCPv6 requires a pool range."
+            edit_dhcpv6_pool
+        fi
+        echo "  DHCPv6 enabled."
+    fi
+}
+
+edit_dhcpv6_pool() {
+    local start=$(get_dhcp_val DHCPV6_POOL_START)
+    local end=$(get_dhcp_val DHCPV6_POOL_END)
+    # Derive defaults from the IPv6 subnet if pool is not yet set
+    if [ -z "$start" ]; then
+        local subnet=$(get_val SUBNET_LAN_IPV6)
+        local prefix=$(echo "$subnet" | cut -d/ -f1 | sed 's/:[^:]*$//')
+        start="${prefix}:100"
+        end="${prefix}:1ff"
+    fi
+    start=$(script-wizard ask "DHCPv6 pool start" "$start")
+    end=$(script-wizard ask "DHCPv6 pool end" "$end")
+    set_dhcp_val DHCPV6_POOL_START "$start"
+    set_dhcp_val DHCPV6_POOL_END "$end"
+    echo "  Set DHCPv6 pool: $start - $end"
+}
+
 edit_ports() {
     local key="$1" label="$2"
     local current=$(get_val "$key")
@@ -182,6 +229,10 @@ show_status() {
     echo "  UDP_FORWARD_WAN: $(get_val UDP_FORWARD_WAN)"
     echo "  DHCP_POOL:      $(get_dhcp_val DHCP_POOL_START) - $(get_dhcp_val DHCP_POOL_END)"
     echo "  DHCP_DNS:       $(get_dhcp_val DHCP_DNS)"
+    local dhcpv6=$(get_dhcp_val DHCPV6_ENABLED)
+    if [ "$dhcpv6" = "true" ]; then
+        echo "  DHCPV6:         $(get_dhcp_val DHCPV6_POOL_START) - $(get_dhcp_val DHCPV6_POOL_END)"
+    fi
     echo ""
 }
 
@@ -266,14 +317,29 @@ menu_port_forwarding() {
 
 menu_dhcp_dns() {
     while true; do
-        local choice=$(script-wizard choose "DHCP / DNS:" \
-            "DHCP pool ($(get_dhcp_val DHCP_POOL_START) - $(get_dhcp_val DHCP_POOL_END))" \
-            "DNS servers ($(get_dhcp_val DHCP_DNS))" \
-            "Back" \
-        ) || break
+        local IPV6_ENABLED=$(get_val ENABLE_IPV6)
+        local DHCPV6_ENABLED=$(get_dhcp_val DHCPV6_ENABLED)
+
+        local items=(
+            "DHCP pool ($(get_dhcp_val DHCP_POOL_START) - $(get_dhcp_val DHCP_POOL_END))"
+            "DNS servers ($(get_dhcp_val DHCP_DNS))"
+        )
+        if [ "$IPV6_ENABLED" = "true" ]; then
+            local DHCPV6_LABEL="Enable DHCPv6"
+            [ "$DHCPV6_ENABLED" = "true" ] && DHCPV6_LABEL="Disable DHCPv6"
+            items+=("$DHCPV6_LABEL")
+            if [ "$DHCPV6_ENABLED" = "true" ]; then
+                items+=("DHCPv6 pool ($(get_dhcp_val DHCPV6_POOL_START) - $(get_dhcp_val DHCPV6_POOL_END))")
+            fi
+        fi
+        items+=("Back")
+
+        local choice=$(script-wizard choose "DHCP / DNS:" "${items[@]}") || break
         case "$choice" in
             "DHCP pool"*) edit_dhcp_pool ;;
             "DNS servers"*) edit_dns ;;
+            "Enable DHCPv6"|"Disable DHCPv6") toggle_dhcpv6 ;;
+            "DHCPv6 pool"*) edit_dhcpv6_pool ;;
             "Back") break ;;
         esac
     done

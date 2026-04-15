@@ -180,14 +180,27 @@
 
       # Add IPv6 prefix for Router Advertisements if IPv6 is enabled on LAN
       if [ "${d}ENABLE_IPV6" = "true" ] && [ -n "${d}SUBNET_LAN_IPV6" ]; then
+        DHCP_ENV="/var/nifty-filter/dhcp.env"
+        DHCPV6_ENABLED=${d}(grep -oP '^DHCPV6_ENABLED=\K.*' "${d}DHCP_ENV" 2>/dev/null || echo "false")
+        RA_MANAGED="no"
+        RA_OTHER="no"
+        if [ "${d}DHCPV6_ENABLED" = "true" ]; then
+          RA_MANAGED="yes"
+          RA_OTHER="yes"
+        fi
+        RA_AUTONOMOUS="yes"
+        if [ "${d}DHCPV6_ENABLED" = "true" ]; then
+          RA_AUTONOMOUS="no"
+        fi
         cat >> /run/systemd/network/10-lan.network <<NETEOF
 
       [IPv6SendRA]
-      Managed=no
-      OtherInformation=no
+      Managed=${d}RA_MANAGED
+      OtherInformation=${d}RA_OTHER
 
       [IPv6Prefix]
       Prefix=${d}SUBNET_LAN_IPV6
+      Autonomous=${d}RA_AUTONOMOUS
       NETEOF
       fi
 
@@ -270,8 +283,9 @@
       # Listen on LAN interface and localhost
       interface=${d}DHCP_INTERFACE
       listen-address=${d}ROUTER_IP
+      listen-address=::1
       listen-address=127.0.0.1
-      bind-interfaces
+      bind-dynamic
 
       # DHCP
       dhcp-range=${d}DHCP_POOL_START,${d}DHCP_POOL_END,24h
@@ -282,6 +296,25 @@
       # Logging
       log-dhcp
       DNSEOF
+
+      # Add DHCPv6 range if enabled
+      ROUTER_ENV="/var/nifty-filter/router.env"
+      DHCPV6_ENABLED=${d}(grep -oP '^DHCPV6_ENABLED=\K.*' "${d}DHCP_ENV" 2>/dev/null || echo "false")
+      if [ "${d}DHCPV6_ENABLED" = "true" ]; then
+        DHCPV6_POOL_START=${d}(grep -oP '^DHCPV6_POOL_START=\K.*' "${d}DHCP_ENV")
+        DHCPV6_POOL_END=${d}(grep -oP '^DHCPV6_POOL_END=\K.*' "${d}DHCP_ENV")
+        SUBNET_LAN_IPV6=${d}(grep -oP '^SUBNET_LAN_IPV6=\K.*' "${d}ROUTER_ENV" 2>/dev/null || echo "")
+        ROUTER_IPV6=${d}(echo "${d}SUBNET_LAN_IPV6" | cut -d/ -f1)
+        if [ -n "${d}DHCPV6_POOL_START" ] && [ -n "${d}DHCPV6_POOL_END" ]; then
+          cat >> /run/dnsmasq.conf <<DNSEOF
+
+      # DHCPv6
+      dhcp-range=${d}DHCPV6_POOL_START,${d}DHCPV6_POOL_END,64,24h
+      dhcp-option=option6:dns-server,[${d}ROUTER_IPV6]
+      enable-ra
+      DNSEOF
+        fi
+      fi
     '';
   };
 
