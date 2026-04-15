@@ -291,6 +291,7 @@
 
   # --- Minimal packages ---
   environment.systemPackages = with pkgs; [
+    (writeShellScriptBin "nifty-config" (builtins.readFile ./nifty-config.sh))
     (writeShellScriptBin "nifty-maintenance" (builtins.readFile ./nifty-maintenance.sh))
     (writeShellScriptBin "nifty-upgrade" (builtins.readFile ./nifty-upgrade.sh))
     git
@@ -315,8 +316,7 @@
       echo ""
     else
       echo ""
-      echo "  Configure:  nano /var/nifty-filter/router.env"
-      echo "  Apply:      systemctl restart nifty-filter"
+      echo "  Configure:  nifty-config"
       echo "  Upgrade:    nifty-upgrade"
       echo ""
     fi
