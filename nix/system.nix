@@ -242,6 +242,7 @@
 
   # --- Minimal packages ---
   environment.systemPackages = with pkgs; [
+    (writeShellScriptBin "nifty-maintenance" (builtins.readFile ./nifty-maintenance.sh))
     vim
     htop
     ethtool

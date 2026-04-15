@@ -197,6 +197,7 @@ upgrade host:
     sudo cp "${KERNEL}" /boot/kernel
     sudo cp "${INITRD}" /boot/initrd
     printf 'title   nifty-filter\nlinux   /kernel\ninitrd  /initrd\noptions init=%s/init %s\n' "${SYSTEM_PATH}" "${KERNEL_PARAMS}" | sudo tee /boot/loader/entries/nifty-filter.conf > /dev/null
+    printf 'title   nifty-filter (maintenance)\nlinux   /kernel\ninitrd  /initrd\noptions init=%s/init %s rw nifty.maintenance=1\n' "${SYSTEM_PATH}" "${KERNEL_PARAMS}" | sudo tee /boot/loader/entries/nifty-filter-maintenance.conf > /dev/null
     sudo mount -o remount,ro /nix/store
     sudo mount -o remount,ro /
     sudo reboot

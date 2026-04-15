@@ -303,7 +303,14 @@ linux   /kernel
 initrd  /initrd
 options init=$SYSTEM_PATH/init $KERNEL_PARAMS
 ENTRY
-echo "  Boot entry created"
+
+cat > "$MNT/boot/loader/entries/nifty-filter-maintenance.conf" <<ENTRY
+title   nifty-filter (maintenance)
+linux   /kernel
+initrd  /initrd
+options init=$SYSTEM_PATH/init $KERNEL_PARAMS rw nifty.maintenance=1
+ENTRY
+echo "  Boot entries created"
 
 echo "==> Setting up /var..."
 mkdir -p "$MNT/var/nifty-filter/ssh"
