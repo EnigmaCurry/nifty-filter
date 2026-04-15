@@ -65,6 +65,9 @@
 
     Login:  admin / nifty
 
+    Connect via SSH to install. Use this console
+    only if you need to configure networking (nmtui).
+
   '';
 
   # Dynamic MOTD based on whether SSH key is installed
