@@ -209,9 +209,10 @@
     dig
   ];
 
-  # Pre-login banner with interface IPs
+  # Pre-login banner with interface IPs (written to /run since / is read-only)
+  services.getty.extraArgs = [ "--issue-file" "/run/issue" ];
   systemd.services.update-issue = {
-    description = "Generate /etc/issue with interface IPs";
+    description = "Generate /run/issue with interface IPs";
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
@@ -228,7 +229,6 @@
         ip -4 -o addr show scope global | awk '{printf "  %-12s %s\n", $2, $4}'
         echo ""
       } > /run/issue
-      ln -sf /run/issue /etc/issue
     '';
   };
 
