@@ -57,6 +57,46 @@ edit_subnet() {
     echo "  Updated DHCP pool to match."
 }
 
+edit_subnet_ipv6() {
+    local current=$(get_val SUBNET_LAN_IPV6)
+    local val=$(script-wizard ask "LAN IPv6 subnet (IP/prefix)" "$current")
+    set_val SUBNET_LAN_IPV6 "$val"
+    echo "  Set SUBNET_LAN_IPV6=$val"
+}
+
+toggle_ipv6() {
+    local current=$(get_val ENABLE_IPV6)
+    if [ "$current" = "true" ]; then
+        set_val ENABLE_IPV6 false
+        echo "  IPv6 disabled."
+    else
+        set_val ENABLE_IPV6 true
+        # Prompt for IPv6 subnet if not set
+        local subnet=$(get_val SUBNET_LAN_IPV6)
+        if [ -z "$subnet" ]; then
+            echo "  IPv6 requires a LAN subnet."
+            edit_subnet_ipv6
+        fi
+        echo "  IPv6 enabled."
+    fi
+}
+
+edit_egress_ipv4() {
+    local current=$(get_val LAN_EGRESS_ALLOWED_IPV4)
+    [ -z "$current" ] && current="0.0.0.0/0"
+    local val=$(script-wizard ask "Allowed IPv4 egress CIDRs (comma-separated)" "$current")
+    set_val LAN_EGRESS_ALLOWED_IPV4 "$val"
+    echo "  Set LAN_EGRESS_ALLOWED_IPV4=$val"
+}
+
+edit_egress_ipv6() {
+    local current=$(get_val LAN_EGRESS_ALLOWED_IPV6)
+    [ -z "$current" ] && current="::/0"
+    local val=$(script-wizard ask "Allowed IPv6 egress CIDRs (comma-separated)" "$current")
+    set_val LAN_EGRESS_ALLOWED_IPV6 "$val"
+    echo "  Set LAN_EGRESS_ALLOWED_IPV6=$val"
+}
+
 edit_dhcp_pool() {
     local start=$(get_dhcp_val DHCP_POOL_START)
     local end=$(get_dhcp_val DHCP_POOL_END)
@@ -119,11 +159,19 @@ show_status() {
     echo "  HOSTNAME:       $(get_val HOSTNAME)"
     echo "  INTERFACE_WAN:  $(get_val INTERFACE_WAN)"
     echo "  INTERFACE_LAN:  $(get_val INTERFACE_LAN)"
+    echo "  ENABLE_IPV4:    $(get_val ENABLE_IPV4)"
+    echo "  ENABLE_IPV6:    $(get_val ENABLE_IPV6)"
     echo "  SUBNET_LAN:     $(get_val SUBNET_LAN)"
+    local ipv6_subnet=$(get_val SUBNET_LAN_IPV6)
+    [ -n "$ipv6_subnet" ] && echo "  SUBNET_LAN_IPV6: $ipv6_subnet"
     echo "  TCP_ACCEPT_LAN: $(get_val TCP_ACCEPT_LAN)"
     echo "  UDP_ACCEPT_LAN: $(get_val UDP_ACCEPT_LAN)"
     echo "  TCP_ACCEPT_WAN: $(get_val TCP_ACCEPT_WAN)"
     echo "  UDP_ACCEPT_WAN: $(get_val UDP_ACCEPT_WAN)"
+    local egress4=$(get_val LAN_EGRESS_ALLOWED_IPV4)
+    [ -n "$egress4" ] && echo "  EGRESS_IPV4:    $egress4"
+    local egress6=$(get_val LAN_EGRESS_ALLOWED_IPV6)
+    [ -n "$egress6" ] && echo "  EGRESS_IPV6:    $egress6"
     echo "  TCP_FORWARD_LAN: $(get_val TCP_FORWARD_LAN)"
     echo "  UDP_FORWARD_LAN: $(get_val UDP_FORWARD_LAN)"
     echo "  TCP_FORWARD_WAN: $(get_val TCP_FORWARD_WAN)"
@@ -143,41 +191,64 @@ while true; do
     ENABLED_LABEL="Enable firewall"
     [ "$ENABLED" = "true" ] && ENABLED_LABEL="Disable firewall"
 
-    CHOICE=$(script-wizard choose "nifty-filter configuration:" \
-        "Show status" \
-        "Hostname ($(get_val HOSTNAME))" \
-        "LAN subnet ($(get_val SUBNET_LAN))" \
-        "DHCP pool ($(get_dhcp_val DHCP_POOL_START)-$(get_dhcp_val DHCP_POOL_END))" \
-        "DNS servers ($(get_dhcp_val DHCP_DNS))" \
-        "TCP ports LAN ($(get_val TCP_ACCEPT_LAN))" \
-        "UDP ports LAN ($(get_val UDP_ACCEPT_LAN))" \
-        "TCP ports WAN ($(get_val TCP_ACCEPT_WAN))" \
-        "UDP ports WAN ($(get_val UDP_ACCEPT_WAN))" \
-        "TCP forward LAN ($(get_val TCP_FORWARD_LAN))" \
-        "UDP forward LAN ($(get_val UDP_FORWARD_LAN))" \
-        "TCP forward WAN ($(get_val TCP_FORWARD_WAN))" \
-        "UDP forward WAN ($(get_val UDP_FORWARD_WAN))" \
-        "$ENABLED_LABEL" \
-        "Apply changes" \
-        "Edit router.env" \
-        "Edit dhcp.env" \
-        "Quit" \
-    ) || break
+    IPV6_ENABLED=$(get_val ENABLE_IPV6)
+    IPV6_LABEL="Enable IPv6"
+    [ "$IPV6_ENABLED" = "true" ] && IPV6_LABEL="Disable IPv6"
+
+    # Build menu items — include IPv6 options only when enabled
+    MENU_ITEMS=(
+        "Show status"
+        "Hostname ($(get_val HOSTNAME))"
+        "LAN subnet ($(get_val SUBNET_LAN))"
+    )
+    if [ "$IPV6_ENABLED" = "true" ]; then
+        MENU_ITEMS+=("LAN IPv6 subnet ($(get_val SUBNET_LAN_IPV6))")
+    fi
+    MENU_ITEMS+=(
+        "DHCP pool ($(get_dhcp_val DHCP_POOL_START)-$(get_dhcp_val DHCP_POOL_END))"
+        "DNS servers ($(get_dhcp_val DHCP_DNS))"
+        "TCP ports LAN ($(get_val TCP_ACCEPT_LAN))"
+        "UDP ports LAN ($(get_val UDP_ACCEPT_LAN))"
+        "TCP ports WAN ($(get_val TCP_ACCEPT_WAN))"
+        "UDP ports WAN ($(get_val UDP_ACCEPT_WAN))"
+        "Egress filter IPv4 ($(get_val LAN_EGRESS_ALLOWED_IPV4))"
+    )
+    if [ "$IPV6_ENABLED" = "true" ]; then
+        MENU_ITEMS+=("Egress filter IPv6 ($(get_val LAN_EGRESS_ALLOWED_IPV6))")
+    fi
+    MENU_ITEMS+=(
+        "TCP forward LAN ($(get_val TCP_FORWARD_LAN))"
+        "UDP forward LAN ($(get_val UDP_FORWARD_LAN))"
+        "TCP forward WAN ($(get_val TCP_FORWARD_WAN))"
+        "UDP forward WAN ($(get_val UDP_FORWARD_WAN))"
+        "$IPV6_LABEL"
+        "$ENABLED_LABEL"
+        "Apply changes"
+        "Edit router.env"
+        "Edit dhcp.env"
+        "Quit"
+    )
+
+    CHOICE=$(script-wizard choose "nifty-filter configuration:" "${MENU_ITEMS[@]}") || break
 
     case "$CHOICE" in
         "Show status") show_status ;;
         Hostname*) edit_hostname ;;
         "LAN subnet"*) edit_subnet ;;
+        "LAN IPv6 subnet"*) edit_subnet_ipv6 ;;
         "DHCP pool"*) edit_dhcp_pool ;;
         "DNS servers"*) edit_dns ;;
         "TCP ports LAN"*) edit_ports TCP_ACCEPT_LAN "TCP ports LAN" ;;
         "UDP ports LAN"*) edit_ports UDP_ACCEPT_LAN "UDP ports LAN" ;;
         "TCP ports WAN"*) edit_ports TCP_ACCEPT_WAN "TCP ports WAN" ;;
         "UDP ports WAN"*) edit_ports UDP_ACCEPT_WAN "UDP ports WAN" ;;
+        "Egress filter IPv4"*) edit_egress_ipv4 ;;
+        "Egress filter IPv6"*) edit_egress_ipv6 ;;
         "TCP forward LAN"*) edit_forwards TCP_FORWARD_LAN "TCP forward LAN" ;;
         "UDP forward LAN"*) edit_forwards UDP_FORWARD_LAN "UDP forward LAN" ;;
         "TCP forward WAN"*) edit_forwards TCP_FORWARD_WAN "TCP forward WAN" ;;
         "UDP forward WAN"*) edit_forwards UDP_FORWARD_WAN "UDP forward WAN" ;;
+        "Enable IPv6"|"Disable IPv6") toggle_ipv6 ;;
         "Enable firewall"|"Disable firewall") toggle_enabled ;;
         "Apply changes") apply_changes ;;
         "Edit router.env") ${EDITOR:-nano} "$ENV_FILE" ;;
