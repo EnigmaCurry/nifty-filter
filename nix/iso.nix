@@ -70,17 +70,16 @@
 
   '';
 
-  # Dynamic MOTD based on whether SSH key is installed
   users.motd = "";
-  environment.etc."profile.d/motd.sh".text = ''
+
+  environment.interactiveShellInit = lib.mkForce ''
+    export PS1='\[\e[1;32m\][LIVE ISO]\[\e[0m\] \u@\h:\w\$ '
     if [ -s "$HOME/.ssh/authorized_keys" ]; then
       echo ""
       echo "  SSH key installed. Ready to install."
       echo ""
       echo "   1. Install (interactive wizard selects disk, interfaces, DHCP):"
-      echo "        sudo nifty-install"
-      echo ""
-      echo "   2. Reboot into the installed system"
+      echo "        nifty-install"
       echo ""
     else
       echo ""
@@ -96,9 +95,5 @@
       echo "        ssh admin@<this-host>"
       echo ""
     fi
-  '';
-
-  environment.interactiveShellInit = lib.mkForce ''
-    export PS1='\[\e[1;32m\][LIVE ISO]\[\e[0m\] \u@\h:\w\$ '
   '';
 }
