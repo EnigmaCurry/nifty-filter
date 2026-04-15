@@ -25,6 +25,9 @@ echo "==> Ensuring filesystems are writable..."
 mount -o remount,rw /
 mount -o remount,rw /nix/store
 
+echo "==> Collecting garbage..."
+nix-collect-garbage -d 2>/dev/null || true
+
 # Check the source repo exists
 if [ ! -d "$REPO_DIR/.git" ]; then
     # Try to clone from the config repo's remote
