@@ -112,6 +112,29 @@
     dig
   ];
 
+  # Pre-login banner with interface IPs
+  systemd.services.update-issue = {
+    description = "Generate /etc/issue with interface IPs";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    path = [ pkgs.iproute2 pkgs.gawk ];
+    script = ''
+      {
+        echo ""
+        echo -e "  \e[1mnifty-filter\e[0m"
+        echo ""
+        ip -4 -o addr show scope global | awk '{printf "  %-12s %s\n", $2, $4}'
+        echo ""
+      } > /run/issue
+      ln -sf /run/issue /etc/issue
+    '';
+  };
+
   # Keep it lean
   documentation.enable = false;
   services.xserver.enable = false;
