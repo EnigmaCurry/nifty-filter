@@ -251,6 +251,17 @@
     dig
   ];
 
+  # Maintenance mode indicator — modify PS1 and show warning
+  environment.interactiveShellInit = ''
+    if grep -q 'nifty.maintenance=1' /proc/cmdline 2>/dev/null; then
+      export PS1='\[\e[1;31m\][MAINTENANCE]\[\e[0m\] \u@\h:\w\$ '
+      echo ""
+      echo -e "\e[1;31m  *** MAINTENANCE MODE — root filesystem is READ-WRITE ***\e[0m"
+      echo "  Reboot to return to normal (read-only) mode."
+      echo ""
+    fi
+  '';
+
   # Pre-login banner with interface IPs (written to /run since / is read-only)
   services.getty.extraArgs = [ "--issue-file" "/run/issue" ];
   systemd.services.update-issue = {
