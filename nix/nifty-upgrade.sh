@@ -29,8 +29,8 @@ mount -o remount,rw /nix/store
 # Check the source repo exists
 if [ ! -d "$REPO_DIR/.git" ]; then
     REPO_REMOTE=$(git -C /var/nifty-filter remote get-url origin 2>/dev/null || echo "https://github.com/EnigmaCurry/nifty-filter")
-    echo "==> Cloning source repo from $REPO_REMOTE..."
-    git clone "$REPO_REMOTE" "$REPO_DIR"
+    echo "==> Cloning source repo from $REPO_REMOTE (branch: $TARGET_BRANCH)..."
+    git clone -b "$TARGET_BRANCH" "$REPO_REMOTE" "$REPO_DIR"
     chown -R 1000:100 "$REPO_DIR"
 fi
 
@@ -38,8 +38,8 @@ cd "$REPO_DIR"
 CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 
 # Confirm if switching branches
-if [ -n "$REQUESTED_BRANCH" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "$REQUESTED_BRANCH" ]; then
-    echo "Currently on branch '$CURRENT_BRANCH', switching to '$REQUESTED_BRANCH'."
+if [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
+    echo "Currently on branch '$CURRENT_BRANCH', upgrading to '$TARGET_BRANCH'."
     read -rp "Continue? [y/N] " confirm
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
         echo "Aborted."
@@ -47,13 +47,11 @@ if [ -n "$REQUESTED_BRANCH" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH"
         mount -o remount,ro / 2>/dev/null || true
         exit 0
     fi
-fi
-
-echo "==> Pulling latest source (branch: $TARGET_BRANCH)..."
-if [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
     git fetch origin "$TARGET_BRANCH"
     git checkout "$TARGET_BRANCH"
 fi
+
+echo "==> Pulling latest source (branch: $TARGET_BRANCH)..."
 git pull
 
 # Save the branch for future upgrades
