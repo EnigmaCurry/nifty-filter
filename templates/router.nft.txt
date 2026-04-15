@@ -94,6 +94,9 @@ table ip filter {
 
         # Allow all outgoing wan traffic
         oif "{{ interface_wan }}" accept
+
+        # Allow all outgoing lan traffic (DHCP responses, DNS, etc.)
+        oif "{{ interface_lan }}" accept
     }
 }
 
