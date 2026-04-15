@@ -1,6 +1,6 @@
 # nifty-filter
 
-nifty-filter is a read-only NixOS router distribution with an
+nifty-filter is a declarative NixOS router distribution with an
 nftables firewall, DHCP, and DNS. Configuration is driven entirely by
 env files on the writable `/var` partition. The root filesystem is
 read-only.
