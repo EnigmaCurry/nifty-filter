@@ -257,6 +257,19 @@
   };
   security.sudo.wheelNeedsPassword = false;
 
+  # Allow wheel users to reboot/poweroff without sudo
+  security.polkit.extraConfig = ''
+    polkit.addRule(function(action, subject) {
+      if ((action.id == "org.freedesktop.login1.reboot" ||
+           action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
+           action.id == "org.freedesktop.login1.power-off" ||
+           action.id == "org.freedesktop.login1.power-off-multiple-sessions") &&
+          subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+      }
+    });
+  '';
+
   # --- Minimal packages ---
   environment.systemPackages = with pkgs; [
     (writeShellScriptBin "nifty-maintenance" (builtins.readFile ./nifty-maintenance.sh))
