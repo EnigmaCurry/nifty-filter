@@ -44,6 +44,19 @@ echo "==> Building system closure..."
 SYSTEM_PATH=$(nix build .#nixosConfigurations.router-x86_64.config.system.build.toplevel --print-out-paths --no-link)
 echo "  System: $SYSTEM_PATH"
 
+# Check if already current
+CURRENT=$(readlink -f /nix/var/nix/profiles/system 2>/dev/null || echo "")
+if [ "$CURRENT" = "$SYSTEM_PATH" ]; then
+    echo ""
+    echo "System is already up to date."
+    echo "Rebooting into normal mode..."
+    reboot
+fi
+
+echo ""
+script-wizard confirm "Apply upgrade and reboot?" || { echo "Aborted."; exit 1; }
+echo ""
+
 echo "==> Updating system profile..."
 ln -sfn "$SYSTEM_PATH" /nix/var/nix/profiles/system
 

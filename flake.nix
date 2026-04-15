@@ -15,6 +15,9 @@
       # Build a NixOS system with nifty-filter for a given architecture
       mkRouterSystem = system: nixpkgs.lib.nixosSystem {
         inherit system;
+        specialArgs = {
+          scriptWizard = script-wizard.packages.${system}.default;
+        };
         modules = [
           self.nixosModules.default
           ./nix/system.nix

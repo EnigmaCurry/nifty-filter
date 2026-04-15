@@ -9,9 +9,10 @@ set -euo pipefail
 
 [[ $EUID -eq 0 ]] || { echo "Must run as root (use sudo)"; exit 1; }
 
-echo "Setting next boot to maintenance mode..."
-bootctl set-oneshot nifty-filter-maintenance.conf
-echo "Rebooting into maintenance mode..."
+echo "This will reboot into maintenance mode (read-write root)."
+echo "After maintenance, reboot to return to normal mode."
 echo ""
-echo "After maintenance, just reboot to return to normal mode."
+script-wizard confirm "Reboot into maintenance mode?" || { echo "Aborted."; exit 1; }
+
+bootctl set-oneshot nifty-filter-maintenance.conf
 reboot
