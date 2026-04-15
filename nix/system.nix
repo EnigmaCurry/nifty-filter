@@ -289,36 +289,16 @@
     overrideStrategy = "asDropin";
     serviceConfig.ExecStart = lib.mkForce [
       ""  # clear default
-      "${pkgs.bash}/bin/bash -c 'if grep -q nifty.maintenance=1 /proc/cmdline; then exec ${pkgs.shadow}/bin/login -f admin; else exec ${pkgs.util-linux}/bin/agetty --issue-file /run/issue --noclear --keep-baud tty1 115200,38400,9600 linux; fi'"
+      "${pkgs.bash}/bin/bash -c 'if grep -q nifty.maintenance=1 /proc/cmdline; then exec ${pkgs.shadow}/bin/login -f admin; else exec ${pkgs.util-linux}/bin/agetty --noclear --keep-baud tty1 115200,38400,9600 linux; fi'"
     ];
   };
+  # Pre-login banner using agetty built-in escapes (works on read-only root)
+  environment.etc."issue".text = lib.mkDefault ''
 
-  # Pre-login banner with interface IPs (written to /run since / is read-only)
-  services.getty.extraArgs = [ "--issue-file" "/run/issue" ];
-  systemd.services.update-issue = {
-    description = "Generate /run/issue with interface IPs";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-    };
-    path = [ pkgs.iproute2 pkgs.gawk ];
-    script = ''
-      {
-        echo ""
-        if grep -q 'nifty.maintenance=1' /proc/cmdline 2>/dev/null; then
-          echo -e "  \e[1;31m*** nifty-filter MAINTENANCE MODE ***\e[0m"
-        else
-          echo -e "  \e[1mnifty-filter\e[0m"
-        fi
-        echo ""
-        ip -4 -o addr show scope global | awk '{printf "  %-12s %s\n", $2, $4}'
-        echo ""
-      } > /run/issue
-    '';
-  };
+    \e[1mnifty-filter\e[0m (\n) \l
+    \4
+
+  '';
 
   # Keep it lean
   documentation.enable = false;
