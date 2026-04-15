@@ -42,6 +42,9 @@ in
     # IP forwarding (it's a router)
     boot.kernel.sysctl = {
       "net.ipv4.ip_forward" = 1;
+      "net.ipv6.conf.all.forwarding" = 1;
+      # Accept RA on WAN even with forwarding enabled (forwarding disables SLAAC)
+      "net.ipv6.conf.default.accept_ra" = 2;
     };
 
     # Make the binary available system-wide
@@ -85,7 +88,7 @@ in
           echo "ERROR: ${cfg.configPath} not found. Applying emergency lockdown rules."
           ${pkgs.nftables}/bin/nft -f - <<'LOCKDOWN'
         flush ruleset
-        table ip filter {
+        table inet filter {
           chain input {
             type filter hook input priority 0; policy drop;
             ct state established,related accept

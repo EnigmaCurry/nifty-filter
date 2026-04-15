@@ -123,31 +123,73 @@
 
       INTERFACE_WAN=${d}(grep -oP '^INTERFACE_WAN=\K.*' "${d}ENV_FILE")
       INTERFACE_LAN=${d}(grep -oP '^INTERFACE_LAN=\K.*' "${d}ENV_FILE")
-      SUBNET_LAN=${d}(grep -oP '^SUBNET_LAN=\K.*' "${d}ENV_FILE")
+      ENABLE_IPV4=${d}(grep -oP '^ENABLE_IPV4=\K.*' "${d}ENV_FILE" || echo "true")
+      ENABLE_IPV6=${d}(grep -oP '^ENABLE_IPV6=\K.*' "${d}ENV_FILE" || echo "false")
+
+      # IPv4 subnet: prefer SUBNET_LAN_IPV4, fall back to SUBNET_LAN
+      SUBNET_LAN_IPV4=${d}(grep -oP '^SUBNET_LAN_IPV4=\K.*' "${d}ENV_FILE" || grep -oP '^SUBNET_LAN=\K.*' "${d}ENV_FILE" || echo "")
+      SUBNET_LAN_IPV6=${d}(grep -oP '^SUBNET_LAN_IPV6=\K.*' "${d}ENV_FILE" || echo "")
 
       # Bring up WAN with DHCP
       ip link set "${d}INTERFACE_WAN" up
       mkdir -p /run/systemd/network
+
+      WAN_NETWORK="[Network]"
+      if [ "${d}ENABLE_IPV4" = "true" ]; then
+        WAN_NETWORK="${d}WAN_NETWORK
+      DHCP=ipv4"
+      fi
+      if [ "${d}ENABLE_IPV6" = "true" ]; then
+        WAN_NETWORK="${d}WAN_NETWORK
+      IPv6AcceptRA=yes"
+      fi
+
       cat > /run/systemd/network/10-wan.network <<NETEOF
       [Match]
       Name=${d}INTERFACE_WAN
 
-      [Network]
-      DHCP=ipv4
+      ${d}WAN_NETWORK
 
       [DHCPv4]
       UseDNS=yes
+
+      [IPv6AcceptRA]
+      UseDNS=yes
       NETEOF
 
-      # Bring up LAN with static IP
+      # Bring up LAN with static IP(s)
       ip link set "${d}INTERFACE_LAN" up
+
+      LAN_NETWORK="[Network]"
+      if [ "${d}ENABLE_IPV4" = "true" ] && [ -n "${d}SUBNET_LAN_IPV4" ]; then
+        LAN_NETWORK="${d}LAN_NETWORK
+      Address=${d}SUBNET_LAN_IPV4"
+      fi
+      if [ "${d}ENABLE_IPV6" = "true" ] && [ -n "${d}SUBNET_LAN_IPV6" ]; then
+        LAN_NETWORK="${d}LAN_NETWORK
+      Address=${d}SUBNET_LAN_IPV6
+      IPv6SendRA=yes"
+      fi
+
       cat > /run/systemd/network/10-lan.network <<NETEOF
       [Match]
       Name=${d}INTERFACE_LAN
 
-      [Network]
-      Address=${d}SUBNET_LAN
+      ${d}LAN_NETWORK
       NETEOF
+
+      # Add IPv6 prefix for Router Advertisements if IPv6 is enabled on LAN
+      if [ "${d}ENABLE_IPV6" = "true" ] && [ -n "${d}SUBNET_LAN_IPV6" ]; then
+        cat >> /run/systemd/network/10-lan.network <<NETEOF
+
+      [IPv6SendRA]
+      Managed=no
+      OtherInformation=no
+
+      [IPv6Prefix]
+      Prefix=${d}SUBNET_LAN_IPV6
+      NETEOF
+      fi
 
       # Restart networkd to pick up the new configs
       networkctl reload || systemctl restart systemd-networkd

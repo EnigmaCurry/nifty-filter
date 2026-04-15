@@ -2,7 +2,7 @@
 
 flush ruleset
 
-table ip filter {
+table inet filter {
     # Filter traffic destined for the router itself:
     chain input {
         type filter hook input priority 0; policy drop;
@@ -11,27 +11,46 @@ table ip filter {
 
         # Allow localhost loopback traffic
         iif "lo" accept
-        
+
+        {% if enable_ipv4 %}
         {% if icmp_accept_lan != "" %}
-        # Allow specific ICMP queries on lan interface
-        iif "{{ interface_lan }}" ip saddr {{ subnet_lan }} icmp type { {{ icmp_accept_lan }} } accept
+        # Allow specific ICMP queries on lan interface (IPv4)
+        iif "{{ interface_lan }}" ip saddr {{ subnet_lan_ipv4 }} icmp type { {{ icmp_accept_lan }} } accept
         {% endif %}
 
         {% if icmp_accept_wan != "" %}
-        # Allow specific ICMP queries on wan interface
-        iif "{{ interface_wan }}" ip icmp type { {{ icmp_accept_wan }} } accept
+        # Allow specific ICMP queries on wan interface (IPv4)
+        iif "{{ interface_wan }}" icmp type { {{ icmp_accept_wan }} } accept
+        {% endif %}
+        {% endif %}
+
+        {% if enable_ipv6 %}
+        {% if icmpv6_accept_lan != "" %}
+        # Allow specific ICMPv6 queries on lan interface
+        iif "{{ interface_lan }}" ip6 saddr {{ subnet_lan_ipv6 }} icmpv6 type { {{ icmpv6_accept_lan }} } accept
+        {% endif %}
+
+        {% if icmpv6_accept_wan != "" %}
+        # Allow specific ICMPv6 queries on wan interface
+        iif "{{ interface_wan }}" icmpv6 type { {{ icmpv6_accept_wan }} } accept
+        {% endif %}
         {% endif %}
 
         {% if tcp_accept_lan != "" %}
         # Allow access to specific TCP ports from the lan interface
-        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" tcp dport { {{ tcp_accept_lan }} } accept
+        {% if enable_ipv4 %}
+        ip saddr {{ subnet_lan_ipv4 }} iif "{{ interface_lan }}" tcp dport { {{ tcp_accept_lan }} } accept
+        {% endif %}
+        {% if enable_ipv6 %}
+        ip6 saddr {{ subnet_lan_ipv6 }} iif "{{ interface_lan }}" tcp dport { {{ tcp_accept_lan }} } accept
+        {% endif %}
         {% endif %}
         {% if udp_accept_lan != "" %}
         # Allow access to specific UDP ports from the lan interface
         # No source address filter — DHCP clients use 0.0.0.0 before they have a lease
         iif "{{ interface_lan }}" udp dport { {{ udp_accept_lan }} } accept
         {% endif %}
-        
+
         {% if tcp_accept_wan != "" %}
         # Allow access to specific TCP ports from the wan interface
         iif "{{ interface_wan }}" tcp dport { {{ tcp_accept_wan }} } accept
@@ -53,35 +72,59 @@ table ip filter {
         type filter hook forward priority 0; policy drop;
         # Allow existing established and related connections
         ct state established,related accept
-        # Allow all egress from lan to wan
-        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" oif "{{ interface_wan }}" accept
+
+        {% if enable_ipv4 %}
+        # Allow IPv4 egress from lan to wan (filtered by allowed destinations)
+        ip saddr {{ subnet_lan_ipv4 }} ip daddr { {{ lan_egress_allowed_ipv4 }} } iif "{{ interface_lan }}" oif "{{ interface_wan }}" accept
+        {% endif %}
+
+        {% if enable_ipv6 %}
+        # Allow IPv6 egress from lan to wan (filtered by allowed destinations)
+        ip6 saddr {{ subnet_lan_ipv6 }} ip6 daddr { {{ lan_egress_allowed_ipv6 }} } iif "{{ interface_lan }}" oif "{{ interface_wan }}" accept
+        {% endif %}
 
         {% if tcp_forward_lan.len() > 0 %}
         # DNAT forward TCP from lan
             {% for route in tcp_forward_lan.routes %}
-        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+            {% if route.is_ipv4() %}
+        ip saddr {{ subnet_lan_ipv4 }} iif "{{ interface_lan }}" ip daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+            {% else %}
+        ip6 saddr {{ subnet_lan_ipv6 }} iif "{{ interface_lan }}" ip6 daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+            {% endif %}
             {% endfor %}
         {% endif %}
         {% if udp_forward_lan.len() > 0 %}
         # DNAT forward UDP from lan
             {% for route in udp_forward_lan.routes %}
-        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+            {% if route.is_ipv4() %}
+        ip saddr {{ subnet_lan_ipv4 }} iif "{{ interface_lan }}" ip daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+            {% else %}
+        ip6 saddr {{ subnet_lan_ipv6 }} iif "{{ interface_lan }}" ip6 daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+            {% endif %}
             {% endfor %}
         {% endif %}
 
         {% if tcp_forward_wan.len() > 0 %}
         # DNAT forward TCP from wan
             {% for route in tcp_forward_wan.routes %}
-        iif "{{ interface_wan }}" daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+            {% if route.is_ipv4() %}
+        iif "{{ interface_wan }}" ip daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+            {% else %}
+        iif "{{ interface_wan }}" ip6 daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+            {% endif %}
             {% endfor %}
         {% endif %}
         {% if udp_forward_wan.len() > 0 %}
         # DNAT forward UDP from wan
             {% for route in udp_forward_wan.routes %}
-        iif "{{ interface_wan }}" daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+            {% if route.is_ipv4() %}
+        iif "{{ interface_wan }}" ip daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+            {% else %}
+        iif "{{ interface_wan }}" ip6 daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+            {% endif %}
             {% endfor %}
         {% endif %}
-        
+
         # Log and drop all other packets
         log prefix "Dropped forward packet: " drop
     }
@@ -95,12 +138,12 @@ table ip filter {
         # Allow all outgoing wan traffic
         oif "{{ interface_wan }}" accept
 
-        # Allow all outgoing lan traffic (DHCP responses, DNS, etc.)
+        # Allow all outgoing lan traffic (DHCP responses, DNS, RA, etc.)
         oif "{{ interface_lan }}" accept
     }
 }
 
-table ip nat {
+table inet nat {
     # DNAT for incoming traffic:
     # Modify destination address before routing decision in forwarding chain:
     chain prerouting {
@@ -108,7 +151,44 @@ table ip nat {
         {% if tcp_forward_lan.len() > 0 %}
         # DNAT from lan
             {% for route in tcp_forward_lan.routes %}
-        iif "{{ interface_lan }}" ip saddr {{ subnet_lan }} tcp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }}
+            {% if route.is_ipv4() %}
+        iif "{{ interface_lan }}" ip saddr {{ subnet_lan_ipv4 }} tcp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }}
+            {% else %}
+        iif "{{ interface_lan }}" ip6 saddr {{ subnet_lan_ipv6 }} tcp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }}
+            {% endif %}
+            {% endfor %}
+        {% endif %}
+
+        {% if tcp_forward_wan.len() > 0 %}
+        # DNAT from wan (TCP)
+            {% for route in tcp_forward_wan.routes %}
+            {% if route.is_ipv4() %}
+        iif "{{ interface_wan }}" tcp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }}
+            {% else %}
+        iif "{{ interface_wan }}" tcp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }}
+            {% endif %}
+            {% endfor %}
+        {% endif %}
+
+        {% if udp_forward_lan.len() > 0 %}
+        # DNAT from lan (UDP)
+            {% for route in udp_forward_lan.routes %}
+            {% if route.is_ipv4() %}
+        iif "{{ interface_lan }}" ip saddr {{ subnet_lan_ipv4 }} udp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }}
+            {% else %}
+        iif "{{ interface_lan }}" ip6 saddr {{ subnet_lan_ipv6 }} udp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }}
+            {% endif %}
+            {% endfor %}
+        {% endif %}
+
+        {% if udp_forward_wan.len() > 0 %}
+        # DNAT from wan (UDP)
+            {% for route in udp_forward_wan.routes %}
+            {% if route.is_ipv4() %}
+        iif "{{ interface_wan }}" udp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }}
+            {% else %}
+        iif "{{ interface_wan }}" udp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }}
+            {% endif %}
             {% endfor %}
         {% endif %}
     }
@@ -117,6 +197,11 @@ table ip nat {
     # Modify source address after the forwarding chain, before leaving the router:
     chain postrouting {
         type nat hook postrouting priority 100; policy accept;
-        oif "{{ interface_wan }}" iif "{{ interface_lan }}" masquerade
+        {% if enable_ipv4 %}
+        # Masquerade IPv4 LAN-to-WAN traffic (NAT)
+        meta nfproto ipv4 oif "{{ interface_wan }}" masquerade
+        {% endif %}
+        # IPv6 does not use NAT — LAN clients have globally routable addresses.
+        # The forward chain's default-deny policy protects LAN from unsolicited inbound.
     }
 }

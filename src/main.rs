@@ -50,17 +50,39 @@ enum Commands {
 struct RouterTemplate {
     interface_lan: Interface,
     interface_wan: Interface,
-    icmp_accept_wan: String,
+
+    // Protocol enablement
+    enable_ipv4: bool,
+    enable_ipv6: bool,
+
+    // IPv4 subnet (required when enable_ipv4=true)
+    subnet_lan_ipv4: String,
+    // IPv6 subnet (required when enable_ipv6=true)
+    subnet_lan_ipv6: String,
+
+    // ICMPv4
     icmp_accept_lan: String,
-    subnet_lan: Subnet,
+    icmp_accept_wan: String,
+
+    // ICMPv6
+    icmpv6_accept_lan: String,
+    icmpv6_accept_wan: String,
+
+    // Port accepts (protocol-agnostic)
     tcp_accept_lan: String,
     udp_accept_lan: String,
     tcp_accept_wan: String,
     udp_accept_wan: String,
+
+    // Forward routes
     tcp_forward_lan: ForwardRouteList,
     udp_forward_lan: ForwardRouteList,
     tcp_forward_wan: ForwardRouteList,
     udp_forward_wan: ForwardRouteList,
+
+    // Egress filtering
+    lan_egress_allowed_ipv4: String,
+    lan_egress_allowed_ipv6: String,
 }
 
 impl RouterTemplate {
@@ -68,21 +90,97 @@ impl RouterTemplate {
         let mut errors = Vec::new();
         let interface_lan = get_interface("INTERFACE_LAN", &mut errors);
         let interface_wan = get_interface("INTERFACE_WAN", &mut errors);
-        let subnet_lan = get_subnet("SUBNET_LAN", &mut errors);
 
-        let icmp_accept_lan = IcmpType::vec_to_string(&get_icmp_types(
-            "ICMP_ACCEPT_LAN",
-            &mut errors,
-            vec![
-                IcmpType::EchoRequest,
-                IcmpType::EchoReply,
-                IcmpType::DestinationUnreachable,
-                IcmpType::TimeExceeded,
-            ],
-        ));
-        let icmp_accept_wan =
-            IcmpType::vec_to_string(&get_icmp_types("ICMP_ACCEPT_WAN", &mut errors, vec![]));
+        let enable_ipv4 = get_bool("ENABLE_IPV4", &mut errors, Some(true));
+        let enable_ipv6 = get_bool("ENABLE_IPV6", &mut errors, Some(false));
 
+        if !enable_ipv4 && !enable_ipv6 {
+            errors.push("At least one of ENABLE_IPV4 or ENABLE_IPV6 must be true.".to_string());
+        }
+
+        // IPv4 subnet: try SUBNET_LAN_IPV4, fall back to SUBNET_LAN for backward compat
+        let subnet_lan_ipv4 = if enable_ipv4 {
+            let subnet = get_subnet_optional("SUBNET_LAN_IPV4", &mut errors)
+                .or_else(|| get_subnet_optional("SUBNET_LAN", &mut errors));
+            match subnet {
+                Some(s) => s.to_string(),
+                None => {
+                    errors.push("SUBNET_LAN_IPV4 (or SUBNET_LAN) is required when ENABLE_IPV4=true.".to_string());
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+
+        // IPv6 subnet
+        let subnet_lan_ipv6 = if enable_ipv6 {
+            match get_subnet_optional("SUBNET_LAN_IPV6", &mut errors) {
+                Some(s) => s.to_string(),
+                None => {
+                    errors.push("SUBNET_LAN_IPV6 is required when ENABLE_IPV6=true.".to_string());
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+
+        // ICMPv4
+        let icmp_accept_lan = if enable_ipv4 {
+            IcmpType::vec_to_string(&get_icmp_types(
+                "ICMP_ACCEPT_LAN",
+                &mut errors,
+                vec![
+                    IcmpType::EchoRequest,
+                    IcmpType::EchoReply,
+                    IcmpType::DestinationUnreachable,
+                    IcmpType::TimeExceeded,
+                ],
+            ))
+        } else {
+            String::new()
+        };
+        let icmp_accept_wan = if enable_ipv4 {
+            IcmpType::vec_to_string(&get_icmp_types("ICMP_ACCEPT_WAN", &mut errors, vec![]))
+        } else {
+            String::new()
+        };
+
+        // ICMPv6
+        let icmpv6_accept_lan = if enable_ipv6 {
+            Icmpv6Type::vec_to_string(&get_icmpv6_types(
+                "ICMPV6_ACCEPT_LAN",
+                &mut errors,
+                vec![
+                    Icmpv6Type::NdNeighborSolicit,
+                    Icmpv6Type::NdNeighborAdvert,
+                    Icmpv6Type::NdRouterSolicit,
+                    Icmpv6Type::NdRouterAdvert,
+                    Icmpv6Type::EchoRequest,
+                    Icmpv6Type::EchoReply,
+                ],
+            ))
+        } else {
+            String::new()
+        };
+        let icmpv6_accept_wan = if enable_ipv6 {
+            Icmpv6Type::vec_to_string(&get_icmpv6_types(
+                "ICMPV6_ACCEPT_WAN",
+                &mut errors,
+                vec![
+                    Icmpv6Type::NdNeighborSolicit,
+                    Icmpv6Type::NdNeighborAdvert,
+                    Icmpv6Type::DestinationUnreachable,
+                    Icmpv6Type::PacketTooBig,
+                    Icmpv6Type::TimeExceeded,
+                ],
+            ))
+        } else {
+            String::new()
+        };
+
+        // Port accepts (protocol-agnostic)
         let tcp_accept_lan = get_port_accept(
             "TCP_ACCEPT_LAN",
             &mut errors,
@@ -96,6 +194,7 @@ impl RouterTemplate {
         let udp_accept_wan =
             get_port_accept("UDP_ACCEPT_WAN", &mut errors, PortList::new("").unwrap()).to_string();
 
+        // Forward routes
         let tcp_forward_lan = get_forward_routes(
             "TCP_FORWARD_LAN",
             &mut errors,
@@ -117,6 +216,28 @@ impl RouterTemplate {
             ForwardRouteList::new("").unwrap(),
         );
 
+        // Egress filtering
+        let lan_egress_allowed_ipv4 = if enable_ipv4 {
+            get_cidr_list(
+                "LAN_EGRESS_ALLOWED_IPV4",
+                &mut errors,
+                CidrList::new("0.0.0.0/0").unwrap(),
+            )
+            .to_string()
+        } else {
+            String::new()
+        };
+        let lan_egress_allowed_ipv6 = if enable_ipv6 {
+            get_cidr_list(
+                "LAN_EGRESS_ALLOWED_IPV6",
+                &mut errors,
+                CidrList::new("::/0").unwrap(),
+            )
+            .to_string()
+        } else {
+            String::new()
+        };
+
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -124,9 +245,14 @@ impl RouterTemplate {
         Ok(RouterTemplate {
             interface_lan,
             interface_wan,
-            subnet_lan,
+            enable_ipv4,
+            enable_ipv6,
+            subnet_lan_ipv4,
+            subnet_lan_ipv6,
             icmp_accept_lan,
             icmp_accept_wan,
+            icmpv6_accept_lan,
+            icmpv6_accept_wan,
             tcp_accept_lan,
             udp_accept_lan,
             tcp_accept_wan,
@@ -135,6 +261,8 @@ impl RouterTemplate {
             udp_forward_lan,
             tcp_forward_wan,
             udp_forward_wan,
+            lan_egress_allowed_ipv4,
+            lan_egress_allowed_ipv6,
         })
     }
 }

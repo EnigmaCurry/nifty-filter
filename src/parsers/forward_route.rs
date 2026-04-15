@@ -9,40 +9,78 @@ pub struct ForwardRoute {
     pub destination_port: u16,
 }
 
+impl ForwardRoute {
+    pub fn is_ipv4(&self) -> bool {
+        self.destination_ip.is_ipv4()
+    }
+}
+
 impl FromStr for ForwardRoute {
     type Err = String;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = input.split(':').collect();
-        if parts.len() != 3 {
-            return Err(format!("Invalid forward route format: '{}'. Expected format: 'incoming_port:destination_ip:destination_port'", input));
+        // Support IPv6 bracket notation: incoming_port:[ipv6_addr]:destination_port
+        // IPv4 format remains: incoming_port:ipv4_addr:destination_port
+        if let Some(bracket_start) = input.find('[') {
+            let bracket_end = input.find(']').ok_or_else(|| {
+                format!("Missing closing bracket in forward route: '{}'", input)
+            })?;
+
+            let incoming_port = input[..bracket_start].trim_end_matches(':')
+                .parse::<u16>()
+                .map_err(|_| format!("Invalid incoming port in: '{}'", input))?;
+            let destination_ip = input[bracket_start + 1..bracket_end]
+                .parse::<IpAddr>()
+                .map_err(|_| format!("Invalid destination IP in: '{}'", input))?;
+            let destination_port = input[bracket_end + 1..].trim_start_matches(':')
+                .parse::<u16>()
+                .map_err(|_| format!("Invalid destination port in: '{}'", input))?;
+
+            Ok(ForwardRoute {
+                incoming_port,
+                destination_ip,
+                destination_port,
+            })
+        } else {
+            let parts: Vec<&str> = input.split(':').collect();
+            if parts.len() != 3 {
+                return Err(format!("Invalid forward route format: '{}'. Expected format: 'incoming_port:destination_ip:destination_port' (use brackets for IPv6: 'port:[ipv6_addr]:port')", input));
+            }
+
+            let incoming_port = parts[0]
+                .parse::<u16>()
+                .map_err(|_| format!("Invalid incoming port: '{}'", parts[0]))?;
+            let destination_ip = parts[1]
+                .parse::<IpAddr>()
+                .map_err(|_| format!("Invalid destination IP: '{}'", parts[1]))?;
+            let destination_port = parts[2]
+                .parse::<u16>()
+                .map_err(|_| format!("Invalid destination port: '{}'", parts[2]))?;
+
+            Ok(ForwardRoute {
+                incoming_port,
+                destination_ip,
+                destination_port,
+            })
         }
-
-        let incoming_port = parts[0]
-            .parse::<u16>()
-            .map_err(|_| format!("Invalid incoming port: '{}'", parts[0]))?;
-        let destination_ip = parts[1]
-            .parse::<IpAddr>()
-            .map_err(|_| format!("Invalid destination IP: '{}'", parts[1]))?;
-        let destination_port = parts[2]
-            .parse::<u16>()
-            .map_err(|_| format!("Invalid destination port: '{}'", parts[2]))?;
-
-        Ok(ForwardRoute {
-            incoming_port,
-            destination_ip,
-            destination_port,
-        })
     }
 }
 
 impl fmt::Display for ForwardRoute {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}:{}:{}",
-            self.incoming_port, self.destination_ip, self.destination_port
-        )
+        if self.destination_ip.is_ipv6() {
+            write!(
+                f,
+                "{}:[{}]:{}",
+                self.incoming_port, self.destination_ip, self.destination_port
+            )
+        } else {
+            write!(
+                f,
+                "{}:{}:{}",
+                self.incoming_port, self.destination_ip, self.destination_port
+            )
+        }
     }
 }
 
@@ -125,5 +163,34 @@ mod tests {
             route_list.to_string(),
             "8080:192.168.1.100:80, 8443:192.168.1.101:443"
         );
+    }
+
+    #[test]
+    fn test_forward_route_ipv6_bracket() {
+        let input = "8080:[fd00::50]:80";
+        let route = ForwardRoute::from_str(input).unwrap();
+        assert_eq!(route.incoming_port, 8080);
+        assert_eq!(
+            route.destination_ip,
+            "fd00::50".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(route.destination_port, 80);
+        assert!(!route.is_ipv4());
+    }
+
+    #[test]
+    fn test_forward_route_ipv6_display() {
+        let input = "8080:[fd00::50]:80";
+        let route = ForwardRoute::from_str(input).unwrap();
+        assert_eq!(route.to_string(), "8080:[fd00::50]:80");
+    }
+
+    #[test]
+    fn test_forward_route_list_mixed() {
+        let input = "8080:192.168.1.100:80, 8443:[fd00::50]:443";
+        let route_list = ForwardRouteList::new(input).unwrap();
+        assert_eq!(route_list.len(), 2);
+        assert!(route_list.routes[0].is_ipv4());
+        assert!(!route_list.routes[1].is_ipv4());
     }
 }
