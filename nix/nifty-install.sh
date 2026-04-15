@@ -435,12 +435,14 @@ chown -R 1000:100 "$MNT/var/nifty-filter"
 echo "==> Unmounting..."
 umount -R "$MNT"
 
+echo "==> Ejecting installation media..."
+eject /dev/sr0 2>/dev/null || eject /dev/cdrom 2>/dev/null || true
+
 echo ""
 echo "========================================"
 echo " Installation complete!"
 echo "========================================"
 echo ""
-echo " Remove the installation media and reboot."
 echo " Your SSH key and host fingerprint have been preserved."
 echo " You can reconnect without any host key warnings."
 echo ""
