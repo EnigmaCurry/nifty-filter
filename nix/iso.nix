@@ -72,27 +72,31 @@
     '';
   };
 
-  # Post-login instructions
-  users.motd = ''
-
-    Setup:
-
-     0. If network is not up, configure it:
-          sudo nmtui
-
-     1. Add your SSH public key (from your workstation):
-          ssh-copy-id admin@<this-host>
-
-     2. Reconnect with key auth:
-          ssh admin@<this-host>
-
-     3. Install (interactive wizard selects disk, interfaces, DHCP):
-          sudo nifty-install
-
-     4. Reboot into the installed system
-
-    The installer will refuse to run under password auth.
-    Your SSH key and host fingerprint are preserved in the install.
-
+  # Dynamic MOTD based on whether SSH key is installed
+  users.motd = null;
+  environment.etc."profile.d/motd.sh".text = ''
+    if [ -s "$HOME/.ssh/authorized_keys" ]; then
+      echo ""
+      echo "  SSH key installed. Ready to install."
+      echo ""
+      echo "   1. Install (interactive wizard selects disk, interfaces, DHCP):"
+      echo "        sudo nifty-install"
+      echo ""
+      echo "   2. Reboot into the installed system"
+      echo ""
+    else
+      echo ""
+      echo "  Setup:"
+      echo ""
+      echo "   0. If network is not up, configure it:"
+      echo "        sudo nmtui"
+      echo ""
+      echo "   1. Add your SSH public key (from your workstation):"
+      echo "        ssh-copy-id admin@<this-host>"
+      echo ""
+      echo "   2. Reconnect with key auth:"
+      echo "        ssh admin@<this-host>"
+      echo ""
+    fi
   '';
 }
