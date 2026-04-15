@@ -155,22 +155,30 @@ if [[ ${#IFACES[@]} -lt 2 ]]; then
     die "Need at least 2 network interfaces (found ${#IFACES[@]})"
 fi
 
-INTERFACE_WAN=$(script-wizard choose "Select WAN interface (upstream/internet):" "${IFACES[@]}")
-echo "  WAN: $INTERFACE_WAN"
+REAL_WAN=$(script-wizard choose "Select WAN interface (upstream/internet):" "${IFACES[@]}")
+echo "  WAN: $REAL_WAN -> will be renamed to 'wan'"
 
 # Remove WAN from choices for LAN
 LAN_IFACES=()
 for iface in "${IFACES[@]}"; do
-    [[ "$iface" != "$INTERFACE_WAN" ]] && LAN_IFACES+=("$iface")
+    [[ "$iface" != "$REAL_WAN" ]] && LAN_IFACES+=("$iface")
 done
 
 if [[ ${#LAN_IFACES[@]} -eq 1 ]]; then
-    INTERFACE_LAN="${LAN_IFACES[0]}"
-    echo "  LAN: $INTERFACE_LAN (only remaining interface)"
+    REAL_LAN="${LAN_IFACES[0]}"
+    echo "  LAN: $REAL_LAN -> will be renamed to 'lan' (only remaining interface)"
 else
-    INTERFACE_LAN=$(script-wizard choose "Select LAN interface (local network):" "${LAN_IFACES[@]}")
-    echo "  LAN: $INTERFACE_LAN"
+    REAL_LAN=$(script-wizard choose "Select LAN interface (local network):" "${LAN_IFACES[@]}")
+    echo "  LAN: $REAL_LAN -> will be renamed to 'lan'"
 fi
+
+# Get MAC addresses for persistent renaming
+WAN_MAC=$(ip -o link show "$REAL_WAN" | grep -oP 'link/ether \K[^ ]+')
+LAN_MAC=$(ip -o link show "$REAL_LAN" | grep -oP 'link/ether \K[^ ]+')
+
+# Use canonical names
+INTERFACE_WAN="wan"
+INTERFACE_LAN="lan"
 
 # Configure LAN subnet
 echo ""
@@ -199,8 +207,8 @@ echo "  DNS: $DNS_SERVERS"
 echo ""
 echo "==> Installation summary:"
 echo "  Disk:         $DISK"
-echo "  WAN:          $INTERFACE_WAN"
-echo "  LAN:          $INTERFACE_LAN"
+echo "  WAN:          $REAL_WAN ($WAN_MAC) -> wan"
+echo "  LAN:          $REAL_LAN ($LAN_MAC) -> lan"
 echo "  LAN subnet:   $SUBNET_LAN"
 echo "  DHCP pool:    $DHCP_START - $DHCP_END"
 echo "  DNS servers:  $DNS_SERVERS"
@@ -299,9 +307,28 @@ echo "  Boot entry created"
 
 echo "==> Setting up /var..."
 mkdir -p "$MNT/var/nifty-filter/ssh"
+mkdir -p "$MNT/var/nifty-filter/network"
 mkdir -p "$MNT/var/home/admin/.ssh"
 mkdir -p "$MNT/var/root"
 mkdir -p "$MNT/var/log/journal"
+
+# Create systemd.link files to rename interfaces by MAC address
+echo "==> Creating interface rename rules..."
+cat > "$MNT/var/nifty-filter/network/10-wan.link" <<LINKEOF
+[Match]
+MACAddress=$WAN_MAC
+
+[Link]
+Name=wan
+LINKEOF
+
+cat > "$MNT/var/nifty-filter/network/10-lan.link" <<LINKEOF
+[Match]
+MACAddress=$LAN_MAC
+
+[Link]
+Name=lan
+LINKEOF
 
 # Write router config with user's choices
 cat > "$MNT/var/nifty-filter/router.env" <<ENVEOF
@@ -392,8 +419,9 @@ echo " Your SSH key and host fingerprint have been preserved."
 echo " You can reconnect without any host key warnings."
 echo ""
 echo " Configuration:"
-echo "   WAN: $INTERFACE_WAN"
-echo "   LAN: $INTERFACE_LAN ($SUBNET_LAN)"
+echo "   WAN: $REAL_WAN ($WAN_MAC) -> wan"
+echo "   LAN: $REAL_LAN ($LAN_MAC) -> lan"
+echo "   Subnet: $SUBNET_LAN"
 echo "   DHCP: $DHCP_START - $DHCP_END"
 echo ""
 echo " After boot:"

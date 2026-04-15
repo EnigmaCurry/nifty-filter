@@ -39,7 +39,26 @@
   # --- Networking ---
   # Interfaces are configured dynamically at boot from /var/nifty-filter/router.env
   # and /var/nifty-filter/dhcp.env. No hardcoded interface names.
+  # Interface rename rules (.link files) are in /var/nifty-filter/network/
   networking.useDHCP = false;
+
+  # Copy interface rename rules from /var early enough for udev
+  systemd.services.nifty-link = {
+    description = "Install interface rename rules";
+    wantedBy = [ "sysinit.target" ];
+    before = [ "systemd-udevd.service" "systemd-networkd.service" ];
+    unitConfig.DefaultDependencies = false;
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      if [ -d /var/nifty-filter/network ]; then
+        mkdir -p /run/systemd/network
+        cp /var/nifty-filter/network/*.link /run/systemd/network/ 2>/dev/null || true
+      fi
+    '';
+  };
 
   # Configure WAN (DHCP) and LAN (static IP) from env files at boot
   systemd.services.nifty-network = {
