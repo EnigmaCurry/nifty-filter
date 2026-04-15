@@ -310,8 +310,14 @@
       echo ""
       echo -e "\e[1;31m  *** MAINTENANCE MODE — root filesystem is READ-WRITE ***\e[0m"
       echo ""
-      echo "  Upgrade system:  sudo nifty-upgrade"
-      echo "  Return to normal: sudo reboot"
+      echo "  Upgrade system:  nifty-upgrade"
+      echo "  Return to normal: systemctl reboot"
+      echo ""
+    else
+      echo ""
+      echo "  Configure:  nano /var/nifty-filter/router.env"
+      echo "  Apply:      systemctl restart nifty-filter"
+      echo "  Upgrade:    nifty-upgrade"
       echo ""
     fi
   '';
