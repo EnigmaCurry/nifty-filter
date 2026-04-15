@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # nifty-install — install nifty-filter to disk from the live ISO
 #
-# Partitions the target disk, copies the running system to root,
-# sets up /var with default config, and initializes a git repo
-# for remote config management.
+# Uses script-wizard for interactive configuration:
+#   - Target disk selection
+#   - WAN/LAN interface selection
+#   - LAN subnet and DHCP pool configuration
 #
 # Prerequisites:
 #   1. ssh-copy-id admin@<host>
@@ -11,37 +12,24 @@
 #   3. Run this installer
 set -euo pipefail
 
-DISK=""
 GIT_REMOTE=""
 AUTH_KEYS="/home/admin/.ssh/authorized_keys"
-SSH_DIR="/var/nifty-filter/ssh"
 
 usage() {
     cat <<EOF
-Usage: nifty-install [options] <disk>
+Usage: nifty-install [options]
 
 Install nifty-filter to a disk from the running live ISO.
+Interactively selects disk, network interfaces, and DHCP settings.
 
 Before running, you must:
   1. Add your SSH public key:
        ssh-copy-id admin@<this-host>
   2. Reconnect using key authentication
 
-Arguments:
-  disk              Target disk (e.g. /dev/sda, /dev/vda)
-
 Options:
   --git-remote URL  Set a git remote for config updates
   -h, --help        Show this help
-
-Disk layout:
-  Partition 1:  512M   EFI System Partition  (NIFTY_BOOT)
-  Partition 2:  4G     Root (read-only)      (NIFTY_ROOT)
-  Partition 3:  rest   /var (read-write)     (NIFTY_VAR)
-
-Example:
-  nifty-install /dev/vda
-  nifty-install --git-remote git@github.com:user/router-config.git /dev/sda
 EOF
     exit "${1:-0}"
 }
@@ -49,7 +37,6 @@ EOF
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 # Check if the current SSH session is using key authentication.
-# Inspects the sshd journal for the login entry matching our session.
 check_ssh_auth() {
     # Not over SSH — console is fine
     if [[ -z "${SSH_CONNECTION:-}" ]]; then
@@ -59,7 +46,6 @@ check_ssh_auth() {
     # Find the sshd process for this session
     local sshd_pid
     sshd_pid=$(ps -o ppid= -p $$ | tr -d ' ')
-    # Walk up to find the sshd parent
     while [[ "$sshd_pid" -gt 1 ]]; do
         local cmd
         cmd=$(ps -o comm= -p "$sshd_pid" 2>/dev/null || true)
@@ -69,7 +55,6 @@ check_ssh_auth() {
         sshd_pid=$(ps -o ppid= -p "$sshd_pid" 2>/dev/null | tr -d ' ')
     done
 
-    # Check the journal for how this session authenticated
     local auth_method
     auth_method=$(journalctl _PID="$sshd_pid" -o cat --no-pager 2>/dev/null | grep -oP 'Accepted \K\S+' | head -1)
 
@@ -91,7 +76,6 @@ check_ssh_auth() {
     elif [[ "$auth_method" == "publickey" ]]; then
         return 0
     else
-        # Can't determine — warn but allow (could be console)
         echo "WARNING: Could not determine SSH auth method (method=$auth_method)."
         echo "         Proceeding anyway."
         return 0
@@ -104,20 +88,14 @@ while [[ $# -gt 0 ]]; do
         --git-remote) GIT_REMOTE="$2"; shift 2 ;;
         -h|--help) usage 0 ;;
         -*) die "Unknown option: $1" ;;
-        *)
-            [[ -z "$DISK" ]] || die "Unexpected argument: $1"
-            DISK="$1"; shift
-            ;;
+        *) die "Unexpected argument: $1" ;;
     esac
 done
 
-[[ -n "$DISK" ]] || { echo "Error: no disk specified" >&2; usage 1; }
-[[ -b "$DISK" ]] || die "$DISK is not a block device"
 [[ $EUID -eq 0 ]] || die "Must run as root (use sudo)"
 
 # --- Pre-flight checks ---
 
-# Check authorized keys exist
 if [[ ! -s "$AUTH_KEYS" ]]; then
     echo ""
     echo "REFUSED: No SSH authorized keys found."
@@ -140,19 +118,100 @@ echo ""
 echo "==> Authorized keys that will be installed:"
 while IFS= read -r key; do
     [[ -z "$key" || "$key" == \#* ]] && continue
-    # Show key type and comment (last two fields)
     echo "  $(echo "$key" | awk '{print $1, $NF}')"
 done < "$AUTH_KEYS"
 echo ""
 
-# Safety check
-echo "WARNING: This will ERASE ALL DATA on $DISK"
+# --- Interactive configuration with script-wizard ---
+
+# Select target disk
+echo "==> Select target disk for installation:"
+DISKS=()
+while read -r name size model; do
+    DISKS+=("${name} (${size} ${model})")
+done < <(lsblk -ndo NAME,SIZE,MODEL -e 7,11 | grep -v '^loop')
+
+if [[ ${#DISKS[@]} -eq 0 ]]; then
+    die "No disks found"
+elif [[ ${#DISKS[@]} -eq 1 ]]; then
+    DISK_CHOICE="${DISKS[0]}"
+    echo "  Only one disk found: $DISK_CHOICE"
+else
+    DISK_CHOICE=$(script-wizard choose "Select target disk:" "${DISKS[@]}")
+fi
+DISK="/dev/$(echo "$DISK_CHOICE" | awk '{print $1}')"
+echo "  Selected: $DISK"
+
+# Select network interfaces
 echo ""
-echo "  Disk: $DISK"
-lsblk -no SIZE,MODEL "$DISK" 2>/dev/null | sed 's/^/  /'
+echo "==> Configure network interfaces:"
+IFACES=()
+while read -r name; do
+    [[ "$name" == "lo" ]] && continue
+    IFACES+=("$name")
+done < <(ip -o link show | awk -F': ' '{print $2}')
+
+if [[ ${#IFACES[@]} -lt 2 ]]; then
+    die "Need at least 2 network interfaces (found ${#IFACES[@]})"
+fi
+
+INTERFACE_WAN=$(script-wizard choose "Select WAN interface (upstream/internet):" "${IFACES[@]}")
+echo "  WAN: $INTERFACE_WAN"
+
+# Remove WAN from choices for LAN
+LAN_IFACES=()
+for iface in "${IFACES[@]}"; do
+    [[ "$iface" != "$INTERFACE_WAN" ]] && LAN_IFACES+=("$iface")
+done
+
+if [[ ${#LAN_IFACES[@]} -eq 1 ]]; then
+    INTERFACE_LAN="${LAN_IFACES[0]}"
+    echo "  LAN: $INTERFACE_LAN (only remaining interface)"
+else
+    INTERFACE_LAN=$(script-wizard choose "Select LAN interface (local network):" "${LAN_IFACES[@]}")
+    echo "  LAN: $INTERFACE_LAN"
+fi
+
+# Configure LAN subnet
 echo ""
-read -rp "Type YES to continue: " confirm
-[[ "$confirm" == "YES" ]] || { echo "Aborted."; exit 1; }
+echo "==> Configure LAN network:"
+SUBNET_LAN=$(script-wizard ask "LAN subnet (router IP/prefix)" --default "192.168.10.1/24")
+echo "  Subnet: $SUBNET_LAN"
+
+# Extract network info for DHCP defaults
+ROUTER_IP=$(echo "$SUBNET_LAN" | cut -d/ -f1)
+PREFIX=$(echo "$SUBNET_LAN" | cut -d/ -f2)
+# Derive base network (simple: replace last octet)
+NETWORK_BASE=$(echo "$ROUTER_IP" | sed 's/\.[0-9]*$//')
+DHCP_START="${NETWORK_BASE}.100"
+DHCP_END="${NETWORK_BASE}.250"
+
+echo ""
+echo "==> Configure DHCP pool:"
+DHCP_START=$(script-wizard ask "DHCP pool start" --default "$DHCP_START")
+DHCP_END=$(script-wizard ask "DHCP pool end" --default "$DHCP_END")
+echo "  Pool: $DHCP_START - $DHCP_END"
+
+DNS_SERVERS=$(script-wizard ask "DNS servers for DHCP clients" --default "1.1.1.1, 1.0.0.1")
+echo "  DNS: $DNS_SERVERS"
+
+# --- Confirm ---
+echo ""
+echo "==> Installation summary:"
+echo "  Disk:         $DISK"
+echo "  WAN:          $INTERFACE_WAN"
+echo "  LAN:          $INTERFACE_LAN"
+echo "  LAN subnet:   $SUBNET_LAN"
+echo "  DHCP pool:    $DHCP_START - $DHCP_END"
+echo "  DNS servers:  $DNS_SERVERS"
+if [[ -n "$GIT_REMOTE" ]]; then
+echo "  Git remote:   $GIT_REMOTE"
+fi
+echo ""
+echo "  WARNING: This will ERASE ALL DATA on $DISK"
+echo ""
+
+script-wizard confirm "Proceed with installation?" || { echo "Aborted."; exit 1; }
 
 MNT=$(mktemp -d)
 trap 'umount -R "$MNT" 2>/dev/null || true; rmdir "$MNT" 2>/dev/null || true' EXIT
@@ -193,7 +252,6 @@ mount "$PART_BOOT" "$MNT/boot"
 mount "$PART_VAR" "$MNT/var"
 
 echo "==> Copying system closure to disk..."
-# Use the installed system closure (built for disk boot), not the live ISO system
 SYSTEM_PATH=$(cat /etc/nifty-filter/installed-system)
 echo "  System: $SYSTEM_PATH"
 
@@ -211,25 +269,18 @@ mkdir -p "$MNT/nix/var/nix/profiles"
 ln -sfn "$SYSTEM_PATH" "$MNT/nix/var/nix/profiles/system"
 
 echo "==> Installing bootloader..."
-
-# Install systemd-boot EFI binary to the ESP
 bootctl install --esp-path="$MNT/boot"
 
-# Find kernel and initrd from the system closure
 KERNEL=$(readlink -f "$SYSTEM_PATH/kernel")
 INITRD=$(readlink -f "$SYSTEM_PATH/initrd")
-
 echo "  Kernel: $KERNEL"
 echo "  Initrd: $INITRD"
 
-# Copy kernel and initrd to the ESP
 cp "$KERNEL" "$MNT/boot/kernel"
 cp "$INITRD" "$MNT/boot/initrd"
 
-# Read kernel params from the system
 KERNEL_PARAMS=$(cat "$SYSTEM_PATH/kernel-params" 2>/dev/null || echo "")
 
-# Create loader config
 mkdir -p "$MNT/boot/loader"
 cat > "$MNT/boot/loader/loader.conf" <<LOADER
 default nifty-filter.conf
@@ -237,7 +288,6 @@ timeout 3
 editor no
 LOADER
 
-# Create boot entry
 mkdir -p "$MNT/boot/loader/entries"
 cat > "$MNT/boot/loader/entries/nifty-filter.conf" <<ENTRY
 title   nifty-filter
@@ -245,7 +295,6 @@ linux   /kernel
 initrd  /initrd
 options init=$SYSTEM_PATH/init $KERNEL_PARAMS
 ENTRY
-
 echo "  Boot entry created"
 
 echo "==> Setting up /var..."
@@ -254,19 +303,34 @@ mkdir -p "$MNT/var/home/admin/.ssh"
 mkdir -p "$MNT/var/root"
 mkdir -p "$MNT/var/log/journal"
 
-# Copy default router config
-cp /etc/nifty-filter/default-router.env "$MNT/var/nifty-filter/router.env" 2>/dev/null || \
-    cp /run/current-system/sw/etc/nifty-filter/default-router.env "$MNT/var/nifty-filter/router.env" 2>/dev/null || \
-    cat > "$MNT/var/nifty-filter/router.env" <<'ENVEOF'
-INTERFACE_LAN=enp1s0
-INTERFACE_WAN=enp2s0
-SUBNET_LAN=192.168.10.1/24
+# Write router config with user's choices
+cat > "$MNT/var/nifty-filter/router.env" <<ENVEOF
+# nifty-filter router configuration
+# Edit this file and reboot to apply changes.
+#
+# This file lives on the writable /var partition.
+# The rest of the system is immutable.
+ENABLED=true
+
+# Network interfaces
+INTERFACE_LAN=${INTERFACE_LAN}
+INTERFACE_WAN=${INTERFACE_WAN}
+
+# LAN subnet in CIDR notation (router's LAN IP / prefix length)
+SUBNET_LAN=${SUBNET_LAN}
+
+# ICMP types accepted on each interface
 ICMP_ACCEPT_LAN=echo-request,echo-reply,destination-unreachable,time-exceeded
 ICMP_ACCEPT_WAN=
+
+# TCP/UDP ports the router itself accepts
 TCP_ACCEPT_LAN=22
 UDP_ACCEPT_LAN=
-TCP_ACCEPT_WAN=
+TCP_ACCEPT_WAN=22
 UDP_ACCEPT_WAN=
+
+# Port forwarding rules
+# Format: incoming_port:destination_ip:destination_port
 TCP_FORWARD_LAN=
 UDP_FORWARD_LAN=
 TCP_FORWARD_WAN=
@@ -274,15 +338,25 @@ UDP_FORWARD_WAN=
 ENVEOF
 chmod 0600 "$MNT/var/nifty-filter/router.env"
 
+# Write DHCP config for the init service to pick up
+cat > "$MNT/var/nifty-filter/dhcp.env" <<DHCPEOF
+DHCP_INTERFACE=${INTERFACE_LAN}
+DHCP_SUBNET=${SUBNET_LAN}
+DHCP_POOL_START=${DHCP_START}
+DHCP_POOL_END=${DHCP_END}
+DHCP_ROUTER=${ROUTER_IP}
+DHCP_DNS=${DNS_SERVERS}
+DHCPEOF
+chmod 0600 "$MNT/var/nifty-filter/dhcp.env"
+
 # Carry over authorized keys from the live session
 echo "==> Copying SSH authorized keys..."
-mkdir -p "$MNT/var/home/admin/.ssh"
 cp "$AUTH_KEYS" "$MNT/var/home/admin/.ssh/authorized_keys"
 chmod 0700 "$MNT/var/home/admin/.ssh"
 chmod 0600 "$MNT/var/home/admin/.ssh/authorized_keys"
 chown -R 1000:100 "$MNT/var/home/admin"
 
-# Preserve host keys from the live session so the fingerprint doesn't change
+# Preserve host keys from the live session
 echo "==> Preserving SSH host keys..."
 for keyfile in /var/nifty-filter/ssh/ssh_host_* /etc/ssh/ssh_host_*; do
     [[ -f "$keyfile" ]] && cp "$keyfile" "$MNT/var/nifty-filter/ssh/"
@@ -291,7 +365,6 @@ echo "  Host fingerprint will be preserved across reboot"
 
 echo "==> Initializing git repo in /var/nifty-filter..."
 git -C "$MNT/var/nifty-filter" init -b main
-# Don't track host keys in git
 cat > "$MNT/var/nifty-filter/.gitignore" <<'GITIGNORE'
 ssh/ssh_host_*
 GITIGNORE
@@ -318,8 +391,13 @@ echo " Remove the installation media and reboot."
 echo " Your SSH key and host fingerprint have been preserved."
 echo " You can reconnect without any host key warnings."
 echo ""
+echo " Configuration:"
+echo "   WAN: $INTERFACE_WAN"
+echo "   LAN: $INTERFACE_LAN ($SUBNET_LAN)"
+echo "   DHCP: $DHCP_START - $DHCP_END"
+echo ""
 echo " After boot:"
-echo "   ssh admin@<router-ip>"
+echo "   ssh admin@${ROUTER_IP}"
 echo "   sudo vim /var/nifty-filter/router.env"
 echo "   sudo reboot"
 echo ""
