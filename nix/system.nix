@@ -121,8 +121,11 @@
   # Use systemd-networkd for runtime network config
   networking.useNetworkd = true;
 
-  # Router uses its own dnsmasq for DNS
-  networking.nameservers = [ "127.0.0.1" ];
+  # Static resolv.conf pointing to local dnsmasq (no resolvconf needed)
+  networking.resolvconf.enable = false;
+  environment.etc."resolv.conf".text = ''
+    nameserver 127.0.0.1
+  '';
 
   # --- dnsmasq: DHCP + DNS for LAN ---
   # Config is generated at boot from /var/nifty-filter/dhcp.env
