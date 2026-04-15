@@ -42,6 +42,20 @@
   # Interface rename rules (.link files) are in /var/nifty-filter/network/
   networking.useDHCP = false;
 
+  # In maintenance mode, remount /nix/store as read-write
+  systemd.services.nifty-maintenance-rw = {
+    description = "Remount nix store read-write in maintenance mode";
+    wantedBy = [ "sysinit.target" ];
+    before = [ "nix-daemon.service" ];
+    unitConfig.DefaultDependencies = false;
+    unitConfig.ConditionKernelCommandLine = "nifty.maintenance=1";
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${pkgs.util-linux}/bin/mount -o remount,rw /nix/store";
+    };
+  };
+
   # Copy interface rename rules from /var early enough for udev
   systemd.services.nifty-link = {
     description = "Install interface rename rules";
