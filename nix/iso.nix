@@ -56,26 +56,16 @@
   users.users.admin.initialPassword = lib.mkForce "nifty";
   services.openssh.settings.PasswordAuthentication = lib.mkForce true;
 
-  # Static fallback issue shown immediately at boot
-  systemd.tmpfiles.rules = [
-    "f /run/issue 0644 root root - \\n  \\e[1mnifty-filter\\e[0m live installer\\n\\n  Login:  admin / nifty\\n  Waiting for network...\\n\\n"
-  ];
+  # Use /etc/issue directly (writable on the live ISO)
+  services.getty.extraArgs = lib.mkForce [ ];
+  environment.etc."issue".text = lib.mkForce ''
 
-  # Update issue with IPs once network is up
-  systemd.services.update-issue = {
-    description = lib.mkForce "Generate /run/issue with interface IPs";
-    script = lib.mkForce ''
-      {
-        echo ""
-        echo -e "  \e[1mnifty-filter\e[0m live installer"
-        echo ""
-        ip -4 -o addr show scope global | awk '{printf "  %-12s %s\n", $2, $4}'
-        echo ""
-        echo "  Login:  admin / nifty"
-        echo ""
-      } > /run/issue
-    '';
-  };
+    \e[1mnifty-filter\e[0m live installer (\n) \l
+    \4
+
+    Login:  admin / nifty
+
+  '';
 
   # Dynamic MOTD based on whether SSH key is installed
   users.motd = "";
