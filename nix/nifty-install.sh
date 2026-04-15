@@ -353,7 +353,7 @@ LINKEOF
 # Write router config with user's choices
 cat > "$MNT/var/nifty-filter/router.env" <<ENVEOF
 # nifty-filter router configuration
-# Edit this file and systemctl reboot to apply changes.
+# Edit this file and run: systemctl restart nifty-filter
 #
 # This file lives on the writable /var partition.
 # The rest of the system is immutable (unless booted in maintenance mode).

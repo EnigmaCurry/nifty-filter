@@ -21,7 +21,7 @@ page.
 nifty-filter includes a NixOS flake that builds an immutable router
 system. The root filesystem is read-only. All runtime configuration
 lives on the writable `/var` partition as an env file. Edit it and
-reboot to apply.
+apply with `systemctl restart nifty-filter`.
 
 ### Build the ISO
 
