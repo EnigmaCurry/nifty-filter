@@ -7,9 +7,19 @@ set -euo pipefail
 
 REPO_DIR="/var/nifty-filter/src"
 REPO_REMOTE=""
-TARGET_BRANCH="${1:-master}"
+BRANCH_FILE="/var/nifty-filter/branch"
+REQUESTED_BRANCH="${1:-}"
 
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+
+# Determine target branch: arg > saved branch > master
+if [ -n "$REQUESTED_BRANCH" ]; then
+    TARGET_BRANCH="$REQUESTED_BRANCH"
+elif [ -f "$BRANCH_FILE" ]; then
+    TARGET_BRANCH=$(cat "$BRANCH_FILE")
+else
+    TARGET_BRANCH="master"
+fi
 
 # Ensure filesystems are writable
 echo "==> Remounting filesystems read-write..."
@@ -24,14 +34,30 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     chown -R 1000:100 "$REPO_DIR"
 fi
 
-echo "==> Pulling latest source (branch: $TARGET_BRANCH)..."
 cd "$REPO_DIR"
-BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
-if [ "$BRANCH" != "$TARGET_BRANCH" ]; then
+CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+# Confirm if switching branches
+if [ -n "$REQUESTED_BRANCH" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "$REQUESTED_BRANCH" ]; then
+    echo "Currently on branch '$CURRENT_BRANCH', switching to '$REQUESTED_BRANCH'."
+    read -rp "Continue? [y/N] " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        mount -o remount,ro /nix/store 2>/dev/null || true
+        mount -o remount,ro / 2>/dev/null || true
+        exit 0
+    fi
+fi
+
+echo "==> Pulling latest source (branch: $TARGET_BRANCH)..."
+if [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
     git fetch origin "$TARGET_BRANCH"
     git checkout "$TARGET_BRANCH"
 fi
 git pull
+
+# Save the branch for future upgrades
+echo "$TARGET_BRANCH" > "$BRANCH_FILE"
 
 echo "==> Building system closure..."
 export TMPDIR=/var/tmp
