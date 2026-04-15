@@ -183,7 +183,7 @@ INTERFACE_LAN="lan"
 # Configure LAN subnet
 echo ""
 echo "==> Configure LAN network:"
-SUBNET_LAN=$(script-wizard ask "LAN subnet (router IP/prefix)" "192.168.10.1/24")
+SUBNET_LAN=$(script-wizard ask "LAN subnet (router IP/prefix)" "10.99.0.1/24")
 echo "  Subnet: $SUBNET_LAN"
 
 # Extract network info for DHCP defaults
