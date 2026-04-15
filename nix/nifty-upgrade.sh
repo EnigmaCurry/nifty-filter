@@ -31,6 +31,7 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     REPO_REMOTE=$(git -C /var/nifty-filter remote get-url origin 2>/dev/null || echo "https://github.com/EnigmaCurry/nifty-filter")
     echo "==> Cloning source repo from $REPO_REMOTE..."
     git clone "$REPO_REMOTE" "$REPO_DIR"
+    chown -R 1000:100 "$REPO_DIR"
 fi
 
 echo "==> Pulling latest source..."

@@ -411,7 +411,7 @@ git -C "$MNT/var/nifty-filter" \
 if [[ -n "$GIT_REMOTE" ]]; then
     git -C "$MNT/var/nifty-filter" remote add origin "$GIT_REMOTE"
     echo "==> Cloning source repo for on-device upgrades..."
-    git clone "$GIT_REMOTE" "$MNT/var/nifty-filter/src" || echo "  WARNING: Could not clone source repo. On-device upgrades will need manual setup."
+    git clone "$GIT_REMOTE" "$MNT/var/nifty-filter/src" && chown -R 1000:100 "$MNT/var/nifty-filter/src" || echo "  WARNING: Could not clone source repo. On-device upgrades will need manual setup."
     echo "  Git remote set: $GIT_REMOTE"
 fi
 
