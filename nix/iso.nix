@@ -58,16 +58,8 @@
 
   # Pre-login banner on console — generated at boot with all interface IPs
   systemd.services.update-issue = {
-    description = "Generate /etc/issue with interface IPs";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-    };
-    path = [ pkgs.iproute2 pkgs.gawk ];
-    script = ''
+    description = lib.mkForce "Generate /etc/issue with interface IPs";
+    script = lib.mkForce ''
       {
         echo ""
         echo -e "  \e[1mnifty-filter\e[0m live ISO"
