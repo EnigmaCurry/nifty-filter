@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# nifty-upgrade — upgrade the system from the router itself
+# nifty-upgrade — upgrade the system in place
 #
-# Must be run in maintenance mode (nifty-maintenance first).
-# Pulls the latest source, builds the system, updates boot entries,
-# and reboots back to normal (read-only) mode.
+# Temporarily remounts filesystems read-write, pulls the latest source,
+# builds the system, updates boot entries, and reboots into the new system.
 set -euo pipefail
 
 REPO_DIR="/var/nifty-filter/src"
@@ -11,17 +10,8 @@ REPO_REMOTE=""
 
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 
-# Check we're in maintenance mode
-if ! grep -q 'nifty.maintenance=1' /proc/cmdline 2>/dev/null; then
-    echo "ERROR: Not in maintenance mode."
-    echo ""
-    echo "Run 'nifty-maintenance' first to reboot into maintenance mode,"
-    echo "then run this command again."
-    exit 1
-fi
-
 # Ensure filesystems are writable
-echo "==> Ensuring filesystems are writable..."
+echo "==> Remounting filesystems read-write..."
 mount -o remount,rw /
 mount -o remount,rw /nix/store
 
@@ -53,8 +43,9 @@ CURRENT=$(readlink -f /nix/var/nix/profiles/system 2>/dev/null || echo "")
 if [ "$CURRENT" = "$SYSTEM_PATH" ]; then
     echo ""
     echo "System is already up to date."
-    echo "Rebooting into normal mode..."
-    systemctl reboot
+    mount -o remount,ro /nix/store 2>/dev/null || true
+    mount -o remount,ro / 2>/dev/null || true
+    exit 0
 fi
 
 echo "==> Updating system profile..."
@@ -76,11 +67,14 @@ printf 'title   nifty-filter (maintenance)\nlinux   /kernel\ninitrd  /initrd\nop
 
 echo "  Boot entries updated"
 
-# GC only after new profile is set, so the new system is protected.
-# Use --delete-old to remove old generations but keep the current one.
+# GC after new profile is set so the new system is protected
 echo "==> Collecting garbage..."
 nix-collect-garbage --delete-old 2>/dev/null || true
 
+echo "==> Remounting filesystems read-only..."
+mount -o remount,ro /nix/store 2>/dev/null || true
+mount -o remount,ro / 2>/dev/null || true
+
 echo ""
-echo "Upgrade complete. Rebooting into normal (read-only) mode..."
+echo "Upgrade complete. Rebooting..."
 systemctl reboot
