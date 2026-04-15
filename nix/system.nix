@@ -282,7 +282,11 @@
     script = ''
       {
         echo ""
-        echo -e "  \e[1mnifty-filter\e[0m"
+        if grep -q 'nifty.maintenance=1' /proc/cmdline 2>/dev/null; then
+          echo -e "  \e[1;31m*** nifty-filter MAINTENANCE MODE ***\e[0m"
+        else
+          echo -e "  \e[1mnifty-filter\e[0m"
+        fi
         echo ""
         ip -4 -o addr show scope global | awk '{printf "  %-12s %s\n", $2, $4}'
         echo ""
