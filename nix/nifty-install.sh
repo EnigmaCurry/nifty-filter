@@ -124,6 +124,18 @@ echo ""
 
 # --- Interactive configuration with script-wizard ---
 
+# Hostname
+echo "==> Configure hostname:"
+while true; do
+    HOSTNAME=$(script-wizard ask "Hostname for this router" "nifty-filter")
+    if [[ "$HOSTNAME" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]; then
+        break
+    fi
+    echo "  Invalid hostname. Must be 1-63 characters: letters, digits, hyphens. Cannot start/end with hyphen."
+done
+echo "  Hostname: $HOSTNAME"
+echo ""
+
 # Select target disk
 echo "==> Select target disk for installation:"
 DISKS=()
@@ -206,6 +218,7 @@ echo "  DNS: $DNS_SERVERS"
 # --- Confirm ---
 echo ""
 echo "==> Installation summary:"
+echo "  Hostname:     $HOSTNAME"
 echo "  Disk:         $DISK"
 echo "  WAN:          $REAL_WAN ($WAN_MAC) -> wan"
 echo "  LAN:          $REAL_LAN ($LAN_MAC) -> lan"
@@ -343,6 +356,7 @@ cat > "$MNT/var/nifty-filter/router.env" <<ENVEOF
 # Edit this file and reboot to apply changes.
 #
 # This file lives on the writable /var partition.
+HOSTNAME=${HOSTNAME}
 # The rest of the system is immutable.
 ENABLED=true
 

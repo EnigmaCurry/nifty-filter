@@ -36,6 +36,25 @@
   # --- Nifty-filter firewall (reads /var/nifty-filter/router.env at boot) ---
   services.nifty-filter.enable = true;
 
+  # Set hostname from /var/nifty-filter/router.env at boot
+  systemd.services.nifty-hostname = {
+    description = "Set hostname from router.env";
+    wantedBy = [ "sysinit.target" ];
+    before = [ "network-pre.target" ];
+    unitConfig.DefaultDependencies = false;
+    serviceConfig.Type = "oneshot";
+    path = [ pkgs.hostname pkgs.gnugrep ];
+    script = let d = "$"; in ''
+      ENV_FILE="/var/nifty-filter/router.env"
+      if [ -f "${d}ENV_FILE" ]; then
+        NAME=${d}(grep -oP '^HOSTNAME=\K.*' "${d}ENV_FILE" || echo "")
+        if [ -n "${d}NAME" ]; then
+          hostname "${d}NAME"
+        fi
+      fi
+    '';
+  };
+
   # --- Networking ---
   # Interfaces are configured dynamically at boot from /var/nifty-filter/router.env
   # and /var/nifty-filter/dhcp.env. No hardcoded interface names.
