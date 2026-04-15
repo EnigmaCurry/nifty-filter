@@ -231,8 +231,8 @@ parted -s "$DISK" \
     mklabel gpt \
     mkpart NIFTY_BOOT fat32 1MiB 513MiB \
     set 1 esp on \
-    mkpart NIFTY_ROOT ext4 513MiB 4609MiB \
-    mkpart NIFTY_VAR ext4 4609MiB 100%
+    mkpart NIFTY_ROOT ext4 513MiB 8705MiB \
+    mkpart NIFTY_VAR ext4 8705MiB 100%
 
 udevadm settle
 sleep 1

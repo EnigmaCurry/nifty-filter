@@ -44,6 +44,8 @@ fi
 git pull
 
 echo "==> Building system closure..."
+export TMPDIR=/var/tmp
+mkdir -p /var/tmp
 SYSTEM_PATH=$(nix build .#nixosConfigurations.router-x86_64.config.system.build.toplevel --print-out-paths --no-link)
 echo "  System: $SYSTEM_PATH"
 
