@@ -267,6 +267,15 @@
     fi
   '';
 
+  # Auto-login on console in maintenance mode only
+  systemd.services."getty@tty1" = {
+    overrideStrategy = "asDropin";
+    serviceConfig.ExecStart = lib.mkForce [
+      ""  # clear default
+      "${pkgs.bash}/bin/bash -c 'if grep -q nifty.maintenance=1 /proc/cmdline; then exec ${pkgs.shadow}/bin/login -f admin; else exec ${pkgs.util-linux}/bin/agetty --issue-file /run/issue --noclear --keep-baud tty1 115200,38400,9600 linux; fi'"
+    ];
+  };
+
   # Pre-login banner with interface IPs (written to /run since / is read-only)
   services.getty.extraArgs = [ "--issue-file" "/run/issue" ];
   systemd.services.update-issue = {
