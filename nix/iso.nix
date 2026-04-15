@@ -93,5 +93,6 @@
       echo "        ssh admin@<this-host>"
       echo ""
     fi
+    export PS1='\[\e[1;32m\][LIVE ISO]\[\e[0m\] \u@\h:\w\$ '
   '';
 }
