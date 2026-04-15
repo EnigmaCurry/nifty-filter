@@ -328,7 +328,8 @@
   environment.etc."issue".text = lib.mkDefault ''
 
     \e[1mnifty-filter\e[0m (\n) \l
-    \4
+    wan: \4{wan}
+    lan: \4{lan}
 
   '';
 
