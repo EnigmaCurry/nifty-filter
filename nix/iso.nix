@@ -56,7 +56,6 @@
   services.openssh.settings.PasswordAuthentication = lib.mkForce true;
 
   # Pre-login banner on console — generated at boot with all interface IPs
-  services.getty.loginPrompt = true;
   systemd.services.update-issue = {
     description = "Generate /etc/issue with interface IPs";
     wantedBy = [ "multi-user.target" ];
