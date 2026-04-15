@@ -439,5 +439,12 @@ echo "==> Ejecting installation media..."
 eject /dev/sr0 2>/dev/null || eject /dev/cdrom 2>/dev/null || true
 
 echo ""
-echo "Installation complete. Rebooting..."
-systemctl reboot
+echo "Installation complete!"
+echo "Remove the installation media, then power on the system."
+echo ""
+for i in $(seq 10 -1 1); do
+    printf "\rShutting down in %2d seconds... " "$i"
+    sleep 1
+done
+echo ""
+systemctl poweroff
