@@ -78,7 +78,7 @@
   };
 
   # Dynamic MOTD based on whether SSH key is installed
-  users.motd = null;
+  users.motd = "";
   environment.etc."profile.d/motd.sh".text = ''
     if [ -s "$HOME/.ssh/authorized_keys" ]; then
       echo ""
