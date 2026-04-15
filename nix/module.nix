@@ -111,7 +111,7 @@ in
           echo " nifty-filter is not enabled."
           echo ""
           echo " Configure your router:"
-          echo "   sudo vim ${cfg.configPath}"
+          echo "   sudo nano ${cfg.configPath}"
           echo ""
           echo " Set your interfaces (ip link to identify),"
           echo " then set ENABLED=true and reboot."

@@ -54,7 +54,7 @@ ip link
 Edit the env file on the writable `/var` partition:
 
 ```bash
-sudo vim /var/nifty-filter/router.env
+sudo nano /var/nifty-filter/router.env
 ```
 
 A default env file is seeded on first boot. It looks like this:
