@@ -7,7 +7,7 @@
 #   - After maintenance, reboot to return to normal (read-only) mode
 set -euo pipefail
 
-[[ $EUID -eq 0 ]] || { echo "Must run as root (use sudo)"; exit 1; }
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 
 echo "This will reboot into maintenance mode (read-write root)."
 echo "After maintenance, reboot to return to normal mode."

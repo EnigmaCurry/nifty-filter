@@ -9,7 +9,7 @@ set -euo pipefail
 REPO_DIR="/var/nifty-filter/src"
 REPO_REMOTE=""
 
-[[ $EUID -eq 0 ]] || { echo "Must run as root (use sudo)"; exit 1; }
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 
 # Check we're in maintenance mode
 if ! grep -q 'nifty.maintenance=1' /proc/cmdline 2>/dev/null; then

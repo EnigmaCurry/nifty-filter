@@ -92,7 +92,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ $EUID -eq 0 ]] || die "Must run as root (use sudo)"
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 
 # --- Pre-flight checks ---
 
