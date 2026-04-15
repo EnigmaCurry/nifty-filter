@@ -52,7 +52,10 @@
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      ExecStart = "${pkgs.util-linux}/bin/mount -o remount,rw /nix/store";
+      ExecStart = [
+        "${pkgs.util-linux}/bin/mount -o remount,rw /"
+        "${pkgs.util-linux}/bin/mount -o remount,rw /nix/store"
+      ];
     };
   };
 
