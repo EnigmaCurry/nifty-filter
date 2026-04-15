@@ -1,4 +1,4 @@
-# NixOS module for nifty-filter (immutable system model)
+# NixOS module for nifty-filter (read-only system model)
 #
 # The system root is read-only. Router configuration lives as an env file
 # on the writable /var partition:

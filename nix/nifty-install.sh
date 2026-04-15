@@ -356,7 +356,7 @@ cat > "$MNT/var/nifty-filter/router.env" <<ENVEOF
 # Edit this file and run: systemctl restart nifty-filter
 #
 # This file lives on the writable /var partition.
-# The rest of the system is immutable (unless booted in maintenance mode).
+# The rest of the system is read-only (unless booted in maintenance mode).
 ENABLED=true
 HOSTNAME=${HOSTNAME}
 

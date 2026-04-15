@@ -1,6 +1,6 @@
 # ISO image configuration for nifty-filter
 #
-# The ISO boots into an immutable system. The live environment
+# The ISO boots into a read-only system. The live environment
 # uses tmpfs for /var so edits to router.env persist until reboot.
 # Install to disk for persistent configuration.
 #
@@ -20,7 +20,7 @@
     makeBiosBootable = true;
   };
 
-  # Override immutable filesystem mounts from system.nix
+  # Override read-only filesystem mounts from system.nix
   # The ISO module provides its own squashfs root and tmpfs overlay,
   # so we disable the disk-based mounts and use tmpfs for /var.
   boot.loader.systemd-boot.enable = lib.mkForce false;

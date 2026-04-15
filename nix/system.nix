@@ -1,4 +1,4 @@
-# Immutable NixOS router system
+# Read-only NixOS router system
 #
 # Root filesystem is read-only. All mutable state lives on /var.
 # Router configuration: /var/nifty-filter/router.env
@@ -29,7 +29,7 @@
     "sr_mod"
   ];
 
-  # Disable nix operations on the immutable system
+  # Disable nix operations on the read-only system
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   nix.gc.automatic = false;
 

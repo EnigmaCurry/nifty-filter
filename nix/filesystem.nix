@@ -1,4 +1,4 @@
-# Immutable filesystem layout for installed systems (not the ISO)
+# Read-only filesystem layout for installed systems (not the ISO)
 #
 # Root is read-only. /var is the only writable partition.
 # Mutable paths (/home, /root) are bind-mounted from /var.
