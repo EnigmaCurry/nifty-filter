@@ -68,7 +68,7 @@
         echo ""
         echo "  Login:  admin / nifty"
         echo ""
-      } > /etc/issue
+      } > /run/issue
     '';
   };
 
