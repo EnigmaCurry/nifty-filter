@@ -23,15 +23,7 @@ fi
 # Check the source repo exists
 if [ ! -d "$REPO_DIR/.git" ]; then
     # Try to clone from the config repo's remote
-    REPO_REMOTE=$(git -C /var/nifty-filter remote get-url origin 2>/dev/null || true)
-    if [ -z "$REPO_REMOTE" ]; then
-        echo "ERROR: No source repo found at $REPO_DIR"
-        echo "       and no git remote configured."
-        echo ""
-        echo "Clone the nifty-filter repo:"
-        echo "  sudo git clone <url> $REPO_DIR"
-        exit 1
-    fi
+    REPO_REMOTE=$(git -C /var/nifty-filter remote get-url origin 2>/dev/null || echo "https://github.com/EnigmaCurry/nifty-filter")
     echo "==> Cloning source repo from $REPO_REMOTE..."
     git clone "$REPO_REMOTE" "$REPO_DIR"
 fi
