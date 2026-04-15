@@ -126,7 +126,13 @@ release:
 
 # Build NixOS router ISO image
 iso:
-    nix build .#iso
+    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" nix build .#iso --impure
+    @echo ""
+    @echo "ISO built successfully (branch: $(git symbolic-ref --short HEAD 2>/dev/null || echo master)):"
+    @echo "  $(readlink -f result/iso/*.iso)"
+    @echo ""
+    @echo "Flash to USB:"
+    @echo "  sudo dd if=$(readlink -f result/iso/*.iso) of=/dev/sdX bs=4M status=progress"
     @echo ""
     @echo "ISO built successfully:"
     @echo "  $(readlink -f result/iso/*.iso)"

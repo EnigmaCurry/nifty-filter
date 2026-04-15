@@ -422,10 +422,15 @@ git -C "$MNT/var/nifty-filter" \
     -c user.email="nifty-filter@localhost" \
     commit -m "initial configuration"
 
+# Record which branch this system was built from for nifty-upgrade
+BUILD_BRANCH=$(cat /etc/nifty-filter/build-branch 2>/dev/null || echo "master")
+echo "$BUILD_BRANCH" > "$MNT/var/nifty-filter/branch"
+echo "  Build branch: $BUILD_BRANCH"
+
 if [[ -n "$GIT_REMOTE" ]]; then
     git -C "$MNT/var/nifty-filter" remote add origin "$GIT_REMOTE"
     echo "==> Cloning source repo for on-device upgrades..."
-    git clone "$GIT_REMOTE" "$MNT/var/nifty-filter/src" && chown -R 1000:100 "$MNT/var/nifty-filter/src" || echo "  WARNING: Could not clone source repo. On-device upgrades will need manual setup."
+    git clone -b "$BUILD_BRANCH" "$GIT_REMOTE" "$MNT/var/nifty-filter/src" && chown -R 1000:100 "$MNT/var/nifty-filter/src" || echo "  WARNING: Could not clone source repo. On-device upgrades will need manual setup."
     echo "  Git remote set: $GIT_REMOTE"
 fi
 

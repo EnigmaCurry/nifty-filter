@@ -26,6 +26,7 @@
       };
 
       version = self.shortRev or "dirty";
+      gitBranch = builtins.getEnv "NIFTY_BUILD_BRANCH";
 
       # Build an ISO image for a given architecture.
       # The ISO embeds the installed system closure so the installer
@@ -39,7 +40,7 @@
         in
         nixpkgs.lib.nixosSystem {
           inherit system;
-          specialArgs = { inherit version installedToplevel scriptWizard; };
+          specialArgs = { inherit version installedToplevel scriptWizard gitBranch; };
           modules = [
             self.nixosModules.default
             ./nix/system.nix
