@@ -7,6 +7,7 @@ set -euo pipefail
 
 REPO_DIR="/var/nifty-filter/src"
 REPO_REMOTE=""
+TARGET_BRANCH="${1:-master}"
 
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 
@@ -23,12 +24,12 @@ if [ ! -d "$REPO_DIR/.git" ]; then
     chown -R 1000:100 "$REPO_DIR"
 fi
 
-echo "==> Pulling latest source..."
+echo "==> Pulling latest source (branch: $TARGET_BRANCH)..."
 cd "$REPO_DIR"
 BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
-if [ "$BRANCH" != "master" ]; then
-    git fetch origin master
-    git checkout master
+if [ "$BRANCH" != "$TARGET_BRANCH" ]; then
+    git fetch origin "$TARGET_BRANCH"
+    git checkout "$TARGET_BRANCH"
 fi
 git pull
 
