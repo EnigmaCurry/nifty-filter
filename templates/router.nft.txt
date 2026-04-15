@@ -28,17 +28,18 @@ table ip filter {
         {% endif %}
         {% if udp_accept_lan != "" %}
         # Allow access to specific UDP ports from the lan interface
-        ip saddr {{ subnet_lan }} iif "{{ interface_lan }}" udp dport { {{ udp_accept_lan }} } accept
+        # No source address filter — DHCP clients use 0.0.0.0 before they have a lease
+        iif "{{ interface_lan }}" udp dport { {{ udp_accept_lan }} } accept
         {% endif %}
         
         {% if tcp_accept_wan != "" %}
         # Allow access to specific TCP ports from the wan interface
-        ip iif "{{ interface_wan }}" tcp dport { {{ tcp_accept_wan }} } accept
+        iif "{{ interface_wan }}" tcp dport { {{ tcp_accept_wan }} } accept
         {% endif %}
-        
+
         {% if udp_accept_wan != "" %}
-        # Allow access to specific UDP port from the wan interface
-        ip iif "{{ interface_wan }}" udp dport { {{ udp_accept_lan }} } accept
+        # Allow access to specific UDP ports from the wan interface
+        iif "{{ interface_wan }}" udp dport { {{ udp_accept_wan }} } accept
         {% endif %}
 
         # Drop and log everything else
@@ -93,6 +94,9 @@ table ip filter {
 
         # Allow all outgoing wan traffic
         oif "{{ interface_wan }}" accept
+
+        # Allow all outgoing lan traffic (DHCP responses, DNS, etc.)
+        oif "{{ interface_lan }}" accept
     }
 }
 

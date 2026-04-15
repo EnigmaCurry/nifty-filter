@@ -124,6 +124,87 @@ release:
     git tag "v${CURRENT_VERSION}"; \
     git push "${GIT_REMOTE}" tag "v${CURRENT_VERSION}";
 
+# Build NixOS router ISO image
+iso:
+    nix build .#iso
+    @echo ""
+    @echo "ISO built successfully:"
+    @echo "  $(readlink -f result/iso/*.iso)"
+    @echo ""
+    @echo "Flash to USB:"
+    @echo "  sudo dd if=$(readlink -f result/iso/*.iso) of=/dev/sdX bs=4M status=progress"
+
+# Upgrade a remote router (builds locally, stages for next reboot)
+upgrade host:
+    #!/usr/bin/env bash
+    set -eo pipefail
+
+    SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/nifty-upgrade-%C -o ControlPersist=60"
+    REMOTE="admin@{{host}}"
+
+    # Open persistent SSH connection (authenticates once)
+    echo "Connecting to {{host}}..."
+    ssh ${SSH_OPTS} -fN ${REMOTE}
+    trap 'ssh ${SSH_OPTS} -O exit ${REMOTE} 2>/dev/null || true' EXIT
+
+    echo "Building system closure..."
+    nix build .#nixosConfigurations.router-x86_64.config.system.build.toplevel
+    SYSTEM_PATH="$(readlink -f result)"
+    echo "System: ${SYSTEM_PATH}"
+
+    # Get all store paths in the closure
+    echo "Computing closure..."
+    PATHS=$(nix-store -qR "${SYSTEM_PATH}")
+    TOTAL=$(echo "${PATHS}" | wc -l)
+
+    # Remount root and nix store rw on the remote
+    echo "Remounting as read-write on {{host}}..."
+    ssh ${SSH_OPTS} ${REMOTE} 'sudo mount -o remount,rw / && sudo mount -o remount,rw /nix/store'
+
+    # Find which paths are missing on the remote
+    echo "Checking ${TOTAL} store paths..."
+    MISSING=$(echo "${PATHS}" | ssh ${SSH_OPTS} ${REMOTE} 'while read p; do [ -e "$p" ] || echo "$p"; done')
+    MISSING_COUNT=$(echo "${MISSING}" | grep -c . || true)
+
+    # Check if remote is already running this system
+    CURRENT=$(ssh ${SSH_OPTS} ${REMOTE} readlink -f /nix/var/nix/profiles/system 2>/dev/null || echo "")
+    if [ "${CURRENT}" = "${SYSTEM_PATH}" ] && [ "${MISSING_COUNT}" -eq 0 ]; then
+        echo ""
+        echo "{{host}} is already up to date."
+        exit 0
+    fi
+
+    if [ "${MISSING_COUNT}" -gt 0 ]; then
+        echo "Copying ${MISSING_COUNT} store paths to {{host}}..."
+        for path in ${MISSING}; do
+            echo "  $(basename ${path})"
+            if [ -d "${path}" ]; then
+                rsync -a -e "ssh ${SSH_OPTS}" --rsync-path="sudo rsync" "${path}/" "${REMOTE}:${path}/"
+            else
+                rsync -a -e "ssh ${SSH_OPTS}" --rsync-path="sudo rsync" "${path}" "${REMOTE}:${path}"
+            fi
+        done
+    fi
+
+    echo "Setting boot profile and bootloader on {{host}}..."
+    ssh ${SSH_OPTS} ${REMOTE} bash -s -- "${SYSTEM_PATH}" <<'REMOTE_SCRIPT'
+    set -eo pipefail
+    SYSTEM_PATH="$1"
+    sudo ln -sfn "${SYSTEM_PATH}" /nix/var/nix/profiles/system
+    KERNEL=$(readlink -f "${SYSTEM_PATH}/kernel")
+    INITRD=$(readlink -f "${SYSTEM_PATH}/initrd")
+    KERNEL_PARAMS=$(cat "${SYSTEM_PATH}/kernel-params" 2>/dev/null || echo "")
+    sudo cp "${KERNEL}" /boot/kernel
+    sudo cp "${INITRD}" /boot/initrd
+    printf 'title   nifty-filter\nlinux   /kernel\ninitrd  /initrd\noptions init=%s/init %s\n' "${SYSTEM_PATH}" "${KERNEL_PARAMS}" | sudo tee /boot/loader/entries/nifty-filter.conf > /dev/null
+    printf 'title   nifty-filter (maintenance)\nlinux   /kernel\ninitrd  /initrd\noptions init=%s/init %s rw nifty.maintenance=1\n' "${SYSTEM_PATH}" "${KERNEL_PARAMS}" | sudo tee /boot/loader/entries/nifty-filter-maintenance.conf > /dev/null
+    sudo mount -o remount,ro /nix/store
+    sudo mount -o remount,ro /
+    sudo reboot
+    REMOTE_SCRIPT
+    echo ""
+    echo "Upgrade applied. {{host}} is rebooting..."
+
 # Clean all artifacts
 clean *args: clean-profile
     cargo clean {{args}}
@@ -131,3 +212,8 @@ clean *args: clean-profile
 # Clean profile artifacts only
 clean-profile:
     rm -rf *.profraw *.profdata
+
+# Clean old nix ISO builds
+clean-nix:
+    rm -f result
+    nix-collect-garbage -d
