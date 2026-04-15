@@ -67,10 +67,6 @@ printf 'title   nifty-filter (maintenance)\nlinux   /kernel\ninitrd  /initrd\nop
 
 echo "  Boot entries updated"
 
-# GC after new profile is set so the new system is protected
-echo "==> Collecting garbage..."
-nix-collect-garbage --delete-old 2>/dev/null || true
-
 echo "==> Remounting filesystems read-only..."
 mount -o remount,ro /nix/store 2>/dev/null || true
 mount -o remount,ro / 2>/dev/null || true
