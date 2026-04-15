@@ -61,10 +61,6 @@ if [ "$CURRENT" = "$SYSTEM_PATH" ]; then
     reboot
 fi
 
-echo ""
-script-wizard confirm "Apply upgrade and reboot?" || { echo "Aborted."; exit 1; }
-echo ""
-
 echo "==> Updating system profile..."
 ln -sfn "$SYSTEM_PATH" /nix/var/nix/profiles/system
 
