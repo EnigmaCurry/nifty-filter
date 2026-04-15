@@ -20,6 +20,11 @@ if ! grep -q 'nifty.maintenance=1' /proc/cmdline 2>/dev/null; then
     exit 1
 fi
 
+# Ensure filesystems are writable
+echo "==> Ensuring filesystems are writable..."
+mount -o remount,rw /
+mount -o remount,rw /nix/store
+
 # Check the source repo exists
 if [ ! -d "$REPO_DIR/.git" ]; then
     # Try to clone from the config repo's remote
