@@ -94,12 +94,14 @@
       echo "   0. If network is not up, configure it:"
       echo "        sudo nmtui"
       echo ""
-      echo "   1. Add your SSH public key (from your workstation):"
+      echo "   1. From your workstation, add your SSH public key:"
       echo "        ssh-copy-id admin@<this-host>"
       echo ""
-      echo "   2. Reconnect with key auth:"
+      echo "   2. Connect from your workstation (using your key):"
       echo "        ssh admin@<this-host>"
       echo ""
+      echo "  nifty-filter cannot be installed until you have configured your SSH key."
+      echo
     fi
   '';
 }
