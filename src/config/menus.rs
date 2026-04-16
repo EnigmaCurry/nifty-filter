@@ -351,7 +351,7 @@ fn show_status() {
         ("nifty-dnsmasq", "DHCP / DNS"),
         ("nifty-hostname", "Hostname"),
         ("nifty-link", "Interface rename"),
-        ("nifty-ro", "Read-only root"),
+        ("nifty-ro", "Root remount (ro)"),
     ];
     for (service, label) in services {
         let output = Command::new("systemctl")
