@@ -71,7 +71,7 @@ fn edit_subnet(env: &mut EnvFile) {
             Some(v) => v,
             None => return,
         };
-        if v.parse::<IpNetwork>().is_ok() {
+        if v.contains('/') && v.parse::<IpNetwork>().is_ok() {
             break v;
         }
         println!("  Invalid subnet. Use CIDR notation (e.g. 10.99.0.1/24).");
@@ -104,7 +104,7 @@ fn edit_subnet_ipv6(env: &mut EnvFile) {
             Some(v) => v,
             None => return,
         };
-        if v.parse::<IpNetwork>().is_ok() {
+        if v.contains('/') && v.parse::<IpNetwork>().is_ok() {
             break v;
         }
         println!("  Invalid subnet. Use CIDR notation (e.g. fd00:10::1/64).");
