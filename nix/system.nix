@@ -5,6 +5,12 @@
 # To reconfigure: run nifty-config
 { config, pkgs, lib, ... }:
 
+let
+  # Shell function to read a value from an env file, stripping surrounding quotes
+  envget = ''
+    envget() { grep -oP "^$1=\K.*" "$2" 2>/dev/null | sed "s/^\([\"']\)\(.*\)\1$/\2/"; }
+  '';
+in
 {
   system.stateVersion = "25.05";
   networking.hostName = "nifty-filter";
@@ -45,9 +51,10 @@
     serviceConfig.Type = "oneshot";
     path = [ pkgs.hostname pkgs.gnugrep ];
     script = let d = "$"; in ''
+      ${envget}
       ENV_FILE="/var/nifty-filter/nifty-filter.env"
       if [ -f "${d}ENV_FILE" ]; then
-        NAME=${d}(grep -oP '^HOSTNAME=\K.*' "${d}ENV_FILE" || echo "")
+        NAME=${d}(envget HOSTNAME "${d}ENV_FILE")
         if [ -n "${d}NAME" ]; then
           hostname "${d}NAME"
         fi
@@ -124,28 +131,33 @@
       Type = "oneshot";
       RemainAfterExit = true;
     };
-    path = [ pkgs.iproute2 pkgs.systemd pkgs.gnugrep ];
+    path = [ pkgs.iproute2 pkgs.systemd pkgs.gnugrep pkgs.gnused ];
     script = let d = "$"; in ''
+      ${envget}
       ENV_FILE="/var/nifty-filter/nifty-filter.env"
       if [ ! -f "${d}ENV_FILE" ]; then
         echo "No nifty-filter.env found, skipping network config"
         exit 0
       fi
 
-      ENABLED=${d}(grep -oP '^ENABLED=\K.*' "${d}ENV_FILE" || echo "false")
+      ENABLED=${d}(envget ENABLED "${d}ENV_FILE")
+      ENABLED=${d}{ENABLED:-false}
       if [ "${d}ENABLED" != "true" ]; then
         echo "nifty-filter not enabled, skipping network config"
         exit 0
       fi
 
-      INTERFACE_WAN=${d}(grep -oP '^INTERFACE_WAN=\K.*' "${d}ENV_FILE")
-      INTERFACE_LAN=${d}(grep -oP '^INTERFACE_LAN=\K.*' "${d}ENV_FILE")
-      ENABLE_IPV4=${d}(grep -oP '^ENABLE_IPV4=\K.*' "${d}ENV_FILE" || echo "true")
-      ENABLE_IPV6=${d}(grep -oP '^ENABLE_IPV6=\K.*' "${d}ENV_FILE" || echo "false")
+      INTERFACE_WAN=${d}(envget INTERFACE_WAN "${d}ENV_FILE")
+      INTERFACE_LAN=${d}(envget INTERFACE_LAN "${d}ENV_FILE")
+      ENABLE_IPV4=${d}(envget ENABLE_IPV4 "${d}ENV_FILE")
+      ENABLE_IPV4=${d}{ENABLE_IPV4:-true}
+      ENABLE_IPV6=${d}(envget ENABLE_IPV6 "${d}ENV_FILE")
+      ENABLE_IPV6=${d}{ENABLE_IPV6:-false}
 
       # IPv4 subnet: prefer SUBNET_LAN_IPV4, fall back to SUBNET_LAN
-      SUBNET_LAN_IPV4=${d}(grep -oP '^SUBNET_LAN_IPV4=\K.*' "${d}ENV_FILE" || grep -oP '^SUBNET_LAN=\K.*' "${d}ENV_FILE" || echo "")
-      SUBNET_LAN_IPV6=${d}(grep -oP '^SUBNET_LAN_IPV6=\K.*' "${d}ENV_FILE" || echo "")
+      SUBNET_LAN_IPV4=${d}(envget SUBNET_LAN_IPV4 "${d}ENV_FILE")
+      [ -z "${d}SUBNET_LAN_IPV4" ] && SUBNET_LAN_IPV4=${d}(envget SUBNET_LAN "${d}ENV_FILE")
+      SUBNET_LAN_IPV6=${d}(envget SUBNET_LAN_IPV6 "${d}ENV_FILE")
 
       # Bring up WAN with DHCP
       ip link set "${d}INTERFACE_WAN" up
@@ -197,7 +209,8 @@
 
       # Add IPv6 prefix for Router Advertisements if IPv6 is enabled on LAN
       if [ "${d}ENABLE_IPV6" = "true" ] && [ -n "${d}SUBNET_LAN_IPV6" ]; then
-        DHCPV6_ENABLED=${d}(grep -oP '^DHCPV6_ENABLED=\K.*' "${d}ENV_FILE" 2>/dev/null || echo "false")
+        DHCPV6_ENABLED=${d}(envget DHCPV6_ENABLED "${d}ENV_FILE")
+        DHCPV6_ENABLED=${d}{DHCPV6_ENABLED:-false}
         RA_MANAGED="no"
         RA_OTHER="no"
         if [ "${d}DHCPV6_ENABLED" = "true" ]; then
@@ -252,6 +265,7 @@
     };
     path = [ pkgs.gnugrep pkgs.gnused pkgs.coreutils ];
     preStart = let d = "$"; in ''
+      ${envget}
       ENV_FILE="/var/nifty-filter/nifty-filter.env"
       if [ ! -f "${d}ENV_FILE" ]; then
         echo "No nifty-filter.env found, writing minimal DNS-only config"
@@ -266,12 +280,13 @@
         exit 0
       fi
 
-      DHCP_INTERFACE=${d}(grep -oP '^DHCP_INTERFACE=\K.*' "${d}ENV_FILE")
-      DHCP_SUBNET=${d}(grep -oP '^DHCP_SUBNET=\K.*' "${d}ENV_FILE")
-      DHCP_POOL_START=${d}(grep -oP '^DHCP_POOL_START=\K.*' "${d}ENV_FILE")
-      DHCP_POOL_END=${d}(grep -oP '^DHCP_POOL_END=\K.*' "${d}ENV_FILE")
-      DHCP_ROUTER=${d}(grep -oP '^DHCP_ROUTER=\K.*' "${d}ENV_FILE")
-      DHCP_DNS=${d}(grep -oP '^DHCP_DNS=\K.*' "${d}ENV_FILE" || echo "1.1.1.1, 1.0.0.1")
+      DHCP_INTERFACE=${d}(envget DHCP_INTERFACE "${d}ENV_FILE")
+      DHCP_SUBNET=${d}(envget DHCP_SUBNET "${d}ENV_FILE")
+      DHCP_POOL_START=${d}(envget DHCP_POOL_START "${d}ENV_FILE")
+      DHCP_POOL_END=${d}(envget DHCP_POOL_END "${d}ENV_FILE")
+      DHCP_ROUTER=${d}(envget DHCP_ROUTER "${d}ENV_FILE")
+      DHCP_DNS=${d}(envget DHCP_DNS "${d}ENV_FILE")
+      DHCP_DNS=${d}{DHCP_DNS:-1.1.1.1, 1.0.0.1}
 
       IFS='/' read -r ROUTER_IP PREFIX <<< "${d}DHCP_SUBNET"
 
@@ -314,11 +329,12 @@
       DNSEOF
 
       # Add DHCPv6 range if enabled
-      DHCPV6_ENABLED=${d}(grep -oP '^DHCPV6_ENABLED=\K.*' "${d}ENV_FILE" 2>/dev/null || echo "false")
+      DHCPV6_ENABLED=${d}(envget DHCPV6_ENABLED "${d}ENV_FILE")
+      DHCPV6_ENABLED=${d}{DHCPV6_ENABLED:-false}
       if [ "${d}DHCPV6_ENABLED" = "true" ]; then
-        DHCPV6_POOL_START=${d}(grep -oP '^DHCPV6_POOL_START=\K.*' "${d}ENV_FILE")
-        DHCPV6_POOL_END=${d}(grep -oP '^DHCPV6_POOL_END=\K.*' "${d}ENV_FILE")
-        SUBNET_LAN_IPV6=${d}(grep -oP '^SUBNET_LAN_IPV6=\K.*' "${d}ENV_FILE" 2>/dev/null || echo "")
+        DHCPV6_POOL_START=${d}(envget DHCPV6_POOL_START "${d}ENV_FILE")
+        DHCPV6_POOL_END=${d}(envget DHCPV6_POOL_END "${d}ENV_FILE")
+        SUBNET_LAN_IPV6=${d}(envget SUBNET_LAN_IPV6 "${d}ENV_FILE")
         ROUTER_IPV6=${d}(echo "${d}SUBNET_LAN_IPV6" | cut -d/ -f1)
         if [ -n "${d}DHCPV6_POOL_START" ] && [ -n "${d}DHCPV6_POOL_END" ]; then
           cat >> /run/dnsmasq.conf <<DNSEOF

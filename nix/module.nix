@@ -107,7 +107,7 @@ in
         fi
 
         # Check ENABLED flag
-        ENABLED=$(${pkgs.gnugrep}/bin/grep -oP '^ENABLED=\K.*' ${cfg.configPath} || echo "false")
+        ENABLED=$(${pkgs.gnugrep}/bin/grep -oP '^ENABLED=\K.*' ${cfg.configPath} | ${pkgs.gnused}/bin/sed "s/^\([\"']\)\(.*\)\1$/\2/" || echo "false")
         if [ "$ENABLED" != "true" ]; then
           echo ""
           echo "============================================"
