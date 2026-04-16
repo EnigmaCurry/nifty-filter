@@ -7,6 +7,7 @@ use parsers::port::PortList;
 use std::collections::HashSet;
 use std::env;
 use std::process::exit;
+#[cfg(feature = "nixos")]
 mod config;
 mod format;
 mod parsers;
@@ -25,7 +26,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Interactive configuration menu
+    /// Interactive configuration menu (requires nixos feature)
+    #[cfg(feature = "nixos")]
     Config,
 
     /// Generate nftables configuration
@@ -301,6 +303,7 @@ fn app() {
     let cli = Cli::parse();
 
     match cli.command {
+        #[cfg(feature = "nixos")]
         Commands::Config => config::run(),
         Commands::Nftables {
             env_file,

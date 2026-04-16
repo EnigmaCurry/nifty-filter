@@ -55,6 +55,7 @@
             version = "0.1.1";
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
+            buildFeatures = [ "nixos" ];
             meta = {
               description = "A nifty tool to configure netfilter/nftables";
               license = pkgs.lib.licenses.mit;
