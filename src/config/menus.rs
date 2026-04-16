@@ -427,6 +427,45 @@ fn show_status() {
     println!();
 }
 
+fn menu_logs() {
+    let services = [
+        ("nifty-filter", "Firewall"),
+        ("nifty-network", "Network"),
+        ("nifty-dnsmasq", "DHCP / DNS"),
+        ("nifty-hostname", "Hostname"),
+        ("nifty-link", "Interface rename"),
+        ("nifty-ro", "Root remount (ro)"),
+    ];
+    let mut cursor = 0;
+    loop {
+        let mut items: Vec<String> = services
+            .iter()
+            .map(|(_, label)| label.to_string())
+            .collect();
+        items.push("All (this boot)".to_string());
+        items.push("Back".to_string());
+
+        match choose("Show logs:", items, cursor) {
+            Some((idx, choice)) if choice == "Back" => break,
+            Some((idx, choice)) if choice == "All (this boot)" => {
+                cursor = idx;
+                let _ = Command::new("journalctl")
+                    .args(["-b", "--no-pager"])
+                    .status();
+            }
+            Some((idx, choice)) => {
+                cursor = idx;
+                if let Some((unit, _)) = services.get(idx) {
+                    let _ = Command::new("journalctl")
+                        .args(["-u", unit, "-b", "--no-pager"])
+                        .status();
+                }
+            }
+            None => break,
+        }
+    }
+}
+
 fn show_config(env: &EnvFile) {
     println!();
     println!("  === Current Configuration ===");
@@ -868,6 +907,7 @@ pub fn run() {
         let items = vec![
             "Show config".to_string(),
             "Show status".to_string(),
+            "Show logs".to_string(),
             "Network".to_string(),
             "Firewall".to_string(),
             "Port forwarding".to_string(),
@@ -884,6 +924,7 @@ pub fn run() {
             Some((idx, choice)) => { cursor = idx; match choice.as_str() {
                 "Show config" => show_config(&env),
                 "Show status" => show_status(),
+                "Show logs" => menu_logs(),
                 "Network" => menu_network(&mut env),
                 "Firewall" => menu_firewall(&mut env),
                 "Port forwarding" => menu_port_forwarding(&mut env),
