@@ -12,7 +12,8 @@ set -euo pipefail
 echo "This will reboot into maintenance mode (read-write root)."
 echo "After maintenance, reboot to return to normal mode."
 echo ""
-script-wizard confirm "Reboot into maintenance mode?" || { echo "Aborted."; exit 1; }
+read -rp "Reboot into maintenance mode? [y/N] " answer
+[[ "$answer" =~ ^[Yy] ]] || { echo "Aborted."; exit 1; }
 
 bootctl set-oneshot nifty-filter-maintenance.conf
 systemctl reboot

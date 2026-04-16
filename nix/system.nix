@@ -3,7 +3,7 @@
 # Root filesystem is read-only. All mutable state lives on /var.
 # Router configuration: /var/nifty-filter/router.env
 # To reconfigure: edit the env file and reboot.
-{ config, pkgs, lib, scriptWizard ? null, ... }:
+{ config, pkgs, lib, ... }:
 
 {
   system.stateVersion = "25.05";
@@ -366,11 +366,10 @@
 
   # --- Minimal packages ---
   environment.systemPackages = with pkgs; [
-    (writeShellScriptBin "nifty-config" (builtins.readFile ./nifty-config.sh))
+    (writeShellScriptBin "nifty-config" ''exec nifty-filter config "$@"'')
     (writeShellScriptBin "nifty-maintenance" (builtins.readFile ./nifty-maintenance.sh))
     (writeShellScriptBin "nifty-upgrade" (builtins.readFile ./nifty-upgrade.sh))
     git
-  ] ++ lib.optional (scriptWizard != null) scriptWizard ++ [
     vim
     htop
     ethtool

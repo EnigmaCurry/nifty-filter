@@ -7,6 +7,7 @@ use parsers::port::PortList;
 use std::collections::HashSet;
 use std::env;
 use std::process::exit;
+mod config;
 mod format;
 mod parsers;
 use parsers::*;
@@ -24,6 +25,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Interactive configuration menu
+    Config,
+
     /// Generate nftables configuration
     #[command(alias = "nft")]
     Nftables {
@@ -297,6 +301,7 @@ fn app() {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Config => config::run(),
         Commands::Nftables {
             env_file,
             strict_env,
