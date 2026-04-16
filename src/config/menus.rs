@@ -231,6 +231,12 @@ fn toggle_dhcpv6(env: &mut EnvFile) {
         println!("  DHCPv6 disabled. Removed ports 546,547 from UDP_ACCEPT_LAN.");
     } else {
         env.set("DHCPV6_ENABLED", "true");
+        // Add IPv6 DNS servers if still using IPv4-only defaults
+        let dns = env.get("DHCP_DNS").to_string();
+        if dns == "1.1.1.1, 1.0.0.1" {
+            env.set("DHCP_DNS", "1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001");
+            println!("  Added IPv6 DNS servers (Cloudflare).");
+        }
         // Add DHCPv6 ports to UDP_ACCEPT_LAN if not already present
         let udp_lan = env.get("UDP_ACCEPT_LAN").to_string();
         if !udp_lan.contains("546") {
