@@ -73,7 +73,11 @@ fn subnet_label(cidr: &str) -> String {
     }
     match cidr.parse::<IpNetwork>() {
         Ok(net) => {
-            let size = net.size();
+            let prefix = net.prefix();
+            let size: u128 = match net {
+                IpNetwork::V4(_) => 1u128 << (32 - prefix),
+                IpNetwork::V6(_) => 1u128 << (128 - prefix),
+            };
             format!("{cidr} ({size} addrs)")
         }
         Err(_) => cidr.to_string(),
@@ -536,7 +540,7 @@ fn menu_logs() {
         items.push("Back".to_string());
 
         match choose("Show logs:", items, cursor) {
-            Some((idx, choice)) if choice == "Back" => break,
+            Some((_, choice)) if choice == "Back" => break,
             Some((idx, choice)) if choice == "All (this boot)" => {
                 cursor = idx;
                 run_interactive(Command::new("journalctl").args(["-b"]));
