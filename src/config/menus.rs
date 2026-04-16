@@ -877,7 +877,11 @@ pub fn run() {
                     }
                 }
                 "Reboot" => {
-                    let _ = Command::new("sudo").args(["systemctl", "reboot"]).status();
+                    if let Some(v) = prompt_text("Reboot now? (yes/no)", "no") {
+                        if v.trim().eq_ignore_ascii_case("yes") || v.trim().eq_ignore_ascii_case("y") {
+                            let _ = Command::new("sudo").args(["systemctl", "reboot"]).status();
+                        }
+                    }
                 }
                 "Quit" => break,
                 _ => {}
