@@ -68,10 +68,16 @@ fn prompt_select(message: &str, options: Vec<String>) -> String {
 }
 
 fn prompt_confirm(message: &str) -> bool {
-    match Confirm::new(message).with_default(false).prompt() {
-        Ok(v) => v,
-        Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => false,
-        Err(_) => false,
+    loop {
+        match Confirm::new(message).without_default().prompt() {
+            Ok(v) => return v,
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+                continue;
+            }
+            Err(_) => {
+                continue;
+            }
+        }
     }
 }
 
