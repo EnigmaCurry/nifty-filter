@@ -477,6 +477,7 @@ fn menu_logs() {
             }
         }
         items.push("All (this boot)".to_string());
+        items.push("All (last boot)".to_string());
         items.push("All (live)".to_string());
         items.push("Back".to_string());
 
@@ -485,6 +486,10 @@ fn menu_logs() {
             Some((idx, choice)) if choice == "All (this boot)" => {
                 cursor = idx;
                 run_interactive(Command::new("journalctl").args(["-b"]));
+            }
+            Some((idx, choice)) if choice == "All (last boot)" => {
+                cursor = idx;
+                run_interactive(Command::new("journalctl").args(["-b", "-1"]));
             }
             Some((idx, choice)) if choice == "All (live)" => {
                 cursor = idx;
