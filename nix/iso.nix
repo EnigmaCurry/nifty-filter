@@ -10,14 +10,17 @@
 {
   imports = [
     "${modulesPath}/installer/cd-dvd/iso-image.nix"
-    "${modulesPath}/profiles/all-hardware.nix"
   ];
+
+  # Minimal hardware support — skip the full linux-firmware bundle from all-hardware.nix
+  hardware.enableRedistributableFirmware = lib.mkForce false;
 
   image.baseName = lib.mkForce "nifty-filter-${version}";
   isoImage = {
     volumeID = "NIFTY_FILTER";
     makeEfiBootable = true;
     makeBiosBootable = true;
+    squashfsCompression = "zstd -Xcompression-level 19";
   };
 
   # Override read-only filesystem mounts from system.nix
@@ -38,7 +41,6 @@
     parted
     dosfstools
     e2fsprogs
-    git
   ];
 
   # Ship the default env file where the installer can find it

@@ -13,7 +13,8 @@
   # so the ISO can provide its own without conflicts)
   boot.loader.systemd-boot.enable = lib.mkDefault true;
   boot.loader.efi.canTouchEfiVariables = lib.mkDefault false;
-  boot.kernelPackages = pkgs.linuxPackages_latest;
+  # Default LTS kernel (smaller than linuxPackages_latest)
+  # boot.kernelPackages = pkgs.linuxPackages_latest;
 
   # Include common disk/filesystem drivers in initrd
   boot.initrd.availableKernelModules = [
