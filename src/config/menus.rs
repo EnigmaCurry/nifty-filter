@@ -139,6 +139,17 @@ fn edit_subnet_ipv6(env: &mut EnvFile) {
         println!("  Invalid subnet. Use CIDR notation (e.g. fd00:10::1/64).");
     };
     env.set("SUBNET_LAN_IPV6", &val);
+
+    // Update DHCPv6 pool to match if DHCPv6 is enabled
+    if env.get("DHCPV6_ENABLED") == "true" {
+        if let Some((addr, _)) = val.split_once('/') {
+            if let Some((prefix, _)) = addr.rsplit_once(':') {
+                env.set("DHCPV6_POOL_START", &format!("{prefix}:100"));
+                env.set("DHCPV6_POOL_END", &format!("{prefix}:1ff"));
+                println!("  Updated DHCPv6 pool to match.");
+            }
+        }
+    }
     env.save().ok();
     println!("  Set SUBNET_LAN_IPV6={val}");
 }
