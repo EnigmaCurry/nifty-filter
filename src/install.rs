@@ -432,8 +432,9 @@ fn format_partitions(boot: &str, root: &str, var: &str) {
 fn mount_partitions(mnt: &str, boot: &str, root: &str, var: &str) {
     println!("==> Mounting filesystems...");
     run_cmd("mount", &[root, mnt]);
-    fs::create_dir_all(format!("{mnt}/boot")).ok();
-    fs::create_dir_all(format!("{mnt}/var")).ok();
+    for dir in ["boot", "var", "run", "tmp", "home", "root", "etc", "proc", "sys", "dev"] {
+        fs::create_dir_all(format!("{mnt}/{dir}")).ok();
+    }
     run_cmd("mount", &[boot, &format!("{mnt}/boot")]);
     run_cmd("mount", &[var, &format!("{mnt}/var")]);
 }
