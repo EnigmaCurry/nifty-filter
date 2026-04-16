@@ -851,6 +851,7 @@ pub fn run() {
             "Apply changes".to_string(),
             "Edit nifty-filter.env".to_string(),
             "Reset config".to_string(),
+            "Reboot".to_string(),
             "Quit".to_string(),
         ];
 
@@ -874,6 +875,9 @@ pub fn run() {
                     if let Some(new_env) = reset_config() {
                         env = new_env;
                     }
+                }
+                "Reboot" => {
+                    let _ = Command::new("sudo").args(["systemctl", "reboot"]).status();
                 }
                 "Quit" => break,
                 _ => {}
