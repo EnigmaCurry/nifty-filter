@@ -140,6 +140,16 @@ iso:
     @echo "Flash to USB:"
     @echo "  sudo dd if=$(readlink -f result/iso/*.iso) of=/dev/sdX bs=4M status=progress"
 
+# Build NixOS router ISO with full hardware support (linux-firmware + all drivers)
+iso-big:
+    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" nix build .#iso-big --impure
+    @echo ""
+    @echo "ISO (big) built successfully (branch: $(git symbolic-ref --short HEAD 2>/dev/null || echo master)):"
+    @echo "  $(readlink -f result/iso/*.iso)"
+    @echo ""
+    @echo "Flash to USB:"
+    @echo "  sudo dd if=$(readlink -f result/iso/*.iso) of=/dev/sdX bs=4M status=progress"
+
 # Upgrade a remote router (builds locally, stages for next reboot)
 upgrade host:
     #!/usr/bin/env bash

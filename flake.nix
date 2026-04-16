@@ -29,7 +29,7 @@
       # The ISO embeds the installed system closure so the installer
       # can copy it to disk (the ISO's own system boots from squashfs
       # and can't be used as a disk-based system).
-      mkRouterIso = system:
+      mkRouterIso = { system, extraModules ? [] }:
         let
           installedSystem = mkRouterSystem system;
           installedToplevel = installedSystem.config.system.build.toplevel;
@@ -41,7 +41,7 @@
             self.nixosModules.default
             ./nix/system.nix
             ./nix/iso.nix
-          ];
+          ] ++ extraModules;
         };
     in
     {
@@ -61,7 +61,8 @@
             };
           };
 
-          iso = (mkRouterIso system).config.system.build.isoImage;
+          iso = (mkRouterIso { inherit system; }).config.system.build.isoImage;
+          iso-big = (mkRouterIso { inherit system; extraModules = [ ./nix/iso-big.nix ]; }).config.system.build.isoImage;
 
           default = self.packages.${system}.nifty-filter;
         }
