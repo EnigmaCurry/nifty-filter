@@ -706,7 +706,7 @@ fn unmount_and_shutdown(mnt: &str) {
     println!("Installation complete!");
     println!("Remove the installation media, then power on the system.");
     println!();
-    for i in (1..=10).rev() {
+    for i in (1..=3).rev() {
         eprint!("\rShutting down in {i:2} seconds... ");
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
