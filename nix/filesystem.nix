@@ -9,7 +9,6 @@
   fileSystems."/" = {
     device = "/dev/disk/by-label/NIFTY_ROOT";
     fsType = "ext4";
-    options = [ "ro" ];
   };
   fileSystems."/boot" = {
     device = "/dev/disk/by-label/NIFTY_BOOT";
@@ -22,7 +21,6 @@
     neededForBoot = true;
   };
 
-  fileSystems."/etc" = { device = "tmpfs"; fsType = "tmpfs"; options = [ "mode=0755" ]; neededForBoot = true; };
   fileSystems."/home" = { device = "/var/home"; fsType = "none"; options = [ "bind" ]; };
   fileSystems."/root" = { device = "/var/root"; fsType = "none"; options = [ "bind" ]; };
   fileSystems."/tmp" = { device = "tmpfs"; fsType = "tmpfs"; };
