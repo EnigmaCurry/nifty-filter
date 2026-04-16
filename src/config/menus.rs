@@ -1,5 +1,4 @@
 use std::fs;
-use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 use inquire::{InquireError, Select, Text};
@@ -12,15 +11,21 @@ const ENV_FILE: &str = "/var/nifty-filter/nifty-filter.env";
 
 /// Run a command in its own process group so Ctrl-C only kills the child.
 fn run_interactive(cmd: &mut Command) {
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setpgid(0, 0);
-            Ok(())
-        });
-    }
     // Ignore SIGINT in parent while child runs
     unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN); }
-    let _ = cmd.status();
+    if let Ok(mut child) = cmd.spawn() {
+        let pid = child.id() as libc::pid_t;
+        // Put child in its own process group and make it the foreground group
+        unsafe {
+            libc::setpgid(pid, pid);
+            libc::tcsetpgrp(0, pid);
+        }
+        let _ = child.wait();
+        // Restore parent as foreground process group
+        unsafe {
+            libc::tcsetpgrp(0, libc::getpgrp());
+        }
+    }
     unsafe { libc::signal(libc::SIGINT, libc::SIG_DFL); }
 }
 
