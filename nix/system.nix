@@ -48,7 +48,10 @@ in
     wantedBy = [ "sysinit.target" ];
     before = [ "network-pre.target" ];
     unitConfig.DefaultDependencies = false;
-    serviceConfig.Type = "oneshot";
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
     path = [ pkgs.hostname pkgs.gnugrep ];
     script = let d = "$"; in ''
       ${envget}
