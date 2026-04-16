@@ -61,6 +61,19 @@
   # Interface rename rules (.link files) are in /var/nifty-filter/network/
   networking.useDHCP = false;
 
+  # Remount /etc read-only after NixOS activation populates it
+  systemd.services.nifty-etc-ro = {
+    description = "Remount /etc read-only";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "systemd-tmpfiles-setup.service" ];
+    unitConfig.ConditionKernelCommandLine = "!nifty.maintenance=1";
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${pkgs.util-linux}/bin/mount -o remount,ro /etc";
+    };
+  };
+
   # In maintenance mode, remount /nix/store as read-write
   systemd.services.nifty-maintenance-rw = {
     description = "Remount nix store read-write in maintenance mode";
