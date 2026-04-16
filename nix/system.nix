@@ -416,7 +416,7 @@
     overrideStrategy = "asDropin";
     serviceConfig.ExecStart = lib.mkForce [
       ""  # clear default
-      "${pkgs.shadow}/bin/login -f admin"
+      "${pkgs.util-linux}/bin/agetty --autologin admin --noclear --keep-baud %I 115200,38400,9600 $TERM"
     ];
   };
   # Pre-login banner using agetty built-in escapes (works on read-only root)
