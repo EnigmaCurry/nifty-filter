@@ -570,7 +570,7 @@ pub fn run() {
         };
 
         let items = vec![
-            "Show status".to_string(),
+            "Show config".to_string(),
             "Network".to_string(),
             "Firewall".to_string(),
             "Port forwarding".to_string(),
@@ -584,7 +584,7 @@ pub fn run() {
 
         match choose("nifty-filter configuration:", items, cursor) {
             Some((idx, choice)) => { cursor = idx; match choice.as_str() {
-                "Show status" => show_status(&router, &dhcp),
+                "Show config" => show_status(&router, &dhcp),
                 "Network" => menu_network(&mut router, &mut dhcp),
                 "Firewall" => menu_firewall(&mut router),
                 "Port forwarding" => menu_port_forwarding(&mut router),
