@@ -5,7 +5,7 @@
 # Install to disk for persistent configuration.
 #
 # Build with: nix build .#iso
-{ config, pkgs, lib, modulesPath, version ? "unknown", installedToplevel, gitBranch ? "master", ... }:
+{ config, pkgs, lib, modulesPath, version ? "unknown", installedToplevel, gitBranch ? "master", nifty-filter-pkg, ... }:
 
 {
   imports = [
@@ -37,6 +37,7 @@
 
   # Install script and tools available in PATH
   environment.systemPackages = with pkgs; [
+    nifty-filter-pkg
     (writeShellScriptBin "nifty-install" ''exec nifty-filter install "$@"'')
     parted
     dosfstools

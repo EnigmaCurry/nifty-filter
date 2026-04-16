@@ -33,10 +33,11 @@
         let
           installedSystem = mkRouterSystem system;
           installedToplevel = installedSystem.config.system.build.toplevel;
+          nifty-filter-pkg = self.packages.${system}.nifty-filter;
         in
         nixpkgs.lib.nixosSystem {
           inherit system;
-          specialArgs = { inherit version installedToplevel gitBranch; };
+          specialArgs = { inherit version installedToplevel gitBranch nifty-filter-pkg; };
           modules = [
             self.nixosModules.default
             ./nix/system.nix
