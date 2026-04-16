@@ -84,7 +84,7 @@
       echo ""
       echo "  SSH key installed. Ready to install."
       echo ""
-      echo "   1. Install (interactive wizard selects disk, interfaces, DHCP):"
+      echo "   1. Run :"
       echo "        nifty-install"
       echo ""
     else
@@ -100,7 +100,8 @@
       echo "   2. Connect from your workstation (using your key):"
       echo "        ssh admin@<this-host>"
       echo ""
-      echo "  nifty-filter cannot be installed until you have configured your SSH key."
+      echo "  Once your key is installed, additional instructions will be given"
+      echo "  when you connect."
       echo
     fi
   '';
