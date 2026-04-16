@@ -67,6 +67,19 @@ fn pool_label_v6(start: &str, end: &str) -> String {
     }
 }
 
+fn subnet_label(cidr: &str) -> String {
+    if cidr.is_empty() {
+        return String::new();
+    }
+    match cidr.parse::<IpNetwork>() {
+        Ok(net) => {
+            let size = net.size();
+            format!("{cidr} ({size} addrs)")
+        }
+        Err(_) => cidr.to_string(),
+    }
+}
+
 fn prompt_text(message: &str, default: &str) -> Option<String> {
     let mut prompt = Text::new(message);
     if !default.is_empty() {
@@ -560,10 +573,10 @@ fn show_config(env: &EnvFile) {
     println!("  INTERFACE_LAN:  {}", env.get("INTERFACE_LAN"));
     println!("  ENABLE_IPV4:    {}", if env.get("ENABLE_IPV4").is_empty() { "true" } else { env.get("ENABLE_IPV4") });
     println!("  ENABLE_IPV6:    {}", if env.get("ENABLE_IPV6").is_empty() { "false" } else { env.get("ENABLE_IPV6") });
-    println!("  SUBNET_LAN:     {}", env.get("SUBNET_LAN"));
+    println!("  SUBNET_LAN:     {}", subnet_label(env.get("SUBNET_LAN")));
     let ipv6_subnet = env.get("SUBNET_LAN_IPV6");
     if !ipv6_subnet.is_empty() {
-        println!("  SUBNET_LAN_IPV6: {ipv6_subnet}");
+        println!("  SUBNET_LAN_IPV6: {}", subnet_label(ipv6_subnet));
     }
     println!("  TCP_ACCEPT_LAN: {}", env.get("TCP_ACCEPT_LAN"));
     println!("  UDP_ACCEPT_LAN: {}", env.get("UDP_ACCEPT_LAN"));
@@ -811,12 +824,12 @@ fn menu_network(env: &mut EnvFile) {
 
         let mut items = vec![
             format!("Hostname ({})", env.get("HOSTNAME")),
-            format!("LAN IPv4 subnet ({})", env.get("SUBNET_LAN")),
+            format!("LAN IPv4 subnet ({})", subnet_label(env.get("SUBNET_LAN"))),
         ];
         if ipv6_enabled {
             items.push(format!(
                 "LAN IPv6 subnet ({})",
-                env.get("SUBNET_LAN_IPV6")
+                subnet_label(env.get("SUBNET_LAN_IPV6"))
             ));
         }
         items.push(ipv6_label.to_string());
