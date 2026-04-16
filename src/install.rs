@@ -482,7 +482,11 @@ fn copy_system_closure(mnt: &str) {
     std::os::unix::fs::symlink(&system_path, format!("{mnt}/nix/var/nix/profiles/system")).ok();
 
     println!("==> Installing bootloader...");
-    run_cmd("bootctl", &["install", &format!("--esp-path={mnt}/boot")]);
+    Command::new("bootctl")
+        .args(["install", &format!("--esp-path={mnt}/boot")])
+        .stderr(Stdio::null())
+        .status()
+        .ok();
 
     let kernel = fs::read_link(format!("{system_path}/kernel"))
         .unwrap_or_default()
