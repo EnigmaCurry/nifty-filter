@@ -411,12 +411,12 @@
     fi
   '';
 
-  # Auto-login on console in maintenance mode only
+  # Auto-login on console (SSH is primary access; console is for emergencies)
   systemd.services."getty@tty1" = {
     overrideStrategy = "asDropin";
     serviceConfig.ExecStart = lib.mkForce [
       ""  # clear default
-      "${pkgs.bash}/bin/bash -c 'if grep -q nifty.maintenance=1 /proc/cmdline; then exec ${pkgs.shadow}/bin/login -f admin; else exec ${pkgs.util-linux}/bin/agetty --noclear --keep-baud tty1 115200,38400,9600 linux; fi'"
+      "${pkgs.shadow}/bin/login -f admin"
     ];
   };
   # Pre-login banner using agetty built-in escapes (works on read-only root)
