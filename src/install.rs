@@ -71,12 +71,11 @@ fn prompt_confirm(message: &str) -> bool {
     loop {
         match Confirm::new(message).without_default().prompt() {
             Ok(v) => return v,
-            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
-                continue;
+            Err(InquireError::OperationInterrupted) => {
+                eprintln!("Aborted.");
+                std::process::exit(1);
             }
-            Err(_) => {
-                continue;
-            }
+            Err(_) => continue,
         }
     }
 }
