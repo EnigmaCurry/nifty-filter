@@ -1,3 +1,4 @@
+use std::fs;
 use std::process::Command;
 
 use inquire::{InquireError, Select, Text};
@@ -448,6 +449,205 @@ fn show_config(env: &EnvFile) {
     println!();
 }
 
+fn list_interfaces() -> Vec<String> {
+    let output = Command::new("ip")
+        .args(["-o", "link", "show"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    output
+        .lines()
+        .filter_map(|line| {
+            let name = line.split(':').nth(1)?.trim().to_string();
+            if name == "lo" { None } else { Some(name) }
+        })
+        .collect()
+}
+
+fn get_mac(iface: &str) -> String {
+    let output = Command::new("ip")
+        .args(["-o", "link", "show", iface])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    output
+        .split("link/ether ")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn prompt_validated<F>(message: &str, default: &str, validate: F) -> Option<String>
+where
+    F: Fn(&str) -> Option<&'static str>,
+{
+    loop {
+        let v = prompt_text(message, default)?;
+        if let Some(err) = validate(&v) {
+            println!("  {err}");
+        } else {
+            return Some(v);
+        }
+    }
+}
+
+fn reset_config() -> Option<EnvFile> {
+    println!();
+    println!("  This will erase your current configuration and start fresh.");
+    println!();
+    loop {
+        match Text::new("Type 'reset' to confirm, or 'cancel':").prompt() {
+            Ok(v) if v.trim().eq_ignore_ascii_case("reset") => break,
+            Ok(v) if v.trim().eq_ignore_ascii_case("cancel") => return None,
+            Ok(_) => continue,
+            Err(InquireError::OperationInterrupted) => {
+                eprintln!("Aborted.");
+                std::process::exit(1);
+            }
+            Err(_) => return None,
+        }
+    }
+
+    let hostname_re = Regex::new(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$").unwrap();
+
+    // Hostname
+    println!();
+    println!("==> Configure hostname:");
+    let hostname = prompt_validated("Hostname for this router", "nifty-filter", |v| {
+        if hostname_re.is_match(v) { None }
+        else { Some("Invalid hostname. Must be 1-63 chars: letters, digits, hyphens.") }
+    })?;
+
+    // Interfaces
+    println!();
+    println!("==> Configure network interfaces:");
+    let ifaces = list_interfaces();
+    if ifaces.len() < 2 {
+        println!("  Need at least 2 network interfaces (found {}).", ifaces.len());
+        return None;
+    }
+
+    let wan_choice = choose("Select WAN interface (upstream/internet):", ifaces.clone(), 0)?;
+    let wan_iface = wan_choice.1;
+    println!("  WAN: {wan_iface} -> wan");
+
+    let lan_ifaces: Vec<String> = ifaces.into_iter().filter(|i| i != &wan_iface).collect();
+    let lan_iface = if lan_ifaces.len() == 1 {
+        println!("  LAN: {} -> lan (only remaining interface)", lan_ifaces[0]);
+        lan_ifaces[0].clone()
+    } else {
+        let choice = choose("Select LAN interface (local network):", lan_ifaces, 0)?;
+        println!("  LAN: {} -> lan", choice.1);
+        choice.1
+    };
+
+    let wan_mac = get_mac(&wan_iface);
+    let lan_mac = get_mac(&lan_iface);
+
+    // Subnet
+    println!();
+    println!("==> Configure LAN network:");
+    let subnet_lan = prompt_validated("LAN subnet (IP/prefix)", "10.99.0.1/24", |v| {
+        if v.contains('/') && v.parse::<IpNetwork>().is_ok() { None }
+        else { Some("Invalid subnet. Use CIDR notation (e.g. 10.99.0.1/24).") }
+    })?;
+
+    let router_ip = subnet_lan.split_once('/').map(|(ip, _)| ip).unwrap_or(&subnet_lan).to_string();
+    let network_base = router_ip.rsplit_once('.').map(|(base, _)| base).unwrap_or(&router_ip).to_string();
+    let default_start = format!("{network_base}.100");
+    let default_end = format!("{network_base}.250");
+
+    // DHCP
+    println!();
+    println!("==> Configure DHCP pool:");
+    let dhcp_start = prompt_text("DHCP pool start", &default_start)?;
+    let dhcp_end = prompt_text("DHCP pool end", &default_end)?;
+    let dns_servers = prompt_text("DNS servers (comma-separated)", "1.1.1.1, 1.0.0.1")?;
+
+    // Write env file
+    let env_content = format!(
+        r#"# nifty-filter configuration
+# Edit this file and run: nifty-config -> Apply changes
+#
+# This file lives on the writable /var partition.
+# The rest of the system is read-only (unless booted in maintenance mode).
+ENABLED=true
+HOSTNAME={hostname}
+
+# Network interfaces
+INTERFACE_LAN=lan
+INTERFACE_WAN=wan
+
+# LAN subnet in CIDR notation (router's LAN IP / prefix length)
+SUBNET_LAN={subnet}
+
+# ICMP types accepted on each interface
+ICMP_ACCEPT_LAN=echo-request,echo-reply,destination-unreachable,time-exceeded
+ICMP_ACCEPT_WAN=
+
+# TCP/UDP ports the router itself accepts
+TCP_ACCEPT_LAN=22
+UDP_ACCEPT_LAN=67,68
+TCP_ACCEPT_WAN=22
+UDP_ACCEPT_WAN=
+
+# Port forwarding rules
+# Format: incoming_port:destination_ip:destination_port
+TCP_FORWARD_LAN=
+UDP_FORWARD_LAN=
+TCP_FORWARD_WAN=
+UDP_FORWARD_WAN=
+
+# DHCP server configuration
+DHCP_INTERFACE=lan
+DHCP_SUBNET={subnet}
+DHCP_POOL_START={dhcp_start}
+DHCP_POOL_END={dhcp_end}
+DHCP_ROUTER={router_ip}
+DHCP_DNS={dns}
+
+# DHCPv6 (enable and configure via nifty-config after install)
+DHCPV6_ENABLED=false
+DHCPV6_POOL_START=
+DHCPV6_POOL_END=
+"#,
+        hostname = hostname,
+        subnet = subnet_lan,
+        dhcp_start = dhcp_start,
+        dhcp_end = dhcp_end,
+        router_ip = router_ip,
+        dns = dns_servers,
+    );
+
+    // Write interface rename rules
+    let network_dir = "/var/nifty-filter/network";
+    fs::create_dir_all(network_dir).ok();
+    fs::write(
+        format!("{network_dir}/10-wan.link"),
+        format!("[Match]\nMACAddress={wan_mac}\n\n[Link]\nName=wan\n"),
+    ).ok();
+    fs::write(
+        format!("{network_dir}/10-lan.link"),
+        format!("[Match]\nMACAddress={lan_mac}\n\n[Link]\nName=lan\n"),
+    ).ok();
+
+    fs::write(ENV_FILE, &env_content).ok();
+    let _ = Command::new("chmod").args(["0600", ENV_FILE]).status();
+
+    println!();
+    println!("  Configuration reset. Apply changes or reboot to activate.");
+
+    // Reload
+    match EnvFile::load(std::path::Path::new(ENV_FILE)) {
+        Ok(env) => Some(env),
+        Err(e) => {
+            eprintln!("  Warning: could not reload config: {e}");
+            None
+        }
+    }
+}
+
 fn launch_editor(path: &str) {
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
     let _ = Command::new(&editor).arg(path).status();
@@ -653,6 +853,7 @@ pub fn run() {
             enabled_label.to_string(),
             "Apply changes".to_string(),
             "Edit nifty-filter.env".to_string(),
+            "Reset config".to_string(),
             "Quit".to_string(),
         ];
 
@@ -670,6 +871,11 @@ pub fn run() {
                     launch_editor(ENV_FILE);
                     if let Err(e) = env.reload() {
                         eprintln!("  Warning: {e}");
+                    }
+                }
+                "Reset config" => {
+                    if let Some(new_env) = reset_config() {
+                        env = new_env;
                     }
                 }
                 "Quit" => break,
