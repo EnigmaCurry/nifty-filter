@@ -411,7 +411,18 @@ fn show_status() {
             Err(_) => String::new(),
         };
         let state = if opts.split(',').any(|o| o == "ro") { "ro" } else { "rw" };
-        println!("  [{state:^4}] {mount}");
+        let df = Command::new("df")
+            .args(["-h", "--output=used,size", mount])
+            .output();
+        let usage = match df {
+            Ok(o) => {
+                let out = String::from_utf8_lossy(&o.stdout).to_string();
+                out.lines().nth(1).unwrap_or("").split_whitespace()
+                    .collect::<Vec<_>>().join(" / ")
+            }
+            Err(_) => String::new(),
+        };
+        println!("  [{state:^4}] {mount:<12} {usage}");
     }
     println!();
 }
