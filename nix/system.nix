@@ -1,8 +1,8 @@
 # Read-only NixOS router system
 #
 # Root filesystem is read-only. All mutable state lives on /var.
-# Router configuration: /var/nifty-filter/router.env
-# To reconfigure: edit the env file and reboot.
+# Configuration: /var/nifty-filter/nifty-filter.env
+# To reconfigure: run nifty-config
 { config, pkgs, lib, ... }:
 
 {
@@ -33,19 +33,19 @@
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   nix.gc.automatic = false;
 
-  # --- Nifty-filter firewall (reads /var/nifty-filter/router.env at boot) ---
+  # --- Nifty-filter firewall (reads /var/nifty-filter/nifty-filter.env at boot) ---
   services.nifty-filter.enable = true;
 
-  # Set hostname from /var/nifty-filter/router.env at boot
+  # Set hostname from /var/nifty-filter/nifty-filter.env at boot
   systemd.services.nifty-hostname = {
-    description = "Set hostname from router.env";
+    description = "Set hostname from nifty-filter.env";
     wantedBy = [ "sysinit.target" ];
     before = [ "network-pre.target" ];
     unitConfig.DefaultDependencies = false;
     serviceConfig.Type = "oneshot";
     path = [ pkgs.hostname pkgs.gnugrep ];
     script = let d = "$"; in ''
-      ENV_FILE="/var/nifty-filter/router.env"
+      ENV_FILE="/var/nifty-filter/nifty-filter.env"
       if [ -f "${d}ENV_FILE" ]; then
         NAME=${d}(grep -oP '^HOSTNAME=\K.*' "${d}ENV_FILE" || echo "")
         if [ -n "${d}NAME" ]; then
@@ -56,8 +56,8 @@
   };
 
   # --- Networking ---
-  # Interfaces are configured dynamically at boot from /var/nifty-filter/router.env
-  # and /var/nifty-filter/dhcp.env. No hardcoded interface names.
+  # Interfaces are configured dynamically at boot from /var/nifty-filter/nifty-filter.env
+  # No hardcoded interface names.
   # Interface rename rules (.link files) are in /var/nifty-filter/network/
   networking.useDHCP = false;
 
@@ -109,9 +109,9 @@
     };
     path = [ pkgs.iproute2 pkgs.systemd pkgs.gnugrep ];
     script = let d = "$"; in ''
-      ENV_FILE="/var/nifty-filter/router.env"
+      ENV_FILE="/var/nifty-filter/nifty-filter.env"
       if [ ! -f "${d}ENV_FILE" ]; then
-        echo "No router.env found, skipping network config"
+        echo "No nifty-filter.env found, skipping network config"
         exit 0
       fi
 
@@ -180,8 +180,7 @@
 
       # Add IPv6 prefix for Router Advertisements if IPv6 is enabled on LAN
       if [ "${d}ENABLE_IPV6" = "true" ] && [ -n "${d}SUBNET_LAN_IPV6" ]; then
-        DHCP_ENV="/var/nifty-filter/dhcp.env"
-        DHCPV6_ENABLED=${d}(grep -oP '^DHCPV6_ENABLED=\K.*' "${d}DHCP_ENV" 2>/dev/null || echo "false")
+        DHCPV6_ENABLED=${d}(grep -oP '^DHCPV6_ENABLED=\K.*' "${d}ENV_FILE" 2>/dev/null || echo "false")
         RA_MANAGED="no"
         RA_OTHER="no"
         if [ "${d}DHCPV6_ENABLED" = "true" ]; then
@@ -219,7 +218,7 @@
   '';
 
   # --- dnsmasq: DHCP + DNS for LAN ---
-  # Config is generated at boot from /var/nifty-filter/dhcp.env
+  # Config is generated at boot from /var/nifty-filter/nifty-filter.env
   # Forwards DNS to upstream (Cloudflare by default).
   services.resolved.enable = false;
 
@@ -236,9 +235,9 @@
     };
     path = [ pkgs.gnugrep pkgs.gnused pkgs.coreutils ];
     preStart = let d = "$"; in ''
-      DHCP_ENV="/var/nifty-filter/dhcp.env"
-      if [ ! -f "${d}DHCP_ENV" ]; then
-        echo "No dhcp.env found, writing minimal DNS-only config"
+      ENV_FILE="/var/nifty-filter/nifty-filter.env"
+      if [ ! -f "${d}ENV_FILE" ]; then
+        echo "No nifty-filter.env found, writing minimal DNS-only config"
         cat > /run/dnsmasq.conf <<DNSEOF
       pid-file=/run/dnsmasq.pid
       listen-address=127.0.0.1
@@ -250,12 +249,12 @@
         exit 0
       fi
 
-      DHCP_INTERFACE=${d}(grep -oP '^DHCP_INTERFACE=\K.*' "${d}DHCP_ENV")
-      DHCP_SUBNET=${d}(grep -oP '^DHCP_SUBNET=\K.*' "${d}DHCP_ENV")
-      DHCP_POOL_START=${d}(grep -oP '^DHCP_POOL_START=\K.*' "${d}DHCP_ENV")
-      DHCP_POOL_END=${d}(grep -oP '^DHCP_POOL_END=\K.*' "${d}DHCP_ENV")
-      DHCP_ROUTER=${d}(grep -oP '^DHCP_ROUTER=\K.*' "${d}DHCP_ENV")
-      DHCP_DNS=${d}(grep -oP '^DHCP_DNS=\K.*' "${d}DHCP_ENV" || echo "1.1.1.1, 1.0.0.1")
+      DHCP_INTERFACE=${d}(grep -oP '^DHCP_INTERFACE=\K.*' "${d}ENV_FILE")
+      DHCP_SUBNET=${d}(grep -oP '^DHCP_SUBNET=\K.*' "${d}ENV_FILE")
+      DHCP_POOL_START=${d}(grep -oP '^DHCP_POOL_START=\K.*' "${d}ENV_FILE")
+      DHCP_POOL_END=${d}(grep -oP '^DHCP_POOL_END=\K.*' "${d}ENV_FILE")
+      DHCP_ROUTER=${d}(grep -oP '^DHCP_ROUTER=\K.*' "${d}ENV_FILE")
+      DHCP_DNS=${d}(grep -oP '^DHCP_DNS=\K.*' "${d}ENV_FILE" || echo "1.1.1.1, 1.0.0.1")
 
       IFS='/' read -r ROUTER_IP PREFIX <<< "${d}DHCP_SUBNET"
 
@@ -270,7 +269,7 @@
 
       mkdir -p /var/lib/dnsmasq
       cat > /run/dnsmasq.conf <<DNSEOF
-      # Generated from /var/nifty-filter/dhcp.env
+      # Generated from /var/nifty-filter/nifty-filter.env
       pid-file=/run/dnsmasq.pid
 
       # DNS
@@ -298,12 +297,11 @@
       DNSEOF
 
       # Add DHCPv6 range if enabled
-      ROUTER_ENV="/var/nifty-filter/router.env"
-      DHCPV6_ENABLED=${d}(grep -oP '^DHCPV6_ENABLED=\K.*' "${d}DHCP_ENV" 2>/dev/null || echo "false")
+      DHCPV6_ENABLED=${d}(grep -oP '^DHCPV6_ENABLED=\K.*' "${d}ENV_FILE" 2>/dev/null || echo "false")
       if [ "${d}DHCPV6_ENABLED" = "true" ]; then
-        DHCPV6_POOL_START=${d}(grep -oP '^DHCPV6_POOL_START=\K.*' "${d}DHCP_ENV")
-        DHCPV6_POOL_END=${d}(grep -oP '^DHCPV6_POOL_END=\K.*' "${d}DHCP_ENV")
-        SUBNET_LAN_IPV6=${d}(grep -oP '^SUBNET_LAN_IPV6=\K.*' "${d}ROUTER_ENV" 2>/dev/null || echo "")
+        DHCPV6_POOL_START=${d}(grep -oP '^DHCPV6_POOL_START=\K.*' "${d}ENV_FILE")
+        DHCPV6_POOL_END=${d}(grep -oP '^DHCPV6_POOL_END=\K.*' "${d}ENV_FILE")
+        SUBNET_LAN_IPV6=${d}(grep -oP '^SUBNET_LAN_IPV6=\K.*' "${d}ENV_FILE" 2>/dev/null || echo "")
         ROUTER_IPV6=${d}(echo "${d}SUBNET_LAN_IPV6" | cut -d/ -f1)
         if [ -n "${d}DHCPV6_POOL_START" ] && [ -n "${d}DHCPV6_POOL_END" ]; then
           cat >> /run/dnsmasq.conf <<DNSEOF

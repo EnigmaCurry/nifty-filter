@@ -1,7 +1,7 @@
 # ISO image configuration for nifty-filter
 #
 # The ISO boots into a read-only system. The live environment
-# uses tmpfs for /var so edits to router.env persist until reboot.
+# uses tmpfs for /var so edits to nifty-filter.env persist until reboot.
 # Install to disk for persistent configuration.
 #
 # Build with: nix build .#iso
@@ -43,7 +43,7 @@
   ];
 
   # Ship the default env file where the installer can find it
-  environment.etc."nifty-filter/default-router.env".source = ./default-router.env;
+  environment.etc."nifty-filter/default-nifty-filter.env".source = ./default-nifty-filter.env;
 
   # Make the installed system closure available to the installer.
   # This is the disk-based system (with filesystem.nix), not the live ISO system.

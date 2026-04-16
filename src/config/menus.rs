@@ -6,8 +6,7 @@ use regex::Regex;
 
 use super::env_file::EnvFile;
 
-const ENV_FILE: &str = "/var/nifty-filter/router.env";
-const DHCP_FILE: &str = "/var/nifty-filter/dhcp.env";
+const ENV_FILE: &str = "/var/nifty-filter/nifty-filter.env";
 
 fn prompt_text(message: &str, default: &str) -> Option<String> {
     let mut prompt = Text::new(message);
@@ -44,24 +43,24 @@ fn choose(message: &str, options: Vec<String>, cursor: usize) -> Option<(usize, 
 
 // --- Editor functions ---
 
-fn edit_hostname(router: &mut EnvFile) {
-    let current = router.get("HOSTNAME").to_string();
+fn edit_hostname(env: &mut EnvFile) {
+    let current = env.get("HOSTNAME").to_string();
     let val = match prompt_text("Hostname", &current) {
         Some(v) => v,
         None => return,
     };
     let re = Regex::new(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$").unwrap();
     if re.is_match(&val) {
-        router.set("HOSTNAME", &val);
-        router.save().ok();
+        env.set("HOSTNAME", &val);
+        env.save().ok();
         println!("  Set HOSTNAME={val}");
     } else {
         println!("  Invalid hostname.");
     }
 }
 
-fn edit_subnet(router: &mut EnvFile, dhcp: &mut EnvFile) {
-    let current = router.get("SUBNET_LAN").to_string();
+fn edit_subnet(env: &mut EnvFile) {
+    let current = env.get("SUBNET_LAN").to_string();
     let default = if current.is_empty() {
         "10.99.0.1/24".to_string()
     } else {
@@ -77,25 +76,24 @@ fn edit_subnet(router: &mut EnvFile, dhcp: &mut EnvFile) {
         }
         println!("  Invalid subnet. Use CIDR notation (e.g. 10.99.0.1/24).");
     };
-    router.set("SUBNET_LAN", &val);
-    router.save().ok();
-    println!("  Set SUBNET_LAN={val}");
+    env.set("SUBNET_LAN", &val);
 
     // Update DHCP defaults to match
     if let Some((router_ip, _)) = val.split_once('/') {
         if let Some(base) = router_ip.rsplit_once('.') {
-            dhcp.set("DHCP_SUBNET", &val);
-            dhcp.set("DHCP_ROUTER", router_ip);
-            dhcp.set("DHCP_POOL_START", &format!("{}.100", base.0));
-            dhcp.set("DHCP_POOL_END", &format!("{}.250", base.0));
-            dhcp.save().ok();
+            env.set("DHCP_SUBNET", &val);
+            env.set("DHCP_ROUTER", router_ip);
+            env.set("DHCP_POOL_START", &format!("{}.100", base.0));
+            env.set("DHCP_POOL_END", &format!("{}.250", base.0));
             println!("  Updated DHCP pool to match.");
         }
     }
+    env.save().ok();
+    println!("  Set SUBNET_LAN={val}");
 }
 
-fn edit_subnet_ipv6(router: &mut EnvFile) {
-    let current = router.get("SUBNET_LAN_IPV6").to_string();
+fn edit_subnet_ipv6(env: &mut EnvFile) {
+    let current = env.get("SUBNET_LAN_IPV6").to_string();
     let default = if current.is_empty() {
         "fd00:10::1/64".to_string()
     } else {
@@ -111,22 +109,22 @@ fn edit_subnet_ipv6(router: &mut EnvFile) {
         }
         println!("  Invalid subnet. Use CIDR notation (e.g. fd00:10::1/64).");
     };
-    router.set("SUBNET_LAN_IPV6", &val);
-    router.save().ok();
+    env.set("SUBNET_LAN_IPV6", &val);
+    env.save().ok();
     println!("  Set SUBNET_LAN_IPV6={val}");
 }
 
-fn toggle_ipv6(router: &mut EnvFile) {
-    if router.get("ENABLE_IPV6") == "true" {
-        router.set("ENABLE_IPV6", "false");
-        router.save().ok();
+fn toggle_ipv6(env: &mut EnvFile) {
+    if env.get("ENABLE_IPV6") == "true" {
+        env.set("ENABLE_IPV6", "false");
+        env.save().ok();
         println!("  IPv6 disabled.");
     } else {
-        router.set("ENABLE_IPV6", "true");
-        router.save().ok();
-        if router.get("SUBNET_LAN_IPV6").is_empty() {
+        env.set("ENABLE_IPV6", "true");
+        env.save().ok();
+        if env.get("SUBNET_LAN_IPV6").is_empty() {
             println!("  IPv6 requires a LAN subnet.");
-            edit_subnet_ipv6(router);
+            edit_subnet_ipv6(env);
         }
         println!("  IPv6 enabled.");
     }
@@ -141,8 +139,8 @@ fn validate_cidr_list(input: &str) -> bool {
         .all(|s| s.trim().parse::<IpNetwork>().is_ok())
 }
 
-fn edit_egress_ipv4(router: &mut EnvFile) {
-    let current = router.get("LAN_EGRESS_ALLOWED_IPV4").to_string();
+fn edit_egress_ipv4(env: &mut EnvFile) {
+    let current = env.get("LAN_EGRESS_ALLOWED_IPV4").to_string();
     let default = if current.is_empty() {
         "0.0.0.0/0".to_string()
     } else {
@@ -158,13 +156,13 @@ fn edit_egress_ipv4(router: &mut EnvFile) {
         }
         println!("  Invalid CIDR(s). Use notation like 0.0.0.0/0 or 10.0.0.0/8,172.16.0.0/12.");
     };
-    router.set("LAN_EGRESS_ALLOWED_IPV4", &val);
-    router.save().ok();
+    env.set("LAN_EGRESS_ALLOWED_IPV4", &val);
+    env.save().ok();
     println!("  Set LAN_EGRESS_ALLOWED_IPV4={val}");
 }
 
-fn edit_egress_ipv6(router: &mut EnvFile) {
-    let current = router.get("LAN_EGRESS_ALLOWED_IPV6").to_string();
+fn edit_egress_ipv6(env: &mut EnvFile) {
+    let current = env.get("LAN_EGRESS_ALLOWED_IPV6").to_string();
     let default = if current.is_empty() {
         "::/0".to_string()
     } else {
@@ -180,14 +178,14 @@ fn edit_egress_ipv6(router: &mut EnvFile) {
         }
         println!("  Invalid CIDR(s). Use notation like ::/0 or fd00::/8.");
     };
-    router.set("LAN_EGRESS_ALLOWED_IPV6", &val);
-    router.save().ok();
+    env.set("LAN_EGRESS_ALLOWED_IPV6", &val);
+    env.save().ok();
     println!("  Set LAN_EGRESS_ALLOWED_IPV6={val}");
 }
 
-fn edit_dhcp_pool(dhcp: &mut EnvFile) {
-    let start = dhcp.get("DHCP_POOL_START").to_string();
-    let end = dhcp.get("DHCP_POOL_END").to_string();
+fn edit_dhcp_pool(env: &mut EnvFile) {
+    let start = env.get("DHCP_POOL_START").to_string();
+    let end = env.get("DHCP_POOL_END").to_string();
     let start = match prompt_text("DHCP pool start", &start) {
         Some(v) => v,
         None => return,
@@ -196,65 +194,62 @@ fn edit_dhcp_pool(dhcp: &mut EnvFile) {
         Some(v) => v,
         None => return,
     };
-    dhcp.set("DHCP_POOL_START", &start);
-    dhcp.set("DHCP_POOL_END", &end);
-    dhcp.save().ok();
+    env.set("DHCP_POOL_START", &start);
+    env.set("DHCP_POOL_END", &end);
+    env.save().ok();
     println!("  Set pool: {start} - {end}");
 }
 
-fn edit_dns(dhcp: &mut EnvFile) {
-    let current = dhcp.get("DHCP_DNS").to_string();
+fn edit_dns(env: &mut EnvFile) {
+    let current = env.get("DHCP_DNS").to_string();
     let val = match prompt_text("DNS servers (comma-separated)", &current) {
         Some(v) => v,
         None => return,
     };
-    dhcp.set("DHCP_DNS", &val);
-    dhcp.save().ok();
+    env.set("DHCP_DNS", &val);
+    env.save().ok();
     println!("  Set DNS={val}");
 }
 
-fn toggle_dhcpv6(router: &mut EnvFile, dhcp: &mut EnvFile) {
-    if dhcp.get("DHCPV6_ENABLED") == "true" {
-        dhcp.set("DHCPV6_ENABLED", "false");
-        dhcp.save().ok();
+fn toggle_dhcpv6(env: &mut EnvFile) {
+    if env.get("DHCPV6_ENABLED") == "true" {
+        env.set("DHCPV6_ENABLED", "false");
         // Remove DHCPv6 ports from UDP_ACCEPT_LAN
-        let udp_lan = router.get("UDP_ACCEPT_LAN").to_string();
+        let udp_lan = env.get("UDP_ACCEPT_LAN").to_string();
         let cleaned = udp_lan
             .replace(",546,547", "")
             .replace("546,547,", "")
             .replace("546,547", "");
-        router.set("UDP_ACCEPT_LAN", &cleaned);
-        router.save().ok();
+        env.set("UDP_ACCEPT_LAN", &cleaned);
+        env.save().ok();
         println!("  DHCPv6 disabled. Removed ports 546,547 from UDP_ACCEPT_LAN.");
     } else {
-        dhcp.set("DHCPV6_ENABLED", "true");
-        dhcp.save().ok();
+        env.set("DHCPV6_ENABLED", "true");
         // Add DHCPv6 ports to UDP_ACCEPT_LAN if not already present
-        let udp_lan = router.get("UDP_ACCEPT_LAN").to_string();
+        let udp_lan = env.get("UDP_ACCEPT_LAN").to_string();
         if !udp_lan.contains("546") {
             let new_val = if udp_lan.is_empty() {
                 "546,547".to_string()
             } else {
                 format!("{udp_lan},546,547")
             };
-            router.set("UDP_ACCEPT_LAN", &new_val);
-            router.save().ok();
-            println!("  Added ports 546,547 to UDP_ACCEPT_LAN.");
+            env.set("UDP_ACCEPT_LAN", &new_val);
         }
-        if dhcp.get("DHCPV6_POOL_START").is_empty() {
+        env.save().ok();
+        if env.get("DHCPV6_POOL_START").is_empty() {
             println!("  DHCPv6 requires a pool range.");
-            edit_dhcpv6_pool(router, dhcp);
+            edit_dhcpv6_pool(env);
         }
         println!("  DHCPv6 enabled.");
     }
 }
 
-fn edit_dhcpv6_pool(router: &EnvFile, dhcp: &mut EnvFile) {
-    let mut start = dhcp.get("DHCPV6_POOL_START").to_string();
-    let mut end = dhcp.get("DHCPV6_POOL_END").to_string();
+fn edit_dhcpv6_pool(env: &mut EnvFile) {
+    let mut start = env.get("DHCPV6_POOL_START").to_string();
+    let mut end = env.get("DHCPV6_POOL_END").to_string();
     // Derive defaults from the IPv6 subnet if pool is not yet set
     if start.is_empty() {
-        let subnet = router.get("SUBNET_LAN_IPV6");
+        let subnet = env.get("SUBNET_LAN_IPV6");
         if let Some((addr, _)) = subnet.split_once('/') {
             if let Some(prefix) = addr.rsplit_once(':') {
                 start = format!("{}:100", prefix.0);
@@ -270,49 +265,49 @@ fn edit_dhcpv6_pool(router: &EnvFile, dhcp: &mut EnvFile) {
         Some(v) => v,
         None => return,
     };
-    dhcp.set("DHCPV6_POOL_START", &start);
-    dhcp.set("DHCPV6_POOL_END", &end);
-    dhcp.save().ok();
+    env.set("DHCPV6_POOL_START", &start);
+    env.set("DHCPV6_POOL_END", &end);
+    env.save().ok();
     println!("  Set DHCPv6 pool: {start} - {end}");
 }
 
-fn edit_ports(router: &mut EnvFile, key: &str, label: &str) {
-    let current = router.get(key).to_string();
+fn edit_ports(env: &mut EnvFile, key: &str, label: &str) {
+    let current = env.get(key).to_string();
     let val = match prompt_text_allow_blank(&format!("{label} (comma-separated)"), &current) {
         Some(v) => v,
         None => return,
     };
-    router.set(key, &val);
-    router.save().ok();
+    env.set(key, &val);
+    env.save().ok();
     println!("  Set {key}={val}");
 }
 
-fn edit_forwards(router: &mut EnvFile, key: &str, label: &str) {
-    let current = router.get(key).to_string();
+fn edit_forwards(env: &mut EnvFile, key: &str, label: &str) {
+    let current = env.get(key).to_string();
     println!("  Format: incoming_port:dest_ip:dest_port (comma-separated)");
     println!("  IPv6:   incoming_port:[ipv6_addr]:dest_port");
     let val = match prompt_text_allow_blank(label, &current) {
         Some(v) => v,
         None => return,
     };
-    router.set(key, &val);
-    router.save().ok();
+    env.set(key, &val);
+    env.save().ok();
     println!("  Set {key}={val}");
 }
 
-fn toggle_enabled(router: &mut EnvFile) {
-    if router.get("ENABLED") == "true" {
-        router.set("ENABLED", "false");
-        router.save().ok();
+fn toggle_enabled(env: &mut EnvFile) {
+    if env.get("ENABLED") == "true" {
+        env.set("ENABLED", "false");
+        env.save().ok();
         println!("  Disabled.");
     } else {
-        router.set("ENABLED", "true");
-        router.save().ok();
+        env.set("ENABLED", "true");
+        env.save().ok();
         println!("  Enabled.");
     }
 }
 
-fn apply_changes(router: &EnvFile) {
+fn apply_changes(env: &EnvFile) {
     for (service, label) in [
         ("nifty-filter", "Firewall rules"),
         ("nifty-network", "Network"),
@@ -328,54 +323,54 @@ fn apply_changes(router: &EnvFile) {
         }
     }
     println!("  Setting hostname...");
-    let hostname = router.get("HOSTNAME");
+    let hostname = env.get("HOSTNAME");
     let _ = Command::new("sudo")
         .args(["hostname", hostname])
         .status();
     println!("  Done.");
 }
 
-fn show_status(router: &EnvFile, dhcp: &EnvFile) {
+fn show_config(env: &EnvFile) {
     println!();
     println!("  === Current Configuration ===");
-    println!("  ENABLED:        {}", router.get("ENABLED"));
-    println!("  HOSTNAME:       {}", router.get("HOSTNAME"));
-    println!("  INTERFACE_WAN:  {}", router.get("INTERFACE_WAN"));
-    println!("  INTERFACE_LAN:  {}", router.get("INTERFACE_LAN"));
-    println!("  ENABLE_IPV4:    {}", router.get("ENABLE_IPV4"));
-    println!("  ENABLE_IPV6:    {}", router.get("ENABLE_IPV6"));
-    println!("  SUBNET_LAN:     {}", router.get("SUBNET_LAN"));
-    let ipv6_subnet = router.get("SUBNET_LAN_IPV6");
+    println!("  ENABLED:        {}", env.get("ENABLED"));
+    println!("  HOSTNAME:       {}", env.get("HOSTNAME"));
+    println!("  INTERFACE_WAN:  {}", env.get("INTERFACE_WAN"));
+    println!("  INTERFACE_LAN:  {}", env.get("INTERFACE_LAN"));
+    println!("  ENABLE_IPV4:    {}", env.get("ENABLE_IPV4"));
+    println!("  ENABLE_IPV6:    {}", env.get("ENABLE_IPV6"));
+    println!("  SUBNET_LAN:     {}", env.get("SUBNET_LAN"));
+    let ipv6_subnet = env.get("SUBNET_LAN_IPV6");
     if !ipv6_subnet.is_empty() {
         println!("  SUBNET_LAN_IPV6: {ipv6_subnet}");
     }
-    println!("  TCP_ACCEPT_LAN: {}", router.get("TCP_ACCEPT_LAN"));
-    println!("  UDP_ACCEPT_LAN: {}", router.get("UDP_ACCEPT_LAN"));
-    println!("  TCP_ACCEPT_WAN: {}", router.get("TCP_ACCEPT_WAN"));
-    println!("  UDP_ACCEPT_WAN: {}", router.get("UDP_ACCEPT_WAN"));
-    let egress4 = router.get("LAN_EGRESS_ALLOWED_IPV4");
+    println!("  TCP_ACCEPT_LAN: {}", env.get("TCP_ACCEPT_LAN"));
+    println!("  UDP_ACCEPT_LAN: {}", env.get("UDP_ACCEPT_LAN"));
+    println!("  TCP_ACCEPT_WAN: {}", env.get("TCP_ACCEPT_WAN"));
+    println!("  UDP_ACCEPT_WAN: {}", env.get("UDP_ACCEPT_WAN"));
+    let egress4 = env.get("LAN_EGRESS_ALLOWED_IPV4");
     if !egress4.is_empty() {
         println!("  EGRESS_IPV4:    {egress4}");
     }
-    let egress6 = router.get("LAN_EGRESS_ALLOWED_IPV6");
+    let egress6 = env.get("LAN_EGRESS_ALLOWED_IPV6");
     if !egress6.is_empty() {
         println!("  EGRESS_IPV6:    {egress6}");
     }
-    println!("  TCP_FORWARD_LAN: {}", router.get("TCP_FORWARD_LAN"));
-    println!("  UDP_FORWARD_LAN: {}", router.get("UDP_FORWARD_LAN"));
-    println!("  TCP_FORWARD_WAN: {}", router.get("TCP_FORWARD_WAN"));
-    println!("  UDP_FORWARD_WAN: {}", router.get("UDP_FORWARD_WAN"));
+    println!("  TCP_FORWARD_LAN: {}", env.get("TCP_FORWARD_LAN"));
+    println!("  UDP_FORWARD_LAN: {}", env.get("UDP_FORWARD_LAN"));
+    println!("  TCP_FORWARD_WAN: {}", env.get("TCP_FORWARD_WAN"));
+    println!("  UDP_FORWARD_WAN: {}", env.get("UDP_FORWARD_WAN"));
     println!(
         "  DHCP_POOL:      {} - {}",
-        dhcp.get("DHCP_POOL_START"),
-        dhcp.get("DHCP_POOL_END")
+        env.get("DHCP_POOL_START"),
+        env.get("DHCP_POOL_END")
     );
-    println!("  DHCP_DNS:       {}", dhcp.get("DHCP_DNS"));
-    if dhcp.get("DHCPV6_ENABLED") == "true" {
+    println!("  DHCP_DNS:       {}", env.get("DHCP_DNS"));
+    if env.get("DHCPV6_ENABLED") == "true" {
         println!(
             "  DHCPV6:         {} - {}",
-            dhcp.get("DHCPV6_POOL_START"),
-            dhcp.get("DHCPV6_POOL_END")
+            env.get("DHCPV6_POOL_START"),
+            env.get("DHCPV6_POOL_END")
         );
     }
     println!();
@@ -388,10 +383,10 @@ fn launch_editor(path: &str) {
 
 // --- Submenus ---
 
-fn menu_network(router: &mut EnvFile, dhcp: &mut EnvFile) {
+fn menu_network(env: &mut EnvFile) {
     let mut cursor = 0;
     loop {
-        let ipv6_enabled = router.get("ENABLE_IPV6") == "true";
+        let ipv6_enabled = env.get("ENABLE_IPV6") == "true";
         let ipv6_label = if ipv6_enabled {
             "Disable IPv6"
         } else {
@@ -399,24 +394,24 @@ fn menu_network(router: &mut EnvFile, dhcp: &mut EnvFile) {
         };
 
         let mut items = vec![
-            format!("Hostname ({})", router.get("HOSTNAME")),
-            format!("LAN IPv4 subnet ({})", router.get("SUBNET_LAN")),
+            format!("Hostname ({})", env.get("HOSTNAME")),
+            format!("LAN IPv4 subnet ({})", env.get("SUBNET_LAN")),
         ];
         if ipv6_enabled {
             items.push(format!(
                 "LAN IPv6 subnet ({})",
-                router.get("SUBNET_LAN_IPV6")
+                env.get("SUBNET_LAN_IPV6")
             ));
         }
         items.push(ipv6_label.to_string());
         items.push("Back".to_string());
 
         match choose("Network:", items, cursor) {
-            Some((idx, choice)) if choice.starts_with("Hostname") => { cursor = idx; edit_hostname(router) }
-            Some((idx, choice)) if choice.starts_with("LAN IPv4 subnet") => { cursor = idx; edit_subnet(router, dhcp) }
-            Some((idx, choice)) if choice.starts_with("LAN IPv6 subnet") => { cursor = idx; edit_subnet_ipv6(router) }
+            Some((idx, choice)) if choice.starts_with("Hostname") => { cursor = idx; edit_hostname(env) }
+            Some((idx, choice)) if choice.starts_with("LAN IPv4 subnet") => { cursor = idx; edit_subnet(env) }
+            Some((idx, choice)) if choice.starts_with("LAN IPv6 subnet") => { cursor = idx; edit_subnet_ipv6(env) }
             Some((idx, choice)) if choice == "Enable IPv6" || choice == "Disable IPv6" => {
-                cursor = idx; toggle_ipv6(router)
+                cursor = idx; toggle_ipv6(env)
             }
             Some((_, choice)) if choice == "Back" => break,
             _ => break,
@@ -424,73 +419,73 @@ fn menu_network(router: &mut EnvFile, dhcp: &mut EnvFile) {
     }
 }
 
-fn menu_firewall(router: &mut EnvFile) {
+fn menu_firewall(env: &mut EnvFile) {
     let mut cursor = 0;
     loop {
-        let ipv6_enabled = router.get("ENABLE_IPV6") == "true";
+        let ipv6_enabled = env.get("ENABLE_IPV6") == "true";
 
         let mut items = vec![
-            format!("TCP ports LAN ({})", router.get("TCP_ACCEPT_LAN")),
-            format!("UDP ports LAN ({})", router.get("UDP_ACCEPT_LAN")),
-            format!("TCP ports WAN ({})", router.get("TCP_ACCEPT_WAN")),
-            format!("UDP ports WAN ({})", router.get("UDP_ACCEPT_WAN")),
+            format!("TCP ports LAN ({})", env.get("TCP_ACCEPT_LAN")),
+            format!("UDP ports LAN ({})", env.get("UDP_ACCEPT_LAN")),
+            format!("TCP ports WAN ({})", env.get("TCP_ACCEPT_WAN")),
+            format!("UDP ports WAN ({})", env.get("UDP_ACCEPT_WAN")),
             format!(
                 "Egress filter IPv4 ({})",
-                router.get("LAN_EGRESS_ALLOWED_IPV4")
+                env.get("LAN_EGRESS_ALLOWED_IPV4")
             ),
         ];
         if ipv6_enabled {
             items.push(format!(
                 "Egress filter IPv6 ({})",
-                router.get("LAN_EGRESS_ALLOWED_IPV6")
+                env.get("LAN_EGRESS_ALLOWED_IPV6")
             ));
         }
         items.push("Back".to_string());
 
         match choose("Firewall:", items, cursor) {
             Some((idx, choice)) if choice.starts_with("TCP ports LAN") => {
-                cursor = idx; edit_ports(router, "TCP_ACCEPT_LAN", "TCP ports LAN")
+                cursor = idx; edit_ports(env, "TCP_ACCEPT_LAN", "TCP ports LAN")
             }
             Some((idx, choice)) if choice.starts_with("UDP ports LAN") => {
-                cursor = idx; edit_ports(router, "UDP_ACCEPT_LAN", "UDP ports LAN")
+                cursor = idx; edit_ports(env, "UDP_ACCEPT_LAN", "UDP ports LAN")
             }
             Some((idx, choice)) if choice.starts_with("TCP ports WAN") => {
-                cursor = idx; edit_ports(router, "TCP_ACCEPT_WAN", "TCP ports WAN")
+                cursor = idx; edit_ports(env, "TCP_ACCEPT_WAN", "TCP ports WAN")
             }
             Some((idx, choice)) if choice.starts_with("UDP ports WAN") => {
-                cursor = idx; edit_ports(router, "UDP_ACCEPT_WAN", "UDP ports WAN")
+                cursor = idx; edit_ports(env, "UDP_ACCEPT_WAN", "UDP ports WAN")
             }
-            Some((idx, choice)) if choice.starts_with("Egress filter IPv4") => { cursor = idx; edit_egress_ipv4(router) }
-            Some((idx, choice)) if choice.starts_with("Egress filter IPv6") => { cursor = idx; edit_egress_ipv6(router) }
+            Some((idx, choice)) if choice.starts_with("Egress filter IPv4") => { cursor = idx; edit_egress_ipv4(env) }
+            Some((idx, choice)) if choice.starts_with("Egress filter IPv6") => { cursor = idx; edit_egress_ipv6(env) }
             Some((_, choice)) if choice == "Back" => break,
             _ => break,
         }
     }
 }
 
-fn menu_port_forwarding(router: &mut EnvFile) {
+fn menu_port_forwarding(env: &mut EnvFile) {
     let mut cursor = 0;
     loop {
         let items = vec![
-            format!("TCP forward LAN ({})", router.get("TCP_FORWARD_LAN")),
-            format!("UDP forward LAN ({})", router.get("UDP_FORWARD_LAN")),
-            format!("TCP forward WAN ({})", router.get("TCP_FORWARD_WAN")),
-            format!("UDP forward WAN ({})", router.get("UDP_FORWARD_WAN")),
+            format!("TCP forward LAN ({})", env.get("TCP_FORWARD_LAN")),
+            format!("UDP forward LAN ({})", env.get("UDP_FORWARD_LAN")),
+            format!("TCP forward WAN ({})", env.get("TCP_FORWARD_WAN")),
+            format!("UDP forward WAN ({})", env.get("UDP_FORWARD_WAN")),
             "Back".to_string(),
         ];
 
         match choose("Port Forwarding:", items, cursor) {
             Some((idx, choice)) if choice.starts_with("TCP forward LAN") => {
-                cursor = idx; edit_forwards(router, "TCP_FORWARD_LAN", "TCP forward LAN")
+                cursor = idx; edit_forwards(env, "TCP_FORWARD_LAN", "TCP forward LAN")
             }
             Some((idx, choice)) if choice.starts_with("UDP forward LAN") => {
-                cursor = idx; edit_forwards(router, "UDP_FORWARD_LAN", "UDP forward LAN")
+                cursor = idx; edit_forwards(env, "UDP_FORWARD_LAN", "UDP forward LAN")
             }
             Some((idx, choice)) if choice.starts_with("TCP forward WAN") => {
-                cursor = idx; edit_forwards(router, "TCP_FORWARD_WAN", "TCP forward WAN")
+                cursor = idx; edit_forwards(env, "TCP_FORWARD_WAN", "TCP forward WAN")
             }
             Some((idx, choice)) if choice.starts_with("UDP forward WAN") => {
-                cursor = idx; edit_forwards(router, "UDP_FORWARD_WAN", "UDP forward WAN")
+                cursor = idx; edit_forwards(env, "UDP_FORWARD_WAN", "UDP forward WAN")
             }
             Some((_, choice)) if choice == "Back" => break,
             _ => break,
@@ -498,19 +493,19 @@ fn menu_port_forwarding(router: &mut EnvFile) {
     }
 }
 
-fn menu_dhcp_dns(router: &mut EnvFile, dhcp: &mut EnvFile) {
+fn menu_dhcp_dns(env: &mut EnvFile) {
     let mut cursor = 0;
     loop {
-        let ipv6_enabled = router.get("ENABLE_IPV6") == "true";
-        let dhcpv6_enabled = dhcp.get("DHCPV6_ENABLED") == "true";
+        let ipv6_enabled = env.get("ENABLE_IPV6") == "true";
+        let dhcpv6_enabled = env.get("DHCPV6_ENABLED") == "true";
 
         let mut items = vec![
             format!(
                 "DHCP pool ({} - {})",
-                dhcp.get("DHCP_POOL_START"),
-                dhcp.get("DHCP_POOL_END")
+                env.get("DHCP_POOL_START"),
+                env.get("DHCP_POOL_END")
             ),
-            format!("DNS servers ({})", dhcp.get("DHCP_DNS")),
+            format!("DNS servers ({})", env.get("DHCP_DNS")),
         ];
         if ipv6_enabled {
             let dhcpv6_label = if dhcpv6_enabled {
@@ -522,20 +517,20 @@ fn menu_dhcp_dns(router: &mut EnvFile, dhcp: &mut EnvFile) {
             if dhcpv6_enabled {
                 items.push(format!(
                     "DHCPv6 pool ({} - {})",
-                    dhcp.get("DHCPV6_POOL_START"),
-                    dhcp.get("DHCPV6_POOL_END")
+                    env.get("DHCPV6_POOL_START"),
+                    env.get("DHCPV6_POOL_END")
                 ));
             }
         }
         items.push("Back".to_string());
 
         match choose("DHCP / DNS:", items, cursor) {
-            Some((idx, choice)) if choice.starts_with("DHCP pool") => { cursor = idx; edit_dhcp_pool(dhcp) }
-            Some((idx, choice)) if choice.starts_with("DNS servers") => { cursor = idx; edit_dns(dhcp) }
+            Some((idx, choice)) if choice.starts_with("DHCP pool") => { cursor = idx; edit_dhcp_pool(env) }
+            Some((idx, choice)) if choice.starts_with("DNS servers") => { cursor = idx; edit_dns(env) }
             Some((idx, choice)) if choice == "Enable DHCPv6" || choice == "Disable DHCPv6" => {
-                cursor = idx; toggle_dhcpv6(router, dhcp)
+                cursor = idx; toggle_dhcpv6(env)
             }
-            Some((idx, choice)) if choice.starts_with("DHCPv6 pool") => { cursor = idx; edit_dhcpv6_pool(router, dhcp) }
+            Some((idx, choice)) if choice.starts_with("DHCPv6 pool") => { cursor = idx; edit_dhcpv6_pool(env) }
             Some((_, choice)) if choice == "Back" => break,
             _ => break,
         }
@@ -545,14 +540,7 @@ fn menu_dhcp_dns(router: &mut EnvFile, dhcp: &mut EnvFile) {
 // --- Main menu ---
 
 pub fn run() {
-    let mut router = match EnvFile::load(std::path::Path::new(ENV_FILE)) {
-        Ok(env) => env,
-        Err(e) => {
-            eprintln!("ERROR: {e}");
-            std::process::exit(1);
-        }
-    };
-    let mut dhcp = match EnvFile::load(std::path::Path::new(DHCP_FILE)) {
+    let mut env = match EnvFile::load(std::path::Path::new(ENV_FILE)) {
         Ok(env) => env,
         Err(e) => {
             eprintln!("ERROR: {e}");
@@ -563,7 +551,7 @@ pub fn run() {
     let mut cursor = 0;
     loop {
         println!();
-        let enabled_label = if router.get("ENABLED") == "true" {
+        let enabled_label = if env.get("ENABLED") == "true" {
             "Disable firewall"
         } else {
             "Enable firewall"
@@ -577,29 +565,22 @@ pub fn run() {
             "DHCP / DNS".to_string(),
             enabled_label.to_string(),
             "Apply changes".to_string(),
-            "Edit router.env".to_string(),
-            "Edit dhcp.env".to_string(),
+            "Edit nifty-filter.env".to_string(),
             "Quit".to_string(),
         ];
 
         match choose("nifty-filter configuration:", items, cursor) {
             Some((idx, choice)) => { cursor = idx; match choice.as_str() {
-                "Show config" => show_status(&router, &dhcp),
-                "Network" => menu_network(&mut router, &mut dhcp),
-                "Firewall" => menu_firewall(&mut router),
-                "Port forwarding" => menu_port_forwarding(&mut router),
-                "DHCP / DNS" => menu_dhcp_dns(&mut router, &mut dhcp),
-                "Enable firewall" | "Disable firewall" => toggle_enabled(&mut router),
-                "Apply changes" => apply_changes(&router),
-                "Edit router.env" => {
+                "Show config" => show_config(&env),
+                "Network" => menu_network(&mut env),
+                "Firewall" => menu_firewall(&mut env),
+                "Port forwarding" => menu_port_forwarding(&mut env),
+                "DHCP / DNS" => menu_dhcp_dns(&mut env),
+                "Enable firewall" | "Disable firewall" => toggle_enabled(&mut env),
+                "Apply changes" => apply_changes(&env),
+                "Edit nifty-filter.env" => {
                     launch_editor(ENV_FILE);
-                    if let Err(e) = router.reload() {
-                        eprintln!("  Warning: {e}");
-                    }
-                }
-                "Edit dhcp.env" => {
-                    launch_editor(DHCP_FILE);
-                    if let Err(e) = dhcp.reload() {
+                    if let Err(e) = env.reload() {
                         eprintln!("  Warning: {e}");
                     }
                 }

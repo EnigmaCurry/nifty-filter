@@ -350,10 +350,10 @@ MACAddress=$LAN_MAC
 Name=lan
 LINKEOF
 
-# Write router config with user's choices
-cat > "$MNT/var/nifty-filter/router.env" <<ENVEOF
-# nifty-filter router configuration
-# Edit this file and run: systemctl restart nifty-filter
+# Write config with user's choices
+cat > "$MNT/var/nifty-filter/nifty-filter.env" <<ENVEOF
+# nifty-filter configuration
+# Edit this file and run: nifty-config -> Apply changes
 #
 # This file lives on the writable /var partition.
 # The rest of the system is read-only (unless booted in maintenance mode).
@@ -383,11 +383,8 @@ TCP_FORWARD_LAN=
 UDP_FORWARD_LAN=
 TCP_FORWARD_WAN=
 UDP_FORWARD_WAN=
-ENVEOF
-chmod 0600 "$MNT/var/nifty-filter/router.env"
 
-# Write DHCP config for the init service to pick up
-cat > "$MNT/var/nifty-filter/dhcp.env" <<DHCPEOF
+# DHCP server configuration
 DHCP_INTERFACE=${INTERFACE_LAN}
 DHCP_SUBNET=${SUBNET_LAN}
 DHCP_POOL_START=${DHCP_START}
@@ -399,8 +396,8 @@ DHCP_DNS=${DNS_SERVERS}
 DHCPV6_ENABLED=false
 DHCPV6_POOL_START=
 DHCPV6_POOL_END=
-DHCPEOF
-chmod 0600 "$MNT/var/nifty-filter/dhcp.env"
+ENVEOF
+chmod 0600 "$MNT/var/nifty-filter/nifty-filter.env"
 
 # Carry over authorized keys from the live session
 echo "==> Copying SSH authorized keys..."

@@ -1,9 +1,9 @@
 # NixOS module for nifty-filter (read-only system model)
 #
-# The system root is read-only. Router configuration lives as an env file
+# The system root is read-only. Configuration lives as an env file
 # on the writable /var partition:
 #
-#   /var/nifty-filter/router.env
+#   /var/nifty-filter/nifty-filter.env
 #
 # A systemd service reads this file at boot and applies the nftables ruleset.
 # To reconfigure the router: edit the env file and reboot.
@@ -18,7 +18,7 @@ let
   nifty-filter = self.packages.${pkgs.system}.nifty-filter;
 
   configDir = "/var/nifty-filter";
-  envFile = "${configDir}/router.env";
+  envFile = "${configDir}/nifty-filter.env";
 
 in
 {
@@ -28,7 +28,7 @@ in
     configPath = mkOption {
       type = types.str;
       default = envFile;
-      description = "Path to the router.env configuration file on the writable partition.";
+      description = "Path to the nifty-filter.env configuration file on the writable partition.";
     };
   };
 
@@ -62,7 +62,7 @@ in
       };
       script = ''
         mkdir -p ${configDir}
-        cp ${./default-router.env} ${cfg.configPath}
+        cp ${./default-nifty-filter.env} ${cfg.configPath}
         chmod 0600 ${cfg.configPath}
         mkdir -p ${configDir}/ssh
       '';
