@@ -337,8 +337,8 @@ fn show_config(env: &EnvFile) {
     println!("  HOSTNAME:       {}", env.get("HOSTNAME"));
     println!("  INTERFACE_WAN:  {}", env.get("INTERFACE_WAN"));
     println!("  INTERFACE_LAN:  {}", env.get("INTERFACE_LAN"));
-    println!("  ENABLE_IPV4:    {}", env.get("ENABLE_IPV4"));
-    println!("  ENABLE_IPV6:    {}", env.get("ENABLE_IPV6"));
+    println!("  ENABLE_IPV4:    {}", if env.get("ENABLE_IPV4").is_empty() { "true" } else { env.get("ENABLE_IPV4") });
+    println!("  ENABLE_IPV6:    {}", if env.get("ENABLE_IPV6").is_empty() { "false" } else { env.get("ENABLE_IPV6") });
     println!("  SUBNET_LAN:     {}", env.get("SUBNET_LAN"));
     let ipv6_subnet = env.get("SUBNET_LAN_IPV6");
     if !ipv6_subnet.is_empty() {
