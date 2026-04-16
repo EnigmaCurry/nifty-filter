@@ -40,6 +40,17 @@ enum Commands {
         git_remote: Option<String>,
     },
 
+    /// Reboot into maintenance mode (read-write root)
+    #[cfg(feature = "nixos")]
+    Maintenance,
+
+    /// Upgrade the system in place
+    #[cfg(feature = "nixos")]
+    Upgrade {
+        /// Target branch (overrides saved branch)
+        branch: Option<String>,
+    },
+
     /// Generate nftables configuration
     #[command(alias = "nft")]
     Nftables {
@@ -308,6 +319,33 @@ pub fn validate_nftables_config(config: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(feature = "nixos")]
+fn run_maintenance() {
+    use std::process::{Command, exit};
+    let status = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(include_str!("../nix/nifty-maintenance.sh"))
+        .status()
+        .expect("failed to execute maintenance script");
+    exit(status.code().unwrap_or(1));
+}
+
+#[cfg(feature = "nixos")]
+fn run_upgrade(branch: Option<String>) {
+    use std::process::{Command, exit};
+    let mut cmd = Command::new("/bin/sh");
+    cmd.arg("-c");
+    // Pass the branch as $1 to the script
+    let script = include_str!("../nix/nifty-upgrade.sh");
+    cmd.arg(script);
+    cmd.arg("sh"); // $0
+    if let Some(b) = branch {
+        cmd.arg(b); // $1
+    }
+    let status = cmd.status().expect("failed to execute upgrade script");
+    exit(status.code().unwrap_or(1));
+}
+
 fn app() {
     // Parse command-line arguments
     let cli = Cli::parse();
@@ -317,6 +355,10 @@ fn app() {
         Commands::Config => config::run(),
         #[cfg(feature = "nixos")]
         Commands::Install { git_remote } => install::run(git_remote),
+        #[cfg(feature = "nixos")]
+        Commands::Maintenance => run_maintenance(),
+        #[cfg(feature = "nixos")]
+        Commands::Upgrade { branch } => run_upgrade(branch),
         Commands::Nftables {
             env_file,
             strict_env,

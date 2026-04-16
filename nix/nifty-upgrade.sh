@@ -1,16 +1,16 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # nifty-upgrade — upgrade the system in place
 #
 # Temporarily remounts filesystems read-write, pulls the latest source,
 # builds the system, updates boot entries, and reboots into the new system.
-set -euo pipefail
+set -eu
 
 REPO_DIR="/var/nifty-filter/src"
 REPO_REMOTE=""
 BRANCH_FILE="/var/nifty-filter/branch"
 REQUESTED_BRANCH="${1:-}"
 
-[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+[ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
 
 # Determine target branch: arg > saved branch > master
 if [ -n "$REQUESTED_BRANCH" ]; then
@@ -40,13 +40,17 @@ CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 # Confirm if switching branches
 if [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
     echo "Currently on branch '$CURRENT_BRANCH', upgrading to '$TARGET_BRANCH'."
-    read -rp "Continue? [y/N] " confirm
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo "Aborted."
-        mount -o remount,ro /nix/store 2>/dev/null || true
-        mount -o remount,ro / 2>/dev/null || true
-        exit 0
-    fi
+    printf "Continue? [y/N] "
+    read -r confirm
+    case "$confirm" in
+        [Yy]*) ;;
+        *)
+            echo "Aborted."
+            mount -o remount,ro /nix/store 2>/dev/null || true
+            mount -o remount,ro / 2>/dev/null || true
+            exit 0
+            ;;
+    esac
     git fetch origin "$TARGET_BRANCH"
     git checkout "$TARGET_BRANCH"
 fi

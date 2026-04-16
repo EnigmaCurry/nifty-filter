@@ -411,8 +411,8 @@ in
   # --- Minimal packages ---
   environment.systemPackages = with pkgs; [
     (writeShellScriptBin "nifty-config" ''exec nifty-filter config "$@"'')
-    (writeShellScriptBin "nifty-maintenance" (builtins.readFile ./nifty-maintenance.sh))
-    (writeShellScriptBin "nifty-upgrade" (builtins.readFile ./nifty-upgrade.sh))
+    (writeShellScriptBin "nifty-maintenance" ''exec nifty-filter maintenance "$@"'')
+    (writeShellScriptBin "nifty-upgrade" ''exec nifty-filter upgrade "$@"'')
     git
     vim
     htop
