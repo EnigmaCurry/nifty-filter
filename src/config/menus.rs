@@ -37,6 +37,36 @@ fn run_interactive(cmd: &mut Command) {
     }
 }
 
+fn pool_size_ipv4(start: &str, end: &str) -> Option<u64> {
+    let s: std::net::Ipv4Addr = start.parse().ok()?;
+    let e: std::net::Ipv4Addr = end.parse().ok()?;
+    let s = u32::from(s);
+    let e = u32::from(e);
+    if e >= s { Some((e - s + 1) as u64) } else { None }
+}
+
+fn pool_size_ipv6(start: &str, end: &str) -> Option<u128> {
+    let s: std::net::Ipv6Addr = start.parse().ok()?;
+    let e: std::net::Ipv6Addr = end.parse().ok()?;
+    let s = u128::from(s);
+    let e = u128::from(e);
+    if e >= s { Some(e - s + 1) } else { None }
+}
+
+fn pool_label_v4(start: &str, end: &str) -> String {
+    match pool_size_ipv4(start, end) {
+        Some(n) => format!("{start} - {end} ({n} addrs)"),
+        None => format!("{start} - {end}"),
+    }
+}
+
+fn pool_label_v6(start: &str, end: &str) -> String {
+    match pool_size_ipv6(start, end) {
+        Some(n) => format!("{start} - {end} ({n} addrs)"),
+        None => format!("{start} - {end}"),
+    }
+}
+
 fn prompt_text(message: &str, default: &str) -> Option<String> {
     let mut prompt = Text::new(message);
     if !default.is_empty() {
@@ -552,16 +582,14 @@ fn show_config(env: &EnvFile) {
     println!("  TCP_FORWARD_WAN: {}", env.get("TCP_FORWARD_WAN"));
     println!("  UDP_FORWARD_WAN: {}", env.get("UDP_FORWARD_WAN"));
     println!(
-        "  DHCP_POOL:      {} - {}",
-        env.get("DHCP_POOL_START"),
-        env.get("DHCP_POOL_END")
+        "  DHCP_POOL:      {}",
+        pool_label_v4(env.get("DHCP_POOL_START"), env.get("DHCP_POOL_END"))
     );
     println!("  DHCP_DNS:       {}", env.get("DHCP_DNS"));
     if env.get("DHCPV6_ENABLED") == "true" {
         println!(
-            "  DHCPV6:         {} - {}",
-            env.get("DHCPV6_POOL_START"),
-            env.get("DHCPV6_POOL_END")
+            "  DHCPV6:         {}",
+            pool_label_v6(env.get("DHCPV6_POOL_START"), env.get("DHCPV6_POOL_END"))
         );
     }
     println!();
@@ -900,9 +928,8 @@ fn menu_dhcp_dns(env: &mut EnvFile) {
         ];
         if dhcp4_enabled {
             items.push(format!(
-                "DHCP pool ({} - {})",
-                env.get("DHCP_POOL_START"),
-                env.get("DHCP_POOL_END")
+                "DHCP pool ({})",
+                pool_label_v4(env.get("DHCP_POOL_START"), env.get("DHCP_POOL_END"))
             ));
         }
         items.push(format!("DNS servers ({})", env.get("DHCP_DNS")));
@@ -915,9 +942,8 @@ fn menu_dhcp_dns(env: &mut EnvFile) {
             items.push(dhcpv6_label.to_string());
             if dhcpv6_enabled {
                 items.push(format!(
-                    "DHCPv6 pool ({} - {})",
-                    env.get("DHCPV6_POOL_START"),
-                    env.get("DHCPV6_POOL_END")
+                    "DHCPv6 pool ({})",
+                    pool_label_v6(env.get("DHCPV6_POOL_START"), env.get("DHCPV6_POOL_END"))
                 ));
             }
         }
