@@ -70,8 +70,12 @@
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      ExecStart = "${pkgs.util-linux}/bin/mount -o remount,ro /etc";
     };
+    script = ''
+      if ${pkgs.util-linux}/bin/findmnt -n -t tmpfs /etc > /dev/null 2>&1; then
+        ${pkgs.util-linux}/bin/mount -o remount,ro /etc
+      fi
+    '';
   };
 
   # In maintenance mode, remount /nix/store as read-write
