@@ -456,23 +456,26 @@ fn show_status() {
 }
 
 fn menu_logs() {
-    let services = [
-        ("nifty-filter", "Firewall"),
-        ("nifty-network", "Network"),
-        ("nifty-dnsmasq", "DHCP / DNS"),
-        ("nifty-hostname", "Hostname"),
-        ("nifty-link", "Interface rename"),
-        ("nifty-ro", "Root remount (ro)"),
+    let services: &[(&str, &str, bool)] = &[
+        ("nifty-filter", "Firewall", true),
+        ("nifty-dnsmasq", "DHCP / DNS", true),
+        ("nifty-network", "Network", false),
+        ("nifty-hostname", "Hostname", false),
+        ("nifty-link", "Interface rename", false),
+        ("nifty-ro", "Root remount (ro)", false),
     ];
     let mut cursor = 0;
     loop {
-        let mut items: Vec<String> = services
-            .iter()
-            .flat_map(|(_, label)| [
-                label.to_string(),
-                format!("{label} (live)"),
-            ])
-            .collect();
+        let mut items: Vec<String> = Vec::new();
+        let mut item_actions: Vec<(&str, bool)> = Vec::new();
+        for &(unit, label, has_live) in services {
+            items.push(label.to_string());
+            item_actions.push((unit, false));
+            if has_live {
+                items.push(format!("{label} (live)"));
+                item_actions.push((unit, true));
+            }
+        }
         items.push("All (this boot)".to_string());
         items.push("All (live)".to_string());
         items.push("Back".to_string());
@@ -487,11 +490,10 @@ fn menu_logs() {
                 cursor = idx;
                 run_interactive(Command::new("journalctl").args(["-f"]));
             }
-            Some((idx, choice)) => {
+            Some((idx, _choice)) => {
                 cursor = idx;
-                let service_idx = idx / 2;
-                if let Some((unit, _)) = services.get(service_idx) {
-                    if choice.ends_with("(live)") {
+                if let Some(&(unit, live)) = item_actions.get(idx) {
+                    if live {
                         run_interactive(Command::new("journalctl").args(["-u", unit, "-f"]));
                     } else {
                         run_interactive(Command::new("journalctl").args(["-u", unit, "-b"]));
