@@ -3,10 +3,9 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    script-wizard.url = "github:EnigmaCurry/script-wizard/master";
   };
 
-  outputs = { self, nixpkgs, script-wizard }:
+  outputs = { self, nixpkgs }:
     let
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
@@ -34,11 +33,10 @@
         let
           installedSystem = mkRouterSystem system;
           installedToplevel = installedSystem.config.system.build.toplevel;
-          scriptWizard = script-wizard.packages.${system}.default;
         in
         nixpkgs.lib.nixosSystem {
           inherit system;
-          specialArgs = { inherit version installedToplevel scriptWizard gitBranch; };
+          specialArgs = { inherit version installedToplevel gitBranch; };
           modules = [
             self.nixosModules.default
             ./nix/system.nix

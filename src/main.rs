@@ -10,6 +10,8 @@ use std::process::exit;
 #[cfg(feature = "nixos")]
 mod config;
 mod format;
+#[cfg(feature = "nixos")]
+mod install;
 mod parsers;
 use parsers::*;
 #[allow(unused_imports)]
@@ -26,9 +28,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Interactive configuration menu (requires nixos feature)
+    /// Interactive configuration menu
     #[cfg(feature = "nixos")]
     Config,
+
+    /// Install nifty-filter to disk from the live ISO
+    #[cfg(feature = "nixos")]
+    Install {
+        /// Set a git remote for config updates
+        #[arg(long)]
+        git_remote: Option<String>,
+    },
 
     /// Generate nftables configuration
     #[command(alias = "nft")]
@@ -305,6 +315,8 @@ fn app() {
     match cli.command {
         #[cfg(feature = "nixos")]
         Commands::Config => config::run(),
+        #[cfg(feature = "nixos")]
+        Commands::Install { git_remote } => install::run(git_remote),
         Commands::Nftables {
             env_file,
             strict_env,

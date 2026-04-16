@@ -5,7 +5,7 @@
 # Install to disk for persistent configuration.
 #
 # Build with: nix build .#iso
-{ config, pkgs, lib, modulesPath, version ? "unknown", installedToplevel, scriptWizard, gitBranch ? "master", ... }:
+{ config, pkgs, lib, modulesPath, version ? "unknown", installedToplevel, gitBranch ? "master", ... }:
 
 {
   imports = [
@@ -34,8 +34,7 @@
 
   # Install script and tools available in PATH
   environment.systemPackages = with pkgs; [
-    (writeShellScriptBin "nifty-install" (builtins.readFile ./nifty-install.sh))
-    scriptWizard
+    (writeShellScriptBin "nifty-install" ''exec nifty-filter install "$@"'')
     parted
     dosfstools
     e2fsprogs
