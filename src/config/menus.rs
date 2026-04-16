@@ -553,6 +553,7 @@ pub fn run() {
     };
 
     loop {
+        println!();
         let enabled_label = if router.get("ENABLED") == "true" {
             "Disable firewall"
         } else {
