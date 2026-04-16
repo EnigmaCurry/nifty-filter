@@ -98,6 +98,7 @@
       echo ""
       echo "   1. From your workstation, add your SSH public key:"
       echo "        ssh-copy-id admin@$HOST_IP"
+      echo "          (password: nifty)"
       echo ""
       echo "   2. Connect from your workstation (using your key):"
       echo "        ssh admin@$HOST_IP"
