@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 use inquire::{InquireError, Select, Text};
@@ -8,6 +9,20 @@ use regex::Regex;
 use super::env_file::EnvFile;
 
 const ENV_FILE: &str = "/var/nifty-filter/nifty-filter.env";
+
+/// Run a command in its own process group so Ctrl-C only kills the child.
+fn run_interactive(cmd: &mut Command) {
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+    // Ignore SIGINT in parent while child runs
+    unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN); }
+    let _ = cmd.status();
+    unsafe { libc::signal(libc::SIGINT, libc::SIG_DFL); }
+}
 
 fn prompt_text(message: &str, default: &str) -> Option<String> {
     let mut prompt = Text::new(message);
@@ -453,24 +468,20 @@ fn menu_logs() {
             Some((idx, choice)) if choice == "Back" => break,
             Some((idx, choice)) if choice == "All (this boot)" => {
                 cursor = idx;
-                let _ = Command::new("journalctl").args(["-b"]).status();
+                run_interactive(Command::new("journalctl").args(["-b"]));
             }
             Some((idx, choice)) if choice == "All (live)" => {
                 cursor = idx;
-                let _ = Command::new("journalctl").args(["-f"]).status();
+                run_interactive(Command::new("journalctl").args(["-f"]));
             }
             Some((idx, choice)) => {
                 cursor = idx;
                 let service_idx = idx / 2;
                 if let Some((unit, _)) = services.get(service_idx) {
                     if choice.ends_with("(live)") {
-                        let _ = Command::new("journalctl")
-                            .args(["-u", unit, "-f"])
-                            .status();
+                        run_interactive(Command::new("journalctl").args(["-u", unit, "-f"]));
                     } else {
-                        let _ = Command::new("journalctl")
-                            .args(["-u", unit, "-b"])
-                            .status();
+                        run_interactive(Command::new("journalctl").args(["-u", unit, "-b"]));
                     }
                 }
             }
