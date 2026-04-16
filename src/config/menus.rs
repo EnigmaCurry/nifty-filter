@@ -631,7 +631,7 @@ DHCPV6_POOL_END=
 
     fs::write(ENV_FILE, &env_content).ok();
     let _ = Command::new("chmod").args(["0600", ENV_FILE]).status();
-    let _ = fs::remove_file("/var/lib/dnsmasq/dnsmasq.leases");
+    let _ = Command::new("sudo").args(["rm", "-f", "/var/lib/dnsmasq/dnsmasq.leases"]).status();
 
     println!();
     println!("  Configuration reset. Apply changes or reboot to activate.");
