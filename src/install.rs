@@ -697,9 +697,6 @@ fn unmount_and_shutdown(mnt: &str) {
     println!("==> Unmounting...");
     run_cmd("umount", &["-R", mnt]);
 
-    println!("==> Ejecting installation media...");
-    run_cmd("eject", &["/dev/sr0"]);
-
     println!();
     println!("Installation complete!");
     println!("Remove the installation media, then power on the system.");
