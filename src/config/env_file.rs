@@ -22,6 +22,14 @@ impl EnvFile {
                 if let Some((key, value)) = line.split_once('=') {
                     let key = key.trim();
                     if !key.is_empty() && !key.starts_with('#') {
+                        let value = value.trim();
+                        let value = if (value.starts_with('"') && value.ends_with('"'))
+                            || (value.starts_with('\'') && value.ends_with('\''))
+                        {
+                            &value[1..value.len() - 1]
+                        } else {
+                            value
+                        };
                         return Line::KeyValue(key.to_string(), value.to_string());
                     }
                 }
@@ -62,7 +70,13 @@ impl EnvFile {
         let mut content = String::new();
         for line in &self.lines {
             match line {
-                Line::KeyValue(k, v) => writeln!(content, "{}={}", k, v),
+                Line::KeyValue(k, v) => {
+                    if v.contains(':') || v.contains(' ') || v.contains('"') || v.contains('\'') {
+                        writeln!(content, "{}=\"{}\"", k, v.replace('"', "\\\""))
+                    } else {
+                        writeln!(content, "{}={}", k, v)
+                    }
+                },
                 Line::Other(s) => writeln!(content, "{}", s),
             }
             .unwrap();
