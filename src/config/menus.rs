@@ -501,10 +501,7 @@ fn reset_config() -> Option<EnvFile> {
             Ok(v) if v.trim().eq_ignore_ascii_case("reset") => break,
             Ok(v) if v.trim().eq_ignore_ascii_case("cancel") => return None,
             Ok(_) => continue,
-            Err(InquireError::OperationInterrupted) => {
-                eprintln!("Aborted.");
-                std::process::exit(1);
-            }
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => return None,
             Err(_) => return None,
         }
     }
