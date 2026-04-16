@@ -440,25 +440,38 @@ fn menu_logs() {
     loop {
         let mut items: Vec<String> = services
             .iter()
-            .map(|(_, label)| label.to_string())
+            .flat_map(|(_, label)| [
+                label.to_string(),
+                format!("{label} (live)"),
+            ])
             .collect();
         items.push("All (this boot)".to_string());
+        items.push("All (live)".to_string());
         items.push("Back".to_string());
 
         match choose("Show logs:", items, cursor) {
             Some((idx, choice)) if choice == "Back" => break,
             Some((idx, choice)) if choice == "All (this boot)" => {
                 cursor = idx;
-                let _ = Command::new("journalctl")
-                    .args(["-b", "--no-pager"])
-                    .status();
+                let _ = Command::new("journalctl").args(["-b"]).status();
+            }
+            Some((idx, choice)) if choice == "All (live)" => {
+                cursor = idx;
+                let _ = Command::new("journalctl").args(["-f"]).status();
             }
             Some((idx, choice)) => {
                 cursor = idx;
-                if let Some((unit, _)) = services.get(idx) {
-                    let _ = Command::new("journalctl")
-                        .args(["-u", unit, "-b", "--no-pager"])
-                        .status();
+                let service_idx = idx / 2;
+                if let Some((unit, _)) = services.get(service_idx) {
+                    if choice.ends_with("(live)") {
+                        let _ = Command::new("journalctl")
+                            .args(["-u", unit, "-f"])
+                            .status();
+                    } else {
+                        let _ = Command::new("journalctl")
+                            .args(["-u", unit, "-b"])
+                            .status();
+                    }
                 }
             }
             None => break,
