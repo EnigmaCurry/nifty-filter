@@ -30,9 +30,13 @@ fn prompt_text_allow_blank(message: &str, default: &str) -> Option<String> {
     }
 }
 
-fn choose(message: &str, options: Vec<String>) -> Option<String> {
-    match Select::new(message, options).prompt() {
-        Ok(choice) => Some(choice),
+fn choose(message: &str, options: Vec<String>, cursor: usize) -> Option<(usize, String)> {
+    let cursor = cursor.min(options.len().saturating_sub(1));
+    match Select::new(message, options)
+        .with_starting_cursor(cursor)
+        .raw_prompt()
+    {
+        Ok(choice) => Some((choice.index, choice.value)),
         Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => None,
         Err(_) => None,
     }
@@ -385,6 +389,7 @@ fn launch_editor(path: &str) {
 // --- Submenus ---
 
 fn menu_network(router: &mut EnvFile, dhcp: &mut EnvFile) {
+    let mut cursor = 0;
     loop {
         let ipv6_enabled = router.get("ENABLE_IPV6") == "true";
         let ipv6_label = if ipv6_enabled {
@@ -406,20 +411,21 @@ fn menu_network(router: &mut EnvFile, dhcp: &mut EnvFile) {
         items.push(ipv6_label.to_string());
         items.push("Back".to_string());
 
-        match choose("Network:", items) {
-            Some(choice) if choice.starts_with("Hostname") => edit_hostname(router),
-            Some(choice) if choice.starts_with("LAN IPv4 subnet") => edit_subnet(router, dhcp),
-            Some(choice) if choice.starts_with("LAN IPv6 subnet") => edit_subnet_ipv6(router),
-            Some(choice) if choice == "Enable IPv6" || choice == "Disable IPv6" => {
-                toggle_ipv6(router)
+        match choose("Network:", items, cursor) {
+            Some((idx, choice)) if choice.starts_with("Hostname") => { cursor = idx; edit_hostname(router) }
+            Some((idx, choice)) if choice.starts_with("LAN IPv4 subnet") => { cursor = idx; edit_subnet(router, dhcp) }
+            Some((idx, choice)) if choice.starts_with("LAN IPv6 subnet") => { cursor = idx; edit_subnet_ipv6(router) }
+            Some((idx, choice)) if choice == "Enable IPv6" || choice == "Disable IPv6" => {
+                cursor = idx; toggle_ipv6(router)
             }
-            Some(choice) if choice == "Back" => break,
-            _ => break, // ESC
+            Some((_, choice)) if choice == "Back" => break,
+            _ => break,
         }
     }
 }
 
 fn menu_firewall(router: &mut EnvFile) {
+    let mut cursor = 0;
     loop {
         let ipv6_enabled = router.get("ENABLE_IPV6") == "true";
 
@@ -441,28 +447,29 @@ fn menu_firewall(router: &mut EnvFile) {
         }
         items.push("Back".to_string());
 
-        match choose("Firewall:", items) {
-            Some(choice) if choice.starts_with("TCP ports LAN") => {
-                edit_ports(router, "TCP_ACCEPT_LAN", "TCP ports LAN")
+        match choose("Firewall:", items, cursor) {
+            Some((idx, choice)) if choice.starts_with("TCP ports LAN") => {
+                cursor = idx; edit_ports(router, "TCP_ACCEPT_LAN", "TCP ports LAN")
             }
-            Some(choice) if choice.starts_with("UDP ports LAN") => {
-                edit_ports(router, "UDP_ACCEPT_LAN", "UDP ports LAN")
+            Some((idx, choice)) if choice.starts_with("UDP ports LAN") => {
+                cursor = idx; edit_ports(router, "UDP_ACCEPT_LAN", "UDP ports LAN")
             }
-            Some(choice) if choice.starts_with("TCP ports WAN") => {
-                edit_ports(router, "TCP_ACCEPT_WAN", "TCP ports WAN")
+            Some((idx, choice)) if choice.starts_with("TCP ports WAN") => {
+                cursor = idx; edit_ports(router, "TCP_ACCEPT_WAN", "TCP ports WAN")
             }
-            Some(choice) if choice.starts_with("UDP ports WAN") => {
-                edit_ports(router, "UDP_ACCEPT_WAN", "UDP ports WAN")
+            Some((idx, choice)) if choice.starts_with("UDP ports WAN") => {
+                cursor = idx; edit_ports(router, "UDP_ACCEPT_WAN", "UDP ports WAN")
             }
-            Some(choice) if choice.starts_with("Egress filter IPv4") => edit_egress_ipv4(router),
-            Some(choice) if choice.starts_with("Egress filter IPv6") => edit_egress_ipv6(router),
-            Some(choice) if choice == "Back" => break,
+            Some((idx, choice)) if choice.starts_with("Egress filter IPv4") => { cursor = idx; edit_egress_ipv4(router) }
+            Some((idx, choice)) if choice.starts_with("Egress filter IPv6") => { cursor = idx; edit_egress_ipv6(router) }
+            Some((_, choice)) if choice == "Back" => break,
             _ => break,
         }
     }
 }
 
 fn menu_port_forwarding(router: &mut EnvFile) {
+    let mut cursor = 0;
     loop {
         let items = vec![
             format!("TCP forward LAN ({})", router.get("TCP_FORWARD_LAN")),
@@ -472,26 +479,27 @@ fn menu_port_forwarding(router: &mut EnvFile) {
             "Back".to_string(),
         ];
 
-        match choose("Port Forwarding:", items) {
-            Some(choice) if choice.starts_with("TCP forward LAN") => {
-                edit_forwards(router, "TCP_FORWARD_LAN", "TCP forward LAN")
+        match choose("Port Forwarding:", items, cursor) {
+            Some((idx, choice)) if choice.starts_with("TCP forward LAN") => {
+                cursor = idx; edit_forwards(router, "TCP_FORWARD_LAN", "TCP forward LAN")
             }
-            Some(choice) if choice.starts_with("UDP forward LAN") => {
-                edit_forwards(router, "UDP_FORWARD_LAN", "UDP forward LAN")
+            Some((idx, choice)) if choice.starts_with("UDP forward LAN") => {
+                cursor = idx; edit_forwards(router, "UDP_FORWARD_LAN", "UDP forward LAN")
             }
-            Some(choice) if choice.starts_with("TCP forward WAN") => {
-                edit_forwards(router, "TCP_FORWARD_WAN", "TCP forward WAN")
+            Some((idx, choice)) if choice.starts_with("TCP forward WAN") => {
+                cursor = idx; edit_forwards(router, "TCP_FORWARD_WAN", "TCP forward WAN")
             }
-            Some(choice) if choice.starts_with("UDP forward WAN") => {
-                edit_forwards(router, "UDP_FORWARD_WAN", "UDP forward WAN")
+            Some((idx, choice)) if choice.starts_with("UDP forward WAN") => {
+                cursor = idx; edit_forwards(router, "UDP_FORWARD_WAN", "UDP forward WAN")
             }
-            Some(choice) if choice == "Back" => break,
+            Some((_, choice)) if choice == "Back" => break,
             _ => break,
         }
     }
 }
 
 fn menu_dhcp_dns(router: &mut EnvFile, dhcp: &mut EnvFile) {
+    let mut cursor = 0;
     loop {
         let ipv6_enabled = router.get("ENABLE_IPV6") == "true";
         let dhcpv6_enabled = dhcp.get("DHCPV6_ENABLED") == "true";
@@ -521,14 +529,14 @@ fn menu_dhcp_dns(router: &mut EnvFile, dhcp: &mut EnvFile) {
         }
         items.push("Back".to_string());
 
-        match choose("DHCP / DNS:", items) {
-            Some(choice) if choice.starts_with("DHCP pool") => edit_dhcp_pool(dhcp),
-            Some(choice) if choice.starts_with("DNS servers") => edit_dns(dhcp),
-            Some(choice) if choice == "Enable DHCPv6" || choice == "Disable DHCPv6" => {
-                toggle_dhcpv6(router, dhcp)
+        match choose("DHCP / DNS:", items, cursor) {
+            Some((idx, choice)) if choice.starts_with("DHCP pool") => { cursor = idx; edit_dhcp_pool(dhcp) }
+            Some((idx, choice)) if choice.starts_with("DNS servers") => { cursor = idx; edit_dns(dhcp) }
+            Some((idx, choice)) if choice == "Enable DHCPv6" || choice == "Disable DHCPv6" => {
+                cursor = idx; toggle_dhcpv6(router, dhcp)
             }
-            Some(choice) if choice.starts_with("DHCPv6 pool") => edit_dhcpv6_pool(router, dhcp),
-            Some(choice) if choice == "Back" => break,
+            Some((idx, choice)) if choice.starts_with("DHCPv6 pool") => { cursor = idx; edit_dhcpv6_pool(router, dhcp) }
+            Some((_, choice)) if choice == "Back" => break,
             _ => break,
         }
     }
@@ -552,6 +560,7 @@ pub fn run() {
         }
     };
 
+    let mut cursor = 0;
     loop {
         println!();
         let enabled_label = if router.get("ENABLED") == "true" {
@@ -573,8 +582,8 @@ pub fn run() {
             "Quit".to_string(),
         ];
 
-        match choose("nifty-filter configuration:", items) {
-            Some(choice) => match choice.as_str() {
+        match choose("nifty-filter configuration:", items, cursor) {
+            Some((idx, choice)) => { cursor = idx; match choice.as_str() {
                 "Show status" => show_status(&router, &dhcp),
                 "Network" => menu_network(&mut router, &mut dhcp),
                 "Firewall" => menu_firewall(&mut router),
@@ -596,7 +605,7 @@ pub fn run() {
                 }
                 "Quit" => break,
                 _ => {}
-            },
+            }},
             None => break, // ESC at main menu = quit
         }
     }
