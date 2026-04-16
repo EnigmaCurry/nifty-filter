@@ -216,7 +216,7 @@ upgrade host:
     printf 'title   nifty-filter (maintenance)\nlinux   /kernel\ninitrd  /initrd\noptions init=%s/init %s rw nifty.maintenance=1\n' "${SYSTEM_PATH}" "${KERNEL_PARAMS}" | sudo tee /boot/loader/entries/nifty-filter-maintenance.conf > /dev/null
     sudo mount -o remount,ro /nix/store
     sudo mount -o remount,ro /
-    sudo reboot
+    nohup sudo reboot &>/dev/null &
     REMOTE_SCRIPT
     echo ""
     echo "Upgrade applied. {{host}} is rebooting..."
