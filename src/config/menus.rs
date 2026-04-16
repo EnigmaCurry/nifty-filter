@@ -457,7 +457,7 @@ fn show_status() {
 
 fn menu_logs() {
     let services: &[(&str, &str, bool)] = &[
-        ("nifty-filter", "Firewall", true),
+        ("nifty-filter", "Firewall", false),
         ("nifty-dnsmasq", "DHCP / DNS", true),
         ("nifty-network", "Network", false),
         ("nifty-hostname", "Hostname", false),
