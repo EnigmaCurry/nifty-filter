@@ -302,6 +302,9 @@ in
       server=${d}dns"
       done
 
+      DHCP4_ENABLED=${d}(envget DHCP4_ENABLED "${d}ENV_FILE")
+      DHCP4_ENABLED=${d}{DHCP4_ENABLED:-true}
+
       mkdir -p /var/lib/dnsmasq
       cat > /run/dnsmasq.conf <<DNSEOF
       # Generated from /var/nifty-filter/nifty-filter.env
@@ -321,15 +324,22 @@ in
       listen-address=127.0.0.1
       bind-dynamic
 
-      # DHCP
-      dhcp-range=${d}DHCP_POOL_START,${d}DHCP_POOL_END,24h
-      dhcp-option=option:router,${d}DHCP_ROUTER
-      dhcp-option=option:dns-server,${d}ROUTER_IP
       dhcp-leasefile=/var/lib/dnsmasq/dnsmasq.leases
 
       # Logging
       log-dhcp
       DNSEOF
+
+      # Add DHCPv4 range if enabled
+      if [ "${d}DHCP4_ENABLED" = "true" ]; then
+        cat >> /run/dnsmasq.conf <<DNSEOF
+
+      # DHCPv4
+      dhcp-range=${d}DHCP_POOL_START,${d}DHCP_POOL_END,24h
+      dhcp-option=option:router,${d}DHCP_ROUTER
+      dhcp-option=option:dns-server,${d}ROUTER_IP
+      DNSEOF
+      fi
 
       # Add DHCPv6 range if enabled
       DHCPV6_ENABLED=${d}(envget DHCPV6_ENABLED "${d}ENV_FILE")

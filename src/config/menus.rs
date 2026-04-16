@@ -217,6 +217,37 @@ fn edit_dns(env: &mut EnvFile) {
     println!("  Set DNS={val}");
 }
 
+fn toggle_dhcp4(env: &mut EnvFile) {
+    let enabled = env.get("DHCP4_ENABLED");
+    let currently_enabled = enabled.is_empty() || enabled == "true";
+    if currently_enabled {
+        env.set("DHCP4_ENABLED", "false");
+        // Remove DHCPv4 ports from UDP_ACCEPT_LAN
+        let udp_lan = env.get("UDP_ACCEPT_LAN").to_string();
+        let cleaned = udp_lan
+            .replace(",67,68", "")
+            .replace("67,68,", "")
+            .replace("67,68", "");
+        env.set("UDP_ACCEPT_LAN", &cleaned);
+        env.save().ok();
+        println!("  DHCPv4 disabled. Removed ports 67,68 from UDP_ACCEPT_LAN.");
+    } else {
+        env.set("DHCP4_ENABLED", "true");
+        // Add DHCPv4 ports to UDP_ACCEPT_LAN if not already present
+        let udp_lan = env.get("UDP_ACCEPT_LAN").to_string();
+        if !udp_lan.contains("67") {
+            let new_val = if udp_lan.is_empty() {
+                "67,68".to_string()
+            } else {
+                format!("{udp_lan},67,68")
+            };
+            env.set("UDP_ACCEPT_LAN", &new_val);
+        }
+        env.save().ok();
+        println!("  DHCPv4 enabled.");
+    }
+}
+
 fn toggle_dhcpv6(env: &mut EnvFile) {
     if env.get("DHCPV6_ENABLED") == "true" {
         env.set("DHCPV6_ENABLED", "false");
@@ -539,15 +570,26 @@ fn menu_dhcp_dns(env: &mut EnvFile) {
     loop {
         let ipv6_enabled = env.get("ENABLE_IPV6") == "true";
         let dhcpv6_enabled = env.get("DHCPV6_ENABLED") == "true";
+        let dhcp4_val = env.get("DHCP4_ENABLED");
+        let dhcp4_enabled = dhcp4_val.is_empty() || dhcp4_val == "true";
+
+        let dhcp4_label = if dhcp4_enabled {
+            "Disable DHCPv4"
+        } else {
+            "Enable DHCPv4"
+        };
 
         let mut items = vec![
-            format!(
+            dhcp4_label.to_string(),
+        ];
+        if dhcp4_enabled {
+            items.push(format!(
                 "DHCP pool ({} - {})",
                 env.get("DHCP_POOL_START"),
                 env.get("DHCP_POOL_END")
-            ),
-            format!("DNS servers ({})", env.get("DHCP_DNS")),
-        ];
+            ));
+        }
+        items.push(format!("DNS servers ({})", env.get("DHCP_DNS")));
         if ipv6_enabled {
             let dhcpv6_label = if dhcpv6_enabled {
                 "Disable DHCPv6"
@@ -566,6 +608,9 @@ fn menu_dhcp_dns(env: &mut EnvFile) {
         items.push("Back".to_string());
 
         match choose("DHCP / DNS:", items, cursor) {
+            Some((idx, choice)) if choice == "Enable DHCPv4" || choice == "Disable DHCPv4" => {
+                cursor = idx; toggle_dhcp4(env)
+            }
             Some((idx, choice)) if choice.starts_with("DHCP pool") => { cursor = idx; edit_dhcp_pool(env) }
             Some((idx, choice)) if choice.starts_with("DNS servers") => { cursor = idx; edit_dns(env) }
             Some((idx, choice)) if choice == "Enable DHCPv6" || choice == "Disable DHCPv6" => {
