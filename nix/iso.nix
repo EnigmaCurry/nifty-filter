@@ -80,6 +80,8 @@
 
   environment.interactiveShellInit = lib.mkForce ''
     export PS1='\[\e[1;32m\][LIVE ISO]\[\e[0m\] \u@\h:\w\$ '
+    HOST_IP=$(${pkgs.iproute2}/bin/ip -4 addr show scope global 2>/dev/null | ${pkgs.gnugrep}/bin/grep -oP 'inet \K[0-9.]+' | head -1)
+    HOST_IP=''${HOST_IP:-<this-host>}
     if [ -s "$HOME/.ssh/authorized_keys" ]; then
       echo ""
       echo "  SSH key installed. Ready to install."
@@ -95,10 +97,10 @@
       echo "        sudo nmtui"
       echo ""
       echo "   1. From your workstation, add your SSH public key:"
-      echo "        ssh-copy-id admin@<this-host>"
+      echo "        ssh-copy-id admin@$HOST_IP"
       echo ""
       echo "   2. Connect from your workstation (using your key):"
-      echo "        ssh admin@<this-host>"
+      echo "        ssh admin@$HOST_IP"
       echo ""
       echo "  Once your key is installed, additional instructions will be given"
       echo "  when you connect."
