@@ -401,6 +401,19 @@ fn show_status() {
         println!("  [{icon:^4}] {label:<20} ({service})");
     }
     println!();
+    println!("  === Filesystem Status ===");
+    for mount in ["/", "/nix/store", "/var"] {
+        let output = Command::new("findmnt")
+            .args(["-n", "-o", "OPTIONS", mount])
+            .output();
+        let opts = match output {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            Err(_) => String::new(),
+        };
+        let state = if opts.split(',').any(|o| o == "ro") { "ro" } else { "rw" };
+        println!("  [{state:^4}] {mount}");
+    }
+    println!();
 }
 
 fn show_config(env: &EnvFile) {
