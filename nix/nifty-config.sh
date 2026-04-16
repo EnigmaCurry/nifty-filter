@@ -36,7 +36,7 @@ set_dhcp_val() {
 edit_hostname() {
     local current=$(get_val HOSTNAME)
     local val
-    val=$(script-wizard ask "Hostname" "$current") || return
+    val=$(script-wizard ask "Hostname" "$current") || return 0
     if [[ "$val" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]; then
         set_val HOSTNAME "$val"
         echo "  Set HOSTNAME=$val"
@@ -48,7 +48,7 @@ edit_hostname() {
 edit_subnet() {
     local current=$(get_val SUBNET_LAN)
     local val
-    val=$(script-wizard ask "LAN subnet (IP/prefix)" "$current") || return
+    val=$(script-wizard ask "LAN subnet (IP/prefix)" "$current") || return 0
     set_val SUBNET_LAN "$val"
     echo "  Set SUBNET_LAN=$val"
     # Update DHCP defaults to match
@@ -64,7 +64,7 @@ edit_subnet() {
 edit_subnet_ipv6() {
     local current=$(get_val SUBNET_LAN_IPV6)
     local val
-    val=$(script-wizard ask "LAN IPv6 subnet (IP/prefix)" "$current") || return
+    val=$(script-wizard ask "LAN IPv6 subnet (IP/prefix)" "$current") || return 0
     set_val SUBNET_LAN_IPV6 "$val"
     echo "  Set SUBNET_LAN_IPV6=$val"
 }
@@ -89,7 +89,7 @@ edit_egress_ipv4() {
     local current=$(get_val LAN_EGRESS_ALLOWED_IPV4)
     [ -z "$current" ] && current="0.0.0.0/0"
     local val
-    val=$(script-wizard ask "Allowed IPv4 egress CIDRs (comma-separated)" "$current") || return
+    val=$(script-wizard ask "Allowed IPv4 egress CIDRs (comma-separated)" "$current") || return 0
     set_val LAN_EGRESS_ALLOWED_IPV4 "$val"
     echo "  Set LAN_EGRESS_ALLOWED_IPV4=$val"
 }
@@ -98,7 +98,7 @@ edit_egress_ipv6() {
     local current=$(get_val LAN_EGRESS_ALLOWED_IPV6)
     [ -z "$current" ] && current="::/0"
     local val
-    val=$(script-wizard ask "Allowed IPv6 egress CIDRs (comma-separated)" "$current") || return
+    val=$(script-wizard ask "Allowed IPv6 egress CIDRs (comma-separated)" "$current") || return 0
     set_val LAN_EGRESS_ALLOWED_IPV6 "$val"
     echo "  Set LAN_EGRESS_ALLOWED_IPV6=$val"
 }
@@ -106,8 +106,8 @@ edit_egress_ipv6() {
 edit_dhcp_pool() {
     local start=$(get_dhcp_val DHCP_POOL_START)
     local end=$(get_dhcp_val DHCP_POOL_END)
-    start=$(script-wizard ask "DHCP pool start" "$start") || return
-    end=$(script-wizard ask "DHCP pool end" "$end") || return
+    start=$(script-wizard ask "DHCP pool start" "$start") || return 0
+    end=$(script-wizard ask "DHCP pool end" "$end") || return 0
     set_dhcp_val DHCP_POOL_START "$start"
     set_dhcp_val DHCP_POOL_END "$end"
     echo "  Set pool: $start - $end"
@@ -116,7 +116,7 @@ edit_dhcp_pool() {
 edit_dns() {
     local current=$(get_dhcp_val DHCP_DNS)
     local val
-    val=$(script-wizard ask "DNS servers (comma-separated)" "$current") || return
+    val=$(script-wizard ask "DNS servers (comma-separated)" "$current") || return 0
     set_dhcp_val DHCP_DNS "$val"
     echo "  Set DNS=$val"
 }
@@ -161,8 +161,8 @@ edit_dhcpv6_pool() {
         start="${prefix}:100"
         end="${prefix}:1ff"
     fi
-    start=$(script-wizard ask "DHCPv6 pool start" "$start") || return
-    end=$(script-wizard ask "DHCPv6 pool end" "$end") || return
+    start=$(script-wizard ask "DHCPv6 pool start" "$start") || return 0
+    end=$(script-wizard ask "DHCPv6 pool end" "$end") || return 0
     set_dhcp_val DHCPV6_POOL_START "$start"
     set_dhcp_val DHCPV6_POOL_END "$end"
     echo "  Set DHCPv6 pool: $start - $end"
@@ -172,7 +172,7 @@ edit_ports() {
     local key="$1" label="$2"
     local current=$(get_val "$key")
     local val
-    val=$(script-wizard ask "$label (comma-separated)" "$current" --allow-blank) || return
+    val=$(script-wizard ask "$label (comma-separated)" "$current" --allow-blank) || return 0
     set_val "$key" "$val"
     echo "  Set ${key}=$val"
 }
@@ -183,7 +183,7 @@ edit_forwards() {
     echo "  Format: incoming_port:dest_ip:dest_port (comma-separated)"
     echo "  IPv6:   incoming_port:[ipv6_addr]:dest_port"
     local val
-    val=$(script-wizard ask "$label" "$current" --allow-blank) || return
+    val=$(script-wizard ask "$label" "$current" --allow-blank) || return 0
     set_val "$key" "$val"
     echo "  Set ${key}=$val"
 }
