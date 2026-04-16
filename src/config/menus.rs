@@ -1,6 +1,7 @@
 use std::process::Command;
 
 use inquire::{InquireError, Select, Text};
+use ipnetwork::IpNetwork;
 use regex::Regex;
 
 use super::env_file::EnvFile;
@@ -57,9 +58,20 @@ fn edit_hostname(router: &mut EnvFile) {
 
 fn edit_subnet(router: &mut EnvFile, dhcp: &mut EnvFile) {
     let current = router.get("SUBNET_LAN").to_string();
-    let val = match prompt_text("LAN subnet (IP/prefix)", &current) {
-        Some(v) => v,
-        None => return,
+    let default = if current.is_empty() {
+        "10.99.0.1/24".to_string()
+    } else {
+        current
+    };
+    let val = loop {
+        let v = match prompt_text("LAN subnet (IP/prefix)", &default) {
+            Some(v) => v,
+            None => return,
+        };
+        if v.parse::<IpNetwork>().is_ok() {
+            break v;
+        }
+        println!("  Invalid subnet. Use CIDR notation (e.g. 10.99.0.1/24).");
     };
     router.set("SUBNET_LAN", &val);
     router.save().ok();
@@ -80,9 +92,20 @@ fn edit_subnet(router: &mut EnvFile, dhcp: &mut EnvFile) {
 
 fn edit_subnet_ipv6(router: &mut EnvFile) {
     let current = router.get("SUBNET_LAN_IPV6").to_string();
-    let val = match prompt_text("LAN IPv6 subnet (IP/prefix)", &current) {
-        Some(v) => v,
-        None => return,
+    let default = if current.is_empty() {
+        "fd00:10::1/64".to_string()
+    } else {
+        current
+    };
+    let val = loop {
+        let v = match prompt_text("LAN IPv6 subnet (IP/prefix)", &default) {
+            Some(v) => v,
+            None => return,
+        };
+        if v.parse::<IpNetwork>().is_ok() {
+            break v;
+        }
+        println!("  Invalid subnet. Use CIDR notation (e.g. fd00:10::1/64).");
     };
     router.set("SUBNET_LAN_IPV6", &val);
     router.save().ok();
@@ -105,6 +128,15 @@ fn toggle_ipv6(router: &mut EnvFile) {
     }
 }
 
+fn validate_cidr_list(input: &str) -> bool {
+    if input.is_empty() {
+        return true;
+    }
+    input
+        .split(',')
+        .all(|s| s.trim().parse::<IpNetwork>().is_ok())
+}
+
 fn edit_egress_ipv4(router: &mut EnvFile) {
     let current = router.get("LAN_EGRESS_ALLOWED_IPV4").to_string();
     let default = if current.is_empty() {
@@ -112,9 +144,15 @@ fn edit_egress_ipv4(router: &mut EnvFile) {
     } else {
         current
     };
-    let val = match prompt_text("Allowed IPv4 egress CIDRs (comma-separated)", &default) {
-        Some(v) => v,
-        None => return,
+    let val = loop {
+        let v = match prompt_text("Allowed IPv4 egress CIDRs (comma-separated)", &default) {
+            Some(v) => v,
+            None => return,
+        };
+        if validate_cidr_list(&v) {
+            break v;
+        }
+        println!("  Invalid CIDR(s). Use notation like 0.0.0.0/0 or 10.0.0.0/8,172.16.0.0/12.");
     };
     router.set("LAN_EGRESS_ALLOWED_IPV4", &val);
     router.save().ok();
@@ -128,9 +166,15 @@ fn edit_egress_ipv6(router: &mut EnvFile) {
     } else {
         current
     };
-    let val = match prompt_text("Allowed IPv6 egress CIDRs (comma-separated)", &default) {
-        Some(v) => v,
-        None => return,
+    let val = loop {
+        let v = match prompt_text("Allowed IPv6 egress CIDRs (comma-separated)", &default) {
+            Some(v) => v,
+            None => return,
+        };
+        if validate_cidr_list(&v) {
+            break v;
+        }
+        println!("  Invalid CIDR(s). Use notation like ::/0 or fd00::/8.");
     };
     router.set("LAN_EGRESS_ALLOWED_IPV6", &val);
     router.save().ok();
