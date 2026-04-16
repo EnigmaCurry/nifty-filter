@@ -717,6 +717,11 @@ fn unmount_and_shutdown(mnt: &str) {
 // --- Entry point ---
 
 pub fn run(git_remote: Option<String>) {
+    // Only run on the live ISO
+    if !Path::new("/etc/nifty-filter/installed-system").exists() {
+        die("This command can only be run from the nifty-filter live ISO.");
+    }
+
     // Re-exec with sudo if not root
     let euid = run_cmd_output("id", &["-u"]).trim().to_string();
     if euid != "0" {
