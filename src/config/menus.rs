@@ -67,6 +67,22 @@ fn pool_label_v6(start: &str, end: &str) -> String {
     }
 }
 
+fn format_count(n: u128) -> String {
+    if n < 10_000 {
+        format!("{n}")
+    } else if n < 1_000_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else if n < 1_000_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n < 1_000_000_000_000 {
+        format!("{:.1}B", n as f64 / 1_000_000_000.0)
+    } else if n < 1_000_000_000_000_000 {
+        format!("{:.1}T", n as f64 / 1_000_000_000_000.0)
+    } else {
+        format!("{:.1}e{}", n as f64 / 10f64.powi(n.ilog10() as i32), n.ilog10())
+    }
+}
+
 fn subnet_label(cidr: &str) -> String {
     if cidr.is_empty() {
         return String::new();
@@ -78,7 +94,7 @@ fn subnet_label(cidr: &str) -> String {
                 IpNetwork::V4(_) => 1u128 << (32 - prefix),
                 IpNetwork::V6(_) => 1u128 << (128 - prefix),
             };
-            format!("{cidr} ({size} addrs)")
+            format!("{cidr} ({} addrs)", format_count(size))
         }
         Err(_) => cidr.to_string(),
     }
