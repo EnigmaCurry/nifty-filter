@@ -368,7 +368,7 @@ while true; do
         "Edit router.env" \
         "Edit dhcp.env" \
         "Quit" \
-    ) || break
+    ) || continue
 
     case "$CHOICE" in
         "Show status") show_status ;;
