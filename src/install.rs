@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{self, Command, Stdio};
 
-use inquire::{Confirm, InquireError, Select, Text};
+use inquire::{InquireError, Select, Text};
 use ipnetwork::IpNetwork;
 use regex::Regex;
 
@@ -69,8 +69,12 @@ fn prompt_select(message: &str, options: Vec<String>) -> String {
 
 fn prompt_confirm(message: &str) -> bool {
     loop {
-        match Confirm::new(message).without_default().prompt() {
-            Ok(v) => return v,
+        match Text::new(&format!("{} (yes/no)", message)).prompt() {
+            Ok(answer) => match answer.trim().to_lowercase().as_str() {
+                "yes" | "y" => return true,
+                "no" | "n" => return false,
+                _ => continue,
+            },
             Err(InquireError::OperationInterrupted) => {
                 eprintln!("Aborted.");
                 std::process::exit(1);
