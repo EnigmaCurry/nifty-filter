@@ -342,6 +342,35 @@ fn apply_changes(env: &EnvFile) {
     println!("  Done.");
 }
 
+fn show_status() {
+    println!();
+    println!("  === Service Status ===");
+    let services = [
+        ("nifty-filter", "Firewall"),
+        ("nifty-network", "Network"),
+        ("nifty-dnsmasq", "DHCP / DNS"),
+        ("nifty-hostname", "Hostname"),
+        ("nifty-link", "Interface rename"),
+        ("nifty-ro", "Read-only root"),
+    ];
+    for (service, label) in services {
+        let output = Command::new("systemctl")
+            .args(["is-active", service])
+            .output();
+        let state = match output {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            Err(_) => "unknown".to_string(),
+        };
+        let icon = match state.as_str() {
+            "active" => "ok",
+            "inactive" => "--",
+            _ => "FAIL",
+        };
+        println!("  [{icon:^4}] {label:<20} ({service})");
+    }
+    println!();
+}
+
 fn show_config(env: &EnvFile) {
     println!();
     println!("  === Current Configuration ===");
@@ -571,6 +600,7 @@ pub fn run() {
 
         let items = vec![
             "Show config".to_string(),
+            "Show status".to_string(),
             "Network".to_string(),
             "Firewall".to_string(),
             "Port forwarding".to_string(),
@@ -584,6 +614,7 @@ pub fn run() {
         match choose("nifty-filter configuration:", items, cursor) {
             Some((idx, choice)) => { cursor = idx; match choice.as_str() {
                 "Show config" => show_config(&env),
+                "Show status" => show_status(),
                 "Network" => menu_network(&mut env),
                 "Firewall" => menu_firewall(&mut env),
                 "Port forwarding" => menu_port_forwarding(&mut env),
