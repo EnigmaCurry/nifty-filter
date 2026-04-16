@@ -706,10 +706,14 @@ fn unmount_and_shutdown(mnt: &str) {
 // --- Entry point ---
 
 pub fn run(git_remote: Option<String>) {
-    // Must be root
+    // Re-exec with sudo if not root
     let euid = run_cmd_output("id", &["-u"]).trim().to_string();
     if euid != "0" {
-        die("Must be run as root. Try: sudo nifty-filter install");
+        let args: Vec<String> = std::env::args().collect();
+        let mut cmd = std::process::Command::new("sudo");
+        cmd.args(&args);
+        let status = cmd.status().unwrap_or_else(|e| die(&format!("Failed to exec sudo: {}", e)));
+        std::process::exit(status.code().unwrap_or(1));
     }
 
     // Pre-flight
