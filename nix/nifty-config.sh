@@ -256,7 +256,7 @@ menu_network() {
             "Back"
         )
 
-        local choice=$(script-wizard choose "Network:" "${items[@]}") || continue
+        local choice=$(script-wizard choose "Network:" "${items[@]}") || break
         case "$choice" in
             Hostname*) edit_hostname ;;
             "LAN IPv4 subnet"*) edit_subnet ;;
@@ -283,7 +283,7 @@ menu_firewall() {
         fi
         items+=("Back")
 
-        local choice=$(script-wizard choose "Firewall:" "${items[@]}") || continue
+        local choice=$(script-wizard choose "Firewall:" "${items[@]}") || break
         case "$choice" in
             "TCP ports LAN"*) edit_ports TCP_ACCEPT_LAN "TCP ports LAN" ;;
             "UDP ports LAN"*) edit_ports UDP_ACCEPT_LAN "UDP ports LAN" ;;
@@ -304,7 +304,7 @@ menu_port_forwarding() {
             "TCP forward WAN ($(get_val TCP_FORWARD_WAN))" \
             "UDP forward WAN ($(get_val UDP_FORWARD_WAN))" \
             "Back" \
-        ) || continue
+        ) || break
         case "$choice" in
             "TCP forward LAN"*) edit_forwards TCP_FORWARD_LAN "TCP forward LAN" ;;
             "UDP forward LAN"*) edit_forwards UDP_FORWARD_LAN "UDP forward LAN" ;;
@@ -334,7 +334,7 @@ menu_dhcp_dns() {
         fi
         items+=("Back")
 
-        local choice=$(script-wizard choose "DHCP / DNS:" "${items[@]}") || continue
+        local choice=$(script-wizard choose "DHCP / DNS:" "${items[@]}") || break
         case "$choice" in
             "DHCP pool"*) edit_dhcp_pool ;;
             "DNS servers"*) edit_dns ;;
@@ -368,7 +368,7 @@ while true; do
         "Edit router.env" \
         "Edit dhcp.env" \
         "Quit" \
-    ) || continue
+    ) || break
 
     case "$CHOICE" in
         "Show status") show_status ;;
