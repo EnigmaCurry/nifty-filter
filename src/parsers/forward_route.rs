@@ -22,17 +22,19 @@ impl FromStr for ForwardRoute {
         // Support IPv6 bracket notation: incoming_port:[ipv6_addr]:destination_port
         // IPv4 format remains: incoming_port:ipv4_addr:destination_port
         if let Some(bracket_start) = input.find('[') {
-            let bracket_end = input.find(']').ok_or_else(|| {
-                format!("Missing closing bracket in forward route: '{}'", input)
-            })?;
+            let bracket_end = input
+                .find(']')
+                .ok_or_else(|| format!("Missing closing bracket in forward route: '{}'", input))?;
 
-            let incoming_port = input[..bracket_start].trim_end_matches(':')
+            let incoming_port = input[..bracket_start]
+                .trim_end_matches(':')
                 .parse::<u16>()
                 .map_err(|_| format!("Invalid incoming port in: '{}'", input))?;
             let destination_ip = input[bracket_start + 1..bracket_end]
                 .parse::<IpAddr>()
                 .map_err(|_| format!("Invalid destination IP in: '{}'", input))?;
-            let destination_port = input[bracket_end + 1..].trim_start_matches(':')
+            let destination_port = input[bracket_end + 1..]
+                .trim_start_matches(':')
                 .parse::<u16>()
                 .map_err(|_| format!("Invalid destination port in: '{}'", input))?;
 
@@ -170,10 +172,7 @@ mod tests {
         let input = "8080:[fd00::50]:80";
         let route = ForwardRoute::from_str(input).unwrap();
         assert_eq!(route.incoming_port, 8080);
-        assert_eq!(
-            route.destination_ip,
-            "fd00::50".parse::<IpAddr>().unwrap()
-        );
+        assert_eq!(route.destination_ip, "fd00::50".parse::<IpAddr>().unwrap());
         assert_eq!(route.destination_port, 80);
         assert!(!route.is_ipv4());
     }

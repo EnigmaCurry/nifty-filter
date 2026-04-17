@@ -269,11 +269,7 @@ fn gather_config(git_remote: Option<String>) -> InstallConfig {
             .map(|(name, desc)| format!("{name} ({desc})"))
             .collect();
         let choice = prompt_select("Select target disk:", options);
-        choice
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_string()
+        choice.split_whitespace().next().unwrap_or("").to_string()
     };
     let disk_path = format!("/dev/{disk}");
     println!("  Selected: {disk_path}");
@@ -289,16 +285,10 @@ fn gather_config(git_remote: Option<String>) -> InstallConfig {
         ));
     }
 
-    let wan_iface = prompt_select(
-        "Select WAN interface (upstream/internet):",
-        ifaces.clone(),
-    );
+    let wan_iface = prompt_select("Select WAN interface (upstream/internet):", ifaces.clone());
     println!("  WAN: {wan_iface} -> will be renamed to 'wan'");
 
-    let lan_ifaces: Vec<String> = ifaces
-        .into_iter()
-        .filter(|i| i != &wan_iface)
-        .collect();
+    let lan_ifaces: Vec<String> = ifaces.into_iter().filter(|i| i != &wan_iface).collect();
     let lan_iface = if lan_ifaces.len() == 1 {
         println!(
             "  LAN: {} -> will be renamed to 'lan' (only remaining interface)",
@@ -371,14 +361,8 @@ fn show_summary(cfg: &InstallConfig) {
     println!("==> Installation summary:");
     println!("  Hostname:     {}", cfg.hostname);
     println!("  Disk:         {}", cfg.disk);
-    println!(
-        "  WAN:          {} ({}) -> wan",
-        cfg.wan_iface, cfg.wan_mac
-    );
-    println!(
-        "  LAN:          {} ({}) -> lan",
-        cfg.lan_iface, cfg.lan_mac
-    );
+    println!("  WAN:          {} ({}) -> wan", cfg.wan_iface, cfg.wan_mac);
+    println!("  LAN:          {} ({}) -> lan", cfg.lan_iface, cfg.lan_mac);
     println!("  LAN subnet:   {}", cfg.subnet_lan);
     println!("  DHCP pool:    {} - {}", cfg.dhcp_start, cfg.dhcp_end);
     println!("  DNS servers:  {}", cfg.dns_servers);
@@ -398,11 +382,29 @@ fn partition_disk(disk: &str) {
     run_cmd(
         "parted",
         &[
-            "-s", disk, "mklabel", "gpt",
-            "mkpart", "NIFTY_BOOT", "fat32", "1MiB", "513MiB",
-            "set", "1", "esp", "on",
-            "mkpart", "NIFTY_ROOT", "ext4", "513MiB", "8705MiB",
-            "mkpart", "NIFTY_VAR", "ext4", "8705MiB", "100%",
+            "-s",
+            disk,
+            "mklabel",
+            "gpt",
+            "mkpart",
+            "NIFTY_BOOT",
+            "fat32",
+            "1MiB",
+            "513MiB",
+            "set",
+            "1",
+            "esp",
+            "on",
+            "mkpart",
+            "NIFTY_ROOT",
+            "ext4",
+            "513MiB",
+            "8705MiB",
+            "mkpart",
+            "NIFTY_VAR",
+            "ext4",
+            "8705MiB",
+            "100%",
         ],
     );
     run_cmd("udevadm", &["settle"]);
@@ -432,7 +434,9 @@ fn format_partitions(boot: &str, root: &str, var: &str) {
 fn mount_partitions(mnt: &str, boot: &str, root: &str, var: &str) {
     println!("==> Mounting filesystems...");
     run_cmd("mount", &[root, mnt]);
-    for dir in ["boot", "var", "run", "tmp", "home", "root", "etc", "proc", "sys", "dev"] {
+    for dir in [
+        "boot", "var", "run", "tmp", "home", "root", "etc", "proc", "sys", "dev",
+    ] {
         fs::create_dir_all(format!("{mnt}/{dir}")).ok();
     }
     run_cmd("mount", &[boot, &format!("{mnt}/boot")]);
@@ -549,18 +553,12 @@ fn setup_var(mnt: &str, cfg: &InstallConfig) {
     println!("==> Creating interface rename rules...");
     fs::write(
         format!("{mnt}/var/nifty-filter/network/10-wan.link"),
-        format!(
-            "[Match]\nMACAddress={}\n\n[Link]\nName=wan\n",
-            cfg.wan_mac
-        ),
+        format!("[Match]\nMACAddress={}\n\n[Link]\nName=wan\n", cfg.wan_mac),
     )
     .ok();
     fs::write(
         format!("{mnt}/var/nifty-filter/network/10-lan.link"),
-        format!(
-            "[Match]\nMACAddress={}\n\n[Link]\nName=lan\n",
-            cfg.lan_mac
-        ),
+        format!("[Match]\nMACAddress={}\n\n[Link]\nName=lan\n", cfg.lan_mac),
     )
     .ok();
 
@@ -628,7 +626,10 @@ DHCPV6_POOL_END=
     run_cmd("cp", &[AUTH_KEYS, &format!("{dest_ssh}/authorized_keys")]);
     run_cmd("chmod", &["0700", &dest_ssh]);
     run_cmd("chmod", &["0600", &format!("{dest_ssh}/authorized_keys")]);
-    run_cmd("chown", &["-R", "1000:100", &format!("{mnt}/var/home/admin")]);
+    run_cmd(
+        "chown",
+        &["-R", "1000:100", &format!("{mnt}/var/home/admin")],
+    );
 
     // Preserve SSH host keys
     println!("==> Preserving SSH host keys...");
@@ -680,10 +681,7 @@ DHCPV6_POOL_END=
     println!("  Build branch: {build_branch}");
 
     if let Some(ref remote) = cfg.git_remote {
-        run_cmd(
-            "git",
-            &["-C", &nf_dir, "remote", "add", "origin", remote],
-        );
+        run_cmd("git", &["-C", &nf_dir, "remote", "add", "origin", remote]);
         println!("==> Cloning source repo for on-device upgrades...");
         let src_dir = format!("{nf_dir}/src");
         if run_cmd("git", &["clone", "-b", &build_branch, remote, &src_dir]) {
@@ -728,7 +726,9 @@ pub fn run(git_remote: Option<String>) {
         let args: Vec<String> = std::env::args().collect();
         let mut cmd = std::process::Command::new("sudo");
         cmd.args(&args);
-        let status = cmd.status().unwrap_or_else(|e| die(&format!("Failed to exec sudo: {}", e)));
+        let status = cmd
+            .status()
+            .unwrap_or_else(|e| die(&format!("Failed to exec sudo: {}", e)));
         std::process::exit(status.code().unwrap_or(1));
     }
 

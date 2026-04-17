@@ -1,6 +1,6 @@
 use askama::Template;
-use dotenvy::from_filename;
 use clap::{Parser, Subcommand};
+use dotenvy::from_filename;
 use env_logger;
 use log::{error, info};
 use parsers::port::PortList;
@@ -132,7 +132,10 @@ impl RouterTemplate {
             match subnet {
                 Some(s) => s.to_string(),
                 None => {
-                    errors.push("SUBNET_LAN_IPV4 (or SUBNET_LAN) is required when ENABLE_IPV4=true.".to_string());
+                    errors.push(
+                        "SUBNET_LAN_IPV4 (or SUBNET_LAN) is required when ENABLE_IPV4=true."
+                            .to_string(),
+                    );
                     String::new()
                 }
             }
@@ -321,10 +324,19 @@ pub fn validate_nftables_config(config: &str) -> Result<(), String> {
 
 #[cfg(feature = "nixos")]
 fn run_maintenance() {
-    use std::process::{Command, exit};
-    let status = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(include_str!("../nix/nifty-maintenance.sh"))
+    use std::process::{exit, Command};
+
+    // Write the embedded script to a temp file so it can be executed directly.
+    // This ensures `$0` in the script is the actual file path (not "sh"),
+    // which is required for the `exec sudo "$0" "$@"` privilege escalation.
+    let script = include_str!("../nix/nifty-maintenance.sh");
+    let tmp = std::env::temp_dir().join("nifty-maintenance.sh");
+    std::fs::write(&tmp, script).expect("failed to write temp file");
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
+        .expect("failed to chmod temp file");
+
+    let status = Command::new(tmp)
         .status()
         .expect("failed to execute maintenance script");
     exit(status.code().unwrap_or(1));
@@ -332,15 +344,22 @@ fn run_maintenance() {
 
 #[cfg(feature = "nixos")]
 fn run_upgrade(branch: Option<String>) {
-    use std::process::{Command, exit};
-    let mut cmd = Command::new("/bin/sh");
-    cmd.arg("-c");
-    // Pass the branch as $1 to the script
+    use std::process::{exit, Command};
+
+    // Write the embedded script to a temp file so it can be executed directly
+    // This ensures `$0` in the script is the actual file path (not "sh"),
+    // which is required for the `exec sudo "$0" "$@"` privilege escalation
     let script = include_str!("../nix/nifty-upgrade.sh");
-    cmd.arg(script);
-    cmd.arg("sh"); // $0
+    let tmp = std::env::temp_dir().join("nifty-upgrade.sh");
+    std::fs::write(&tmp, script).expect("failed to write temp file");
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
+        .expect("failed to chmod temp file");
+
+    let mut cmd = Command::new(&tmp);
+    cmd.env("TMPDIR", "/var/tmp");
     if let Some(b) = branch {
-        cmd.arg(b); // $1
+        cmd.arg(b);
     }
     let status = cmd.status().expect("failed to execute upgrade script");
     exit(status.code().unwrap_or(1));

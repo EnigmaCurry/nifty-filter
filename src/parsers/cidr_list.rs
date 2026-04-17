@@ -15,10 +15,7 @@ impl CidrList {
             let cidrs = input
                 .split(',')
                 .map(str::trim)
-                .map(|s| {
-                    IpNetwork::from_str(s)
-                        .map_err(|_| format!("Invalid CIDR range: '{}'", s))
-                })
+                .map(|s| IpNetwork::from_str(s).map_err(|_| format!("Invalid CIDR range: '{}'", s)))
                 .collect::<Result<Vec<IpNetwork>, _>>()?;
             Ok(Self { cidrs })
         }

@@ -76,16 +76,21 @@ impl EnvFile {
                     } else {
                         writeln!(content, "{}={}", k, v)
                     }
-                },
+                }
                 Line::Other(s) => writeln!(content, "{}", s),
             }
             .unwrap();
         }
         let tmp = self.path.with_extension("tmp");
-        fs::write(&tmp, &content)
-            .map_err(|e| format!("Cannot write {}: {}", tmp.display(), e))?;
-        fs::rename(&tmp, &self.path)
-            .map_err(|e| format!("Cannot rename {} -> {}: {}", tmp.display(), self.path.display(), e))?;
+        fs::write(&tmp, &content).map_err(|e| format!("Cannot write {}: {}", tmp.display(), e))?;
+        fs::rename(&tmp, &self.path).map_err(|e| {
+            format!(
+                "Cannot rename {} -> {}: {}",
+                tmp.display(),
+                self.path.display(),
+                e
+            )
+        })?;
         Ok(())
     }
 

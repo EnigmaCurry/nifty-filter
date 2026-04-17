@@ -42,7 +42,11 @@ fn pool_size_ipv4(start: &str, end: &str) -> Option<u64> {
     let e: std::net::Ipv4Addr = end.parse().ok()?;
     let s = u32::from(s);
     let e = u32::from(e);
-    if e >= s { Some((e - s + 1) as u64) } else { None }
+    if e >= s {
+        Some((e - s + 1) as u64)
+    } else {
+        None
+    }
 }
 
 fn pool_size_ipv6(start: &str, end: &str) -> Option<u128> {
@@ -50,7 +54,11 @@ fn pool_size_ipv6(start: &str, end: &str) -> Option<u128> {
     let e: std::net::Ipv6Addr = end.parse().ok()?;
     let s = u128::from(s);
     let e = u128::from(e);
-    if e >= s { Some(e - s + 1) } else { None }
+    if e >= s {
+        Some(e - s + 1)
+    } else {
+        None
+    }
 }
 
 fn pool_label_v4(start: &str, end: &str) -> String {
@@ -79,7 +87,11 @@ fn format_count(n: u128) -> String {
     } else if n < 1_000_000_000_000_000 {
         format!("{:.1}T", n as f64 / 1_000_000_000_000.0)
     } else {
-        format!("{:.1}e{}", n as f64 / 10f64.powi(n.ilog10() as i32), n.ilog10())
+        format!(
+            "{:.1}e{}",
+            n as f64 / 10f64.powi(n.ilog10() as i32),
+            n.ilog10()
+        )
     }
 }
 
@@ -227,7 +239,10 @@ fn toggle_ipv6(env: &mut EnvFile) {
         // Add IPv6 DNS servers if still using IPv4-only defaults
         let dns = env.get("DHCP_DNS").to_string();
         if dns == "1.1.1.1, 1.0.0.1" {
-            env.set("DHCP_DNS", "1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001");
+            env.set(
+                "DHCP_DNS",
+                "1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001",
+            );
             println!("  Added IPv6 DNS servers (Cloudflare).");
         }
         env.save().ok();
@@ -368,7 +383,10 @@ fn toggle_dhcpv6(env: &mut EnvFile) {
         // Add IPv6 DNS servers if still using IPv4-only defaults
         let dns = env.get("DHCP_DNS").to_string();
         if dns == "1.1.1.1, 1.0.0.1" {
-            env.set("DHCP_DNS", "1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001");
+            env.set(
+                "DHCP_DNS",
+                "1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001",
+            );
             println!("  Added IPv6 DNS servers (Cloudflare).");
         }
         // Add DHCPv6 ports to UDP_ACCEPT_LAN if not already present
@@ -470,9 +488,7 @@ fn apply_changes(env: &EnvFile) {
     }
     println!("  Setting hostname...");
     let hostname = env.get("HOSTNAME");
-    let _ = Command::new("sudo")
-        .args(["hostname", hostname])
-        .status();
+    let _ = Command::new("sudo").args(["hostname", hostname]).status();
     println!("  Done.");
 }
 
@@ -512,15 +528,23 @@ fn show_status() {
             Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
             Err(_) => String::new(),
         };
-        let state = if opts.split(',').any(|o| o == "ro") { "ro" } else { "rw" };
+        let state = if opts.split(',').any(|o| o == "ro") {
+            "ro"
+        } else {
+            "rw"
+        };
         let df = Command::new("df")
             .args(["-h", "--output=used,size", mount])
             .output();
         let usage = match df {
             Ok(o) => {
                 let out = String::from_utf8_lossy(&o.stdout).to_string();
-                out.lines().nth(1).unwrap_or("").split_whitespace()
-                    .collect::<Vec<_>>().join(" / ")
+                out.lines()
+                    .nth(1)
+                    .unwrap_or("")
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" / ")
             }
             Err(_) => String::new(),
         };
@@ -591,8 +615,22 @@ fn show_config(env: &EnvFile) {
     println!("  HOSTNAME:       {}", env.get("HOSTNAME"));
     println!("  INTERFACE_WAN:  {}", env.get("INTERFACE_WAN"));
     println!("  INTERFACE_LAN:  {}", env.get("INTERFACE_LAN"));
-    println!("  ENABLE_IPV4:    {}", if env.get("ENABLE_IPV4").is_empty() { "true" } else { env.get("ENABLE_IPV4") });
-    println!("  ENABLE_IPV6:    {}", if env.get("ENABLE_IPV6").is_empty() { "false" } else { env.get("ENABLE_IPV6") });
+    println!(
+        "  ENABLE_IPV4:    {}",
+        if env.get("ENABLE_IPV4").is_empty() {
+            "true"
+        } else {
+            env.get("ENABLE_IPV4")
+        }
+    );
+    println!(
+        "  ENABLE_IPV6:    {}",
+        if env.get("ENABLE_IPV6").is_empty() {
+            "false"
+        } else {
+            env.get("ENABLE_IPV6")
+        }
+    );
     println!("  SUBNET_LAN:     {}", subnet_label(env.get("SUBNET_LAN")));
     let ipv6_subnet = env.get("SUBNET_LAN_IPV6");
     if !ipv6_subnet.is_empty() {
@@ -638,7 +676,11 @@ fn list_interfaces() -> Vec<String> {
         .lines()
         .filter_map(|line| {
             let name = line.split(':').nth(1)?.trim().to_string();
-            if name == "lo" { None } else { Some(name) }
+            if name == "lo" {
+                None
+            } else {
+                Some(name)
+            }
         })
         .collect()
 }
@@ -680,7 +722,9 @@ fn reset_config() -> Option<EnvFile> {
             Ok(v) if v.trim().eq_ignore_ascii_case("reset") => break,
             Ok(v) if v.trim().eq_ignore_ascii_case("cancel") => return None,
             Ok(_) => continue,
-            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => return None,
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+                return None
+            }
             Err(_) => return None,
         }
     }
@@ -691,8 +735,11 @@ fn reset_config() -> Option<EnvFile> {
     println!();
     println!("==> Configure hostname:");
     let hostname = prompt_validated("Hostname for this router", "nifty-filter", |v| {
-        if hostname_re.is_match(v) { None }
-        else { Some("Invalid hostname. Must be 1-63 chars: letters, digits, hyphens.") }
+        if hostname_re.is_match(v) {
+            None
+        } else {
+            Some("Invalid hostname. Must be 1-63 chars: letters, digits, hyphens.")
+        }
     })?;
 
     // Interfaces
@@ -700,11 +747,18 @@ fn reset_config() -> Option<EnvFile> {
     println!("==> Configure network interfaces:");
     let ifaces = list_interfaces();
     if ifaces.len() < 2 {
-        println!("  Need at least 2 network interfaces (found {}).", ifaces.len());
+        println!(
+            "  Need at least 2 network interfaces (found {}).",
+            ifaces.len()
+        );
         return None;
     }
 
-    let wan_choice = choose("Select WAN interface (upstream/internet):", ifaces.clone(), 0)?;
+    let wan_choice = choose(
+        "Select WAN interface (upstream/internet):",
+        ifaces.clone(),
+        0,
+    )?;
     let wan_iface = wan_choice.1;
     println!("  WAN: {wan_iface} -> wan");
 
@@ -725,12 +779,23 @@ fn reset_config() -> Option<EnvFile> {
     println!();
     println!("==> Configure LAN network:");
     let subnet_lan = prompt_validated("LAN subnet (IP/prefix)", "10.99.0.1/24", |v| {
-        if v.contains('/') && v.parse::<IpNetwork>().is_ok() { None }
-        else { Some("Invalid subnet. Use CIDR notation (e.g. 10.99.0.1/24).") }
+        if v.contains('/') && v.parse::<IpNetwork>().is_ok() {
+            None
+        } else {
+            Some("Invalid subnet. Use CIDR notation (e.g. 10.99.0.1/24).")
+        }
     })?;
 
-    let router_ip = subnet_lan.split_once('/').map(|(ip, _)| ip).unwrap_or(&subnet_lan).to_string();
-    let network_base = router_ip.rsplit_once('.').map(|(base, _)| base).unwrap_or(&router_ip).to_string();
+    let router_ip = subnet_lan
+        .split_once('/')
+        .map(|(ip, _)| ip)
+        .unwrap_or(&subnet_lan)
+        .to_string();
+    let network_base = router_ip
+        .rsplit_once('.')
+        .map(|(base, _)| base)
+        .unwrap_or(&router_ip)
+        .to_string();
     let default_start = format!("{network_base}.100");
     let default_end = format!("{network_base}.250");
 
@@ -802,15 +867,19 @@ DHCPV6_POOL_END=
     fs::write(
         format!("{network_dir}/10-wan.link"),
         format!("[Match]\nMACAddress={wan_mac}\n\n[Link]\nName=wan\n"),
-    ).ok();
+    )
+    .ok();
     fs::write(
         format!("{network_dir}/10-lan.link"),
         format!("[Match]\nMACAddress={lan_mac}\n\n[Link]\nName=lan\n"),
-    ).ok();
+    )
+    .ok();
 
     fs::write(ENV_FILE, &env_content).ok();
     let _ = Command::new("chmod").args(["0600", ENV_FILE]).status();
-    let _ = Command::new("sudo").args(["rm", "-f", "/var/lib/dnsmasq/dnsmasq.leases"]).status();
+    let _ = Command::new("sudo")
+        .args(["rm", "-f", "/var/lib/dnsmasq/dnsmasq.leases"])
+        .status();
 
     println!();
     println!("  Configuration reset. Apply changes or reboot to activate.");
@@ -856,11 +925,21 @@ fn menu_network(env: &mut EnvFile) {
         items.push("Back".to_string());
 
         match choose("Network:", items, cursor) {
-            Some((idx, choice)) if choice.starts_with("Hostname") => { cursor = idx; edit_hostname(env) }
-            Some((idx, choice)) if choice.starts_with("LAN IPv4 subnet") => { cursor = idx; edit_subnet(env) }
-            Some((idx, choice)) if choice.starts_with("LAN IPv6 subnet") => { cursor = idx; edit_subnet_ipv6(env) }
+            Some((idx, choice)) if choice.starts_with("Hostname") => {
+                cursor = idx;
+                edit_hostname(env)
+            }
+            Some((idx, choice)) if choice.starts_with("LAN IPv4 subnet") => {
+                cursor = idx;
+                edit_subnet(env)
+            }
+            Some((idx, choice)) if choice.starts_with("LAN IPv6 subnet") => {
+                cursor = idx;
+                edit_subnet_ipv6(env)
+            }
             Some((idx, choice)) if choice == "Enable IPv6" || choice == "Disable IPv6" => {
-                cursor = idx; toggle_ipv6(env)
+                cursor = idx;
+                toggle_ipv6(env)
             }
             Some((_, choice)) if choice == "Back" => break,
             _ => break,
@@ -893,19 +972,29 @@ fn menu_firewall(env: &mut EnvFile) {
 
         match choose("Firewall:", items, cursor) {
             Some((idx, choice)) if choice.starts_with("TCP ports LAN") => {
-                cursor = idx; edit_ports(env, "TCP_ACCEPT_LAN", "TCP ports LAN")
+                cursor = idx;
+                edit_ports(env, "TCP_ACCEPT_LAN", "TCP ports LAN")
             }
             Some((idx, choice)) if choice.starts_with("UDP ports LAN") => {
-                cursor = idx; edit_ports(env, "UDP_ACCEPT_LAN", "UDP ports LAN")
+                cursor = idx;
+                edit_ports(env, "UDP_ACCEPT_LAN", "UDP ports LAN")
             }
             Some((idx, choice)) if choice.starts_with("TCP ports WAN") => {
-                cursor = idx; edit_ports(env, "TCP_ACCEPT_WAN", "TCP ports WAN")
+                cursor = idx;
+                edit_ports(env, "TCP_ACCEPT_WAN", "TCP ports WAN")
             }
             Some((idx, choice)) if choice.starts_with("UDP ports WAN") => {
-                cursor = idx; edit_ports(env, "UDP_ACCEPT_WAN", "UDP ports WAN")
+                cursor = idx;
+                edit_ports(env, "UDP_ACCEPT_WAN", "UDP ports WAN")
             }
-            Some((idx, choice)) if choice.starts_with("Egress filter IPv4") => { cursor = idx; edit_egress_ipv4(env) }
-            Some((idx, choice)) if choice.starts_with("Egress filter IPv6") => { cursor = idx; edit_egress_ipv6(env) }
+            Some((idx, choice)) if choice.starts_with("Egress filter IPv4") => {
+                cursor = idx;
+                edit_egress_ipv4(env)
+            }
+            Some((idx, choice)) if choice.starts_with("Egress filter IPv6") => {
+                cursor = idx;
+                edit_egress_ipv6(env)
+            }
             Some((_, choice)) if choice == "Back" => break,
             _ => break,
         }
@@ -925,16 +1014,20 @@ fn menu_port_forwarding(env: &mut EnvFile) {
 
         match choose("Port Forwarding:", items, cursor) {
             Some((idx, choice)) if choice.starts_with("TCP forward LAN") => {
-                cursor = idx; edit_forwards(env, "TCP_FORWARD_LAN", "TCP forward LAN")
+                cursor = idx;
+                edit_forwards(env, "TCP_FORWARD_LAN", "TCP forward LAN")
             }
             Some((idx, choice)) if choice.starts_with("UDP forward LAN") => {
-                cursor = idx; edit_forwards(env, "UDP_FORWARD_LAN", "UDP forward LAN")
+                cursor = idx;
+                edit_forwards(env, "UDP_FORWARD_LAN", "UDP forward LAN")
             }
             Some((idx, choice)) if choice.starts_with("TCP forward WAN") => {
-                cursor = idx; edit_forwards(env, "TCP_FORWARD_WAN", "TCP forward WAN")
+                cursor = idx;
+                edit_forwards(env, "TCP_FORWARD_WAN", "TCP forward WAN")
             }
             Some((idx, choice)) if choice.starts_with("UDP forward WAN") => {
-                cursor = idx; edit_forwards(env, "UDP_FORWARD_WAN", "UDP forward WAN")
+                cursor = idx;
+                edit_forwards(env, "UDP_FORWARD_WAN", "UDP forward WAN")
             }
             Some((_, choice)) if choice == "Back" => break,
             _ => break,
@@ -956,9 +1049,7 @@ fn menu_dhcp_dns(env: &mut EnvFile) {
             "Enable DHCPv4"
         };
 
-        let mut items = vec![
-            dhcp4_label.to_string(),
-        ];
+        let mut items = vec![dhcp4_label.to_string()];
         if dhcp4_enabled {
             items.push(format!(
                 "DHCP pool ({})",
@@ -984,14 +1075,25 @@ fn menu_dhcp_dns(env: &mut EnvFile) {
 
         match choose("DHCP / DNS:", items, cursor) {
             Some((idx, choice)) if choice == "Enable DHCPv4" || choice == "Disable DHCPv4" => {
-                cursor = idx; toggle_dhcp4(env)
+                cursor = idx;
+                toggle_dhcp4(env)
             }
-            Some((idx, choice)) if choice.starts_with("DHCP pool") => { cursor = idx; edit_dhcp_pool(env) }
-            Some((idx, choice)) if choice.starts_with("DNS servers") => { cursor = idx; edit_dns(env) }
+            Some((idx, choice)) if choice.starts_with("DHCP pool") => {
+                cursor = idx;
+                edit_dhcp_pool(env)
+            }
+            Some((idx, choice)) if choice.starts_with("DNS servers") => {
+                cursor = idx;
+                edit_dns(env)
+            }
             Some((idx, choice)) if choice == "Enable DHCPv6" || choice == "Disable DHCPv6" => {
-                cursor = idx; toggle_dhcpv6(env)
+                cursor = idx;
+                toggle_dhcpv6(env)
             }
-            Some((idx, choice)) if choice.starts_with("DHCPv6 pool") => { cursor = idx; edit_dhcpv6_pool(env) }
+            Some((idx, choice)) if choice.starts_with("DHCPv6 pool") => {
+                cursor = idx;
+                edit_dhcpv6_pool(env)
+            }
             Some((_, choice)) if choice == "Back" => break,
             _ => break,
         }
@@ -1035,37 +1137,42 @@ pub fn run() {
         ];
 
         match choose("nifty-filter configuration:", items, cursor) {
-            Some((idx, choice)) => { cursor = idx; match choice.as_str() {
-                "Show config" => show_config(&env),
-                "Show status" => show_status(),
-                "Show logs" => menu_logs(),
-                "Network" => menu_network(&mut env),
-                "Firewall" => menu_firewall(&mut env),
-                "Port forwarding" => menu_port_forwarding(&mut env),
-                "DHCP / DNS" => menu_dhcp_dns(&mut env),
-                "Enable firewall" | "Disable firewall" => toggle_enabled(&mut env),
-                "Apply changes" => apply_changes(&env),
-                "Edit nifty-filter.env" => {
-                    launch_editor(ENV_FILE);
-                    if let Err(e) = env.reload() {
-                        eprintln!("  Warning: {e}");
-                    }
-                }
-                "Reset config" => {
-                    if let Some(new_env) = reset_config() {
-                        env = new_env;
-                    }
-                }
-                "Reboot" => {
-                    if let Some(v) = prompt_text("Reboot now? (yes/no)", "no") {
-                        if v.trim().eq_ignore_ascii_case("yes") || v.trim().eq_ignore_ascii_case("y") {
-                            let _ = Command::new("sudo").args(["systemctl", "reboot"]).status();
+            Some((idx, choice)) => {
+                cursor = idx;
+                match choice.as_str() {
+                    "Show config" => show_config(&env),
+                    "Show status" => show_status(),
+                    "Show logs" => menu_logs(),
+                    "Network" => menu_network(&mut env),
+                    "Firewall" => menu_firewall(&mut env),
+                    "Port forwarding" => menu_port_forwarding(&mut env),
+                    "DHCP / DNS" => menu_dhcp_dns(&mut env),
+                    "Enable firewall" | "Disable firewall" => toggle_enabled(&mut env),
+                    "Apply changes" => apply_changes(&env),
+                    "Edit nifty-filter.env" => {
+                        launch_editor(ENV_FILE);
+                        if let Err(e) = env.reload() {
+                            eprintln!("  Warning: {e}");
                         }
                     }
+                    "Reset config" => {
+                        if let Some(new_env) = reset_config() {
+                            env = new_env;
+                        }
+                    }
+                    "Reboot" => {
+                        if let Some(v) = prompt_text("Reboot now? (yes/no)", "no") {
+                            if v.trim().eq_ignore_ascii_case("yes")
+                                || v.trim().eq_ignore_ascii_case("y")
+                            {
+                                let _ = Command::new("sudo").args(["systemctl", "reboot"]).status();
+                            }
+                        }
+                    }
+                    "Quit" => break,
+                    _ => {}
                 }
-                "Quit" => break,
-                _ => {}
-            }},
+            }
             None => break, // ESC at main menu = quit
         }
     }
