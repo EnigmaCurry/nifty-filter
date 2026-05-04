@@ -3,10 +3,9 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    script-wizard.url = "github:EnigmaCurry/script-wizard/master";
   };
 
-  outputs = { self, nixpkgs, script-wizard }:
+  outputs = { self, nixpkgs }:
     let
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
@@ -15,9 +14,7 @@
       # Build a NixOS system with nifty-filter for a given architecture
       mkRouterSystem = system: nixpkgs.lib.nixosSystem {
         inherit system;
-        specialArgs = {
-          scriptWizard = script-wizard.packages.${system}.default;
-        };
+        specialArgs = {};
         modules = [
           self.nixosModules.default
           ./nix/system.nix
@@ -26,25 +23,26 @@
       };
 
       version = self.shortRev or "dirty";
+      gitBranch = builtins.getEnv "NIFTY_BUILD_BRANCH";
 
       # Build an ISO image for a given architecture.
       # The ISO embeds the installed system closure so the installer
       # can copy it to disk (the ISO's own system boots from squashfs
       # and can't be used as a disk-based system).
-      mkRouterIso = system:
+      mkRouterIso = { system, extraModules ? [] }:
         let
           installedSystem = mkRouterSystem system;
           installedToplevel = installedSystem.config.system.build.toplevel;
-          scriptWizard = script-wizard.packages.${system}.default;
+          nifty-filter-pkg = self.packages.${system}.nifty-filter;
         in
         nixpkgs.lib.nixosSystem {
           inherit system;
-          specialArgs = { inherit version installedToplevel scriptWizard; };
+          specialArgs = { inherit version installedToplevel gitBranch nifty-filter-pkg; };
           modules = [
             self.nixosModules.default
             ./nix/system.nix
             ./nix/iso.nix
-          ];
+          ] ++ extraModules;
         };
     in
     {
@@ -56,6 +54,8 @@
             version = "0.1.1";
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
+            buildFeatures = [ "nixos" ];
+            GIT_SHA = version;
             meta = {
               description = "A nifty tool to configure netfilter/nftables";
               license = pkgs.lib.licenses.mit;
@@ -63,7 +63,8 @@
             };
           };
 
-          iso = (mkRouterIso system).config.system.build.isoImage;
+          iso = (mkRouterIso { inherit system; }).config.system.build.isoImage;
+          iso-big = (mkRouterIso { inherit system; extraModules = [ ./nix/iso-big.nix ]; }).config.system.build.isoImage;
 
           default = self.packages.${system}.nifty-filter;
         }

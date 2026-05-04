@@ -1,9 +1,9 @@
-# NixOS module for nifty-filter (immutable system model)
+# NixOS module for nifty-filter (read-only system model)
 #
-# The system root is read-only. Router configuration lives as an env file
+# The system root is read-only. Configuration lives as an env file
 # on the writable /var partition:
 #
-#   /var/nifty-filter/router.env
+#   /var/nifty-filter/nifty-filter.env
 #
 # A systemd service reads this file at boot and applies the nftables ruleset.
 # To reconfigure the router: edit the env file and reboot.
@@ -18,7 +18,7 @@ let
   nifty-filter = self.packages.${pkgs.system}.nifty-filter;
 
   configDir = "/var/nifty-filter";
-  envFile = "${configDir}/router.env";
+  envFile = "${configDir}/nifty-filter.env";
 
 in
 {
@@ -28,7 +28,7 @@ in
     configPath = mkOption {
       type = types.str;
       default = envFile;
-      description = "Path to the router.env configuration file on the writable partition.";
+      description = "Path to the nifty-filter.env configuration file on the writable partition.";
     };
   };
 
@@ -40,8 +40,12 @@ in
     networking.nftables.enable = true;
 
     # IP forwarding (it's a router)
+    # IPv6 forwarding is set per-interface (not all.forwarding) so that
+    # the WAN interface can still accept Router Advertisements.
+    # all.forwarding=1 forces accept_ra=0 on every interface, breaking DHCPv6-PD.
     boot.kernel.sysctl = {
       "net.ipv4.ip_forward" = 1;
+      "net.ipv6.conf.default.forwarding" = 1;
     };
 
     # Make the binary available system-wide
@@ -59,7 +63,7 @@ in
       };
       script = ''
         mkdir -p ${configDir}
-        cp ${./default-router.env} ${cfg.configPath}
+        cp ${./default-nifty-filter.env} ${cfg.configPath}
         chmod 0600 ${cfg.configPath}
         mkdir -p ${configDir}/ssh
       '';
@@ -85,7 +89,7 @@ in
           echo "ERROR: ${cfg.configPath} not found. Applying emergency lockdown rules."
           ${pkgs.nftables}/bin/nft -f - <<'LOCKDOWN'
         flush ruleset
-        table ip filter {
+        table inet filter {
           chain input {
             type filter hook input priority 0; policy drop;
             ct state established,related accept
@@ -104,7 +108,7 @@ in
         fi
 
         # Check ENABLED flag
-        ENABLED=$(${pkgs.gnugrep}/bin/grep -oP '^ENABLED=\K.*' ${cfg.configPath} || echo "false")
+        ENABLED=$(${pkgs.gnugrep}/bin/grep -oP '^ENABLED=\K.*' ${cfg.configPath} | ${pkgs.gnused}/bin/sed "s/^\([\"']\)\(.*\)\1$/\2/" || echo "false")
         if [ "$ENABLED" != "true" ]; then
           echo ""
           echo "============================================"

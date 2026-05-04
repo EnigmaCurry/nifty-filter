@@ -1,14 +1,25 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # nifty-upgrade — upgrade the system in place
 #
 # Temporarily remounts filesystems read-write, pulls the latest source,
 # builds the system, updates boot entries, and reboots into the new system.
-set -euo pipefail
+set -eu
 
 REPO_DIR="/var/nifty-filter/src"
 REPO_REMOTE=""
+BRANCH_FILE="/var/nifty-filter/branch"
+REQUESTED_BRANCH="${1:-}"
 
-[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+[ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
+
+# Determine target branch: arg > saved branch > master
+if [ -n "$REQUESTED_BRANCH" ]; then
+    TARGET_BRANCH="$REQUESTED_BRANCH"
+elif [ -f "$BRANCH_FILE" ]; then
+    TARGET_BRANCH=$(cat "$BRANCH_FILE")
+else
+    TARGET_BRANCH="master"
+fi
 
 # Ensure filesystems are writable
 echo "==> Remounting filesystems read-write..."
@@ -18,19 +29,37 @@ mount -o remount,rw /nix/store
 # Check the source repo exists
 if [ ! -d "$REPO_DIR/.git" ]; then
     REPO_REMOTE=$(git -C /var/nifty-filter remote get-url origin 2>/dev/null || echo "https://github.com/EnigmaCurry/nifty-filter")
-    echo "==> Cloning source repo from $REPO_REMOTE..."
-    git clone "$REPO_REMOTE" "$REPO_DIR"
+    echo "==> Cloning source repo from $REPO_REMOTE (branch: $TARGET_BRANCH)..."
+    git clone -b "$TARGET_BRANCH" "$REPO_REMOTE" "$REPO_DIR"
     chown -R 1000:100 "$REPO_DIR"
 fi
 
-echo "==> Pulling latest source..."
 cd "$REPO_DIR"
-BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
-if [ "$BRANCH" != "master" ]; then
-    git fetch origin master
-    git checkout master
+CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+# Confirm if switching branches
+if [ "$CURRENT_BRANCH" != "$TARGET_BRANCH" ]; then
+    echo "Currently on branch '$CURRENT_BRANCH', upgrading to '$TARGET_BRANCH'."
+    printf "Continue? [y/N] "
+    read -r confirm
+    case "$confirm" in
+        [Yy]*) ;;
+        *)
+            echo "Aborted."
+            mount -o remount,ro /nix/store 2>/dev/null || true
+            mount -o remount,ro / 2>/dev/null || true
+            exit 0
+            ;;
+    esac
+    git fetch origin "$TARGET_BRANCH"
+    git checkout "$TARGET_BRANCH"
 fi
+
+echo "==> Pulling latest source (branch: $TARGET_BRANCH)..."
 git pull
+
+# Save the branch for future upgrades
+echo "$TARGET_BRANCH" > "$BRANCH_FILE"
 
 echo "==> Building system closure..."
 export TMPDIR=/var/tmp

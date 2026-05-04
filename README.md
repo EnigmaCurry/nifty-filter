@@ -1,6 +1,6 @@
 # nifty-filter
 
-nifty-filter is an immutable NixOS router distribution with an
+nifty-filter is a declarative NixOS router distribution with an
 nftables firewall, DHCP, and DNS. Configuration is driven entirely by
 env files on the writable `/var` partition. The root filesystem is
 read-only.
@@ -61,6 +61,51 @@ The installer prompts for:
 Interfaces are renamed to `wan` and `lan` by MAC address so the
 configuration is portable across hardware. The system powers off after
 install — remove the media and power on.
+
+### Proxmox VE install
+
+`pve-install` builds the ISO, uploads it to a PVE host, and creates a
+VM. Each NIC argument is either a bridge name (`vmbr*`) for a virtual
+NIC or a PCI device ID for passthrough:
+
+```bash
+just pve-install <pve-host> <vmid> <name> <nic> [<nic>...]
+```
+
+Virtual NICs only:
+
+```bash
+just pve-install pve.local 100 nifty-filter vmbr0 vmbr1
+```
+
+PCI passthrough only:
+
+```bash
+just pve-install pve.local 100 nifty-filter 57:00.0 59:00.0 5a:00.0
+```
+
+Mixed (virtual management NIC + PCI passthrough):
+
+```bash
+just pve-install pve.local 100 nifty-filter vmbr0 57:00.0 59:00.0
+```
+
+The VM is created with:
+
+ * q35 machine type with UEFI (OVMF)
+ * 2 cores, 2GB RAM, 16GB virtio-scsi disk
+ * Virtual NICs on specified bridges
+ * PCI devices passed through with PCIe enabled
+ * Serial console (no VGA)
+
+After the VM starts, SSH in and run `nifty-install` to install to
+disk. Once installed, eject the ISO and reboot:
+
+```bash
+just pve-eject-iso <pve-host> <vmid>
+```
+
+Then reboot the VM.
 
 ### 4. Configure
 

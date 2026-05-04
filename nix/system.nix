@@ -1,10 +1,16 @@
-# Immutable NixOS router system
+# Read-only NixOS router system
 #
 # Root filesystem is read-only. All mutable state lives on /var.
-# Router configuration: /var/nifty-filter/router.env
-# To reconfigure: edit the env file and reboot.
-{ config, pkgs, lib, scriptWizard ? null, ... }:
+# Configuration: /var/nifty-filter/nifty-filter.env
+# To reconfigure: run nifty-config
+{ config, pkgs, lib, ... }:
 
+let
+  # Shell function to read a value from an env file, stripping surrounding quotes
+  envget = ''
+    envget() { grep -oP "^$1=\K.*" "$2" 2>/dev/null | sed "s/^\([\"']\)\(.*\)\1$/\2/"; }
+  '';
+in
 {
   system.stateVersion = "25.05";
   networking.hostName = "nifty-filter";
@@ -14,6 +20,9 @@
   boot.loader.systemd-boot.enable = lib.mkDefault true;
   boot.loader.efi.canTouchEfiVariables = lib.mkDefault false;
   boot.kernelPackages = pkgs.linuxPackages_latest;
+
+  # Serial console support (works alongside VGA)
+  boot.kernelParams = [ "console=tty0" "console=ttyS0,115200n8" ];
 
   # Include common disk/filesystem drivers in initrd
   boot.initrd.availableKernelModules = [
@@ -29,25 +38,29 @@
     "sr_mod"
   ];
 
-  # Disable nix operations on the immutable system
+  # Disable nix operations on the read-only system
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   nix.gc.automatic = false;
 
-  # --- Nifty-filter firewall (reads /var/nifty-filter/router.env at boot) ---
+  # --- Nifty-filter firewall (reads /var/nifty-filter/nifty-filter.env at boot) ---
   services.nifty-filter.enable = true;
 
-  # Set hostname from /var/nifty-filter/router.env at boot
+  # Set hostname from /var/nifty-filter/nifty-filter.env at boot
   systemd.services.nifty-hostname = {
-    description = "Set hostname from router.env";
+    description = "Set hostname from nifty-filter.env";
     wantedBy = [ "sysinit.target" ];
     before = [ "network-pre.target" ];
     unitConfig.DefaultDependencies = false;
-    serviceConfig.Type = "oneshot";
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
     path = [ pkgs.hostname pkgs.gnugrep ];
     script = let d = "$"; in ''
-      ENV_FILE="/var/nifty-filter/router.env"
+      ${envget}
+      ENV_FILE="/var/nifty-filter/nifty-filter.env"
       if [ -f "${d}ENV_FILE" ]; then
-        NAME=${d}(grep -oP '^HOSTNAME=\K.*' "${d}ENV_FILE" || echo "")
+        NAME=${d}(envget HOSTNAME "${d}ENV_FILE")
         if [ -n "${d}NAME" ]; then
           hostname "${d}NAME"
         fi
@@ -56,10 +69,27 @@
   };
 
   # --- Networking ---
-  # Interfaces are configured dynamically at boot from /var/nifty-filter/router.env
-  # and /var/nifty-filter/dhcp.env. No hardcoded interface names.
+  # Interfaces are configured dynamically at boot from /var/nifty-filter/nifty-filter.env
+  # No hardcoded interface names.
   # Interface rename rules (.link files) are in /var/nifty-filter/network/
   networking.useDHCP = false;
+
+  # Remount root read-only after NixOS activation completes
+  systemd.services.nifty-ro = {
+    description = "Remount root filesystem read-only";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "systemd-tmpfiles-setup.service" ];
+    unitConfig.ConditionKernelCommandLine = "!nifty.maintenance=1";
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      if ${pkgs.util-linux}/bin/findmnt -n -t ext4 / > /dev/null 2>&1; then
+        ${pkgs.util-linux}/bin/mount -o remount,ro /
+      fi
+    '';
+  };
 
   # In maintenance mode, remount /nix/store as read-write
   systemd.services.nifty-maintenance-rw = {
@@ -107,47 +137,137 @@
       Type = "oneshot";
       RemainAfterExit = true;
     };
-    path = [ pkgs.iproute2 pkgs.systemd pkgs.gnugrep ];
+    path = [ pkgs.iproute2 pkgs.systemd pkgs.gnugrep pkgs.gnused ];
     script = let d = "$"; in ''
-      ENV_FILE="/var/nifty-filter/router.env"
+      ${envget}
+      ENV_FILE="/var/nifty-filter/nifty-filter.env"
       if [ ! -f "${d}ENV_FILE" ]; then
-        echo "No router.env found, skipping network config"
+        echo "No nifty-filter.env found, skipping network config"
         exit 0
       fi
 
-      ENABLED=${d}(grep -oP '^ENABLED=\K.*' "${d}ENV_FILE" || echo "false")
+      ENABLED=${d}(envget ENABLED "${d}ENV_FILE")
+      ENABLED=${d}{ENABLED:-false}
       if [ "${d}ENABLED" != "true" ]; then
         echo "nifty-filter not enabled, skipping network config"
         exit 0
       fi
 
-      INTERFACE_WAN=${d}(grep -oP '^INTERFACE_WAN=\K.*' "${d}ENV_FILE")
-      INTERFACE_LAN=${d}(grep -oP '^INTERFACE_LAN=\K.*' "${d}ENV_FILE")
-      SUBNET_LAN=${d}(grep -oP '^SUBNET_LAN=\K.*' "${d}ENV_FILE")
+      INTERFACE_WAN=${d}(envget INTERFACE_WAN "${d}ENV_FILE")
+      INTERFACE_LAN=${d}(envget INTERFACE_LAN "${d}ENV_FILE")
+      ENABLE_IPV4=${d}(envget ENABLE_IPV4 "${d}ENV_FILE")
+      ENABLE_IPV4=${d}{ENABLE_IPV4:-true}
+      ENABLE_IPV6=${d}(envget ENABLE_IPV6 "${d}ENV_FILE")
+      ENABLE_IPV6=${d}{ENABLE_IPV6:-false}
+
+      # IPv4 subnet: prefer SUBNET_LAN_IPV4, fall back to SUBNET_LAN
+      SUBNET_LAN_IPV4=${d}(envget SUBNET_LAN_IPV4 "${d}ENV_FILE")
+      [ -z "${d}SUBNET_LAN_IPV4" ] && SUBNET_LAN_IPV4=${d}(envget SUBNET_LAN "${d}ENV_FILE")
+      SUBNET_LAN_IPV6=${d}(envget SUBNET_LAN_IPV6 "${d}ENV_FILE")
 
       # Bring up WAN with DHCP
       ip link set "${d}INTERFACE_WAN" up
       mkdir -p /run/systemd/network
+
+      WAN_NETWORK="[Network]"
+      if [ "${d}ENABLE_IPV4" = "true" ]; then
+        WAN_NETWORK="${d}WAN_NETWORK
+      DHCP=ipv4"
+      fi
+      if [ "${d}ENABLE_IPV6" = "true" ]; then
+        WAN_NETWORK="${d}WAN_NETWORK
+      IPv6AcceptRA=yes
+      IPv6Forwarding=no"
+      fi
+
       cat > /run/systemd/network/10-wan.network <<NETEOF
       [Match]
       Name=${d}INTERFACE_WAN
 
-      [Network]
-      DHCP=ipv4
+      ${d}WAN_NETWORK
 
       [DHCPv4]
       UseDNS=yes
+
+      [IPv6AcceptRA]
+      UseDNS=yes
+      DHCPv6Client=always
+
+      [DHCPv6]
+      UseDNS=no
+      PrefixDelegationHint=::/60
       NETEOF
 
-      # Bring up LAN with static IP
+      # Ensure WAN accepts RAs despite forwarding (must override after networkd)
+      if [ "${d}ENABLE_IPV6" = "true" ]; then
+        mkdir -p /etc/systemd/system/systemd-networkd.service.d
+        cat > /etc/systemd/system/systemd-networkd.service.d/accept-ra.conf <<RAEOF
+      [Service]
+      ExecStartPost=/bin/sh -c 'sleep 1 && /run/current-system/sw/bin/sysctl -w net.ipv6.conf.${d}INTERFACE_WAN.accept_ra=2 net.ipv6.conf.${d}INTERFACE_WAN.forwarding=0'
+      RAEOF
+        systemctl daemon-reload
+      fi
+
+      # Bring up LAN with static IP(s)
       ip link set "${d}INTERFACE_LAN" up
+
+      LAN_NETWORK="[Network]"
+      if [ "${d}ENABLE_IPV4" = "true" ] && [ -n "${d}SUBNET_LAN_IPV4" ]; then
+        LAN_NETWORK="${d}LAN_NETWORK
+      Address=${d}SUBNET_LAN_IPV4"
+      fi
+      if [ "${d}ENABLE_IPV6" = "true" ] && [ -n "${d}SUBNET_LAN_IPV6" ]; then
+        LAN_NETWORK="${d}LAN_NETWORK
+      Address=${d}SUBNET_LAN_IPV6
+      IPv6SendRA=yes"
+      fi
+
       cat > /run/systemd/network/10-lan.network <<NETEOF
       [Match]
       Name=${d}INTERFACE_LAN
 
-      [Network]
-      Address=${d}SUBNET_LAN
+      ${d}LAN_NETWORK
       NETEOF
+
+      # Add IPv6 prefix for Router Advertisements if IPv6 is enabled on LAN
+      if [ "${d}ENABLE_IPV6" = "true" ] && [ -n "${d}SUBNET_LAN_IPV6" ]; then
+        DHCPV6_ENABLED=${d}(envget DHCPV6_ENABLED "${d}ENV_FILE")
+        DHCPV6_ENABLED=${d}{DHCPV6_ENABLED:-false}
+        RA_MANAGED="no"
+        RA_OTHER="no"
+        if [ "${d}DHCPV6_ENABLED" = "true" ]; then
+          RA_MANAGED="yes"
+          RA_OTHER="yes"
+        fi
+        RA_AUTONOMOUS="yes"
+        if [ "${d}DHCPV6_ENABLED" = "true" ]; then
+          RA_AUTONOMOUS="no"
+        fi
+        cat >> /run/systemd/network/10-lan.network <<NETEOF
+
+      [IPv6SendRA]
+      Managed=${d}RA_MANAGED
+      OtherInformation=${d}RA_OTHER
+
+      [IPv6Prefix]
+      Prefix=${d}SUBNET_LAN_IPV6
+      Autonomous=${d}RA_AUTONOMOUS
+      NETEOF
+      fi
+
+      # Optional management interface (static IP, no DHCP server)
+      INTERFACE_MGMT=${d}(envget INTERFACE_MGMT "${d}ENV_FILE")
+      SUBNET_MGMT=${d}(envget SUBNET_MGMT "${d}ENV_FILE")
+      if [ -n "${d}INTERFACE_MGMT" ] && [ -n "${d}SUBNET_MGMT" ]; then
+        ip link set "${d}INTERFACE_MGMT" up
+        cat > /run/systemd/network/10-mgmt.network <<NETEOF
+      [Match]
+      Name=${d}INTERFACE_MGMT
+
+      [Network]
+      Address=${d}SUBNET_MGMT
+      NETEOF
+      fi
 
       # Restart networkd to pick up the new configs
       networkctl reload || systemctl restart systemd-networkd
@@ -164,7 +284,7 @@
   '';
 
   # --- dnsmasq: DHCP + DNS for LAN ---
-  # Config is generated at boot from /var/nifty-filter/dhcp.env
+  # Config is generated at boot from /var/nifty-filter/nifty-filter.env
   # Forwards DNS to upstream (Cloudflare by default).
   services.resolved.enable = false;
 
@@ -181,9 +301,10 @@
     };
     path = [ pkgs.gnugrep pkgs.gnused pkgs.coreutils ];
     preStart = let d = "$"; in ''
-      DHCP_ENV="/var/nifty-filter/dhcp.env"
-      if [ ! -f "${d}DHCP_ENV" ]; then
-        echo "No dhcp.env found, writing minimal DNS-only config"
+      ${envget}
+      ENV_FILE="/var/nifty-filter/nifty-filter.env"
+      if [ ! -f "${d}ENV_FILE" ]; then
+        echo "No nifty-filter.env found, writing minimal DNS-only config"
         cat > /run/dnsmasq.conf <<DNSEOF
       pid-file=/run/dnsmasq.pid
       listen-address=127.0.0.1
@@ -195,12 +316,13 @@
         exit 0
       fi
 
-      DHCP_INTERFACE=${d}(grep -oP '^DHCP_INTERFACE=\K.*' "${d}DHCP_ENV")
-      DHCP_SUBNET=${d}(grep -oP '^DHCP_SUBNET=\K.*' "${d}DHCP_ENV")
-      DHCP_POOL_START=${d}(grep -oP '^DHCP_POOL_START=\K.*' "${d}DHCP_ENV")
-      DHCP_POOL_END=${d}(grep -oP '^DHCP_POOL_END=\K.*' "${d}DHCP_ENV")
-      DHCP_ROUTER=${d}(grep -oP '^DHCP_ROUTER=\K.*' "${d}DHCP_ENV")
-      DHCP_DNS=${d}(grep -oP '^DHCP_DNS=\K.*' "${d}DHCP_ENV" || echo "1.1.1.1, 1.0.0.1")
+      DHCP_INTERFACE=${d}(envget DHCP_INTERFACE "${d}ENV_FILE")
+      DHCP_SUBNET=${d}(envget DHCP_SUBNET "${d}ENV_FILE")
+      DHCP_POOL_START=${d}(envget DHCP_POOL_START "${d}ENV_FILE")
+      DHCP_POOL_END=${d}(envget DHCP_POOL_END "${d}ENV_FILE")
+      DHCP_ROUTER=${d}(envget DHCP_ROUTER "${d}ENV_FILE")
+      DHCP_DNS=${d}(envget DHCP_DNS "${d}ENV_FILE")
+      DHCP_DNS=${d}{DHCP_DNS:-1.1.1.1, 1.0.0.1}
 
       IFS='/' read -r ROUTER_IP PREFIX <<< "${d}DHCP_SUBNET"
 
@@ -213,9 +335,12 @@
       server=${d}dns"
       done
 
+      DHCP4_ENABLED=${d}(envget DHCP4_ENABLED "${d}ENV_FILE")
+      DHCP4_ENABLED=${d}{DHCP4_ENABLED:-true}
+
       mkdir -p /var/lib/dnsmasq
       cat > /run/dnsmasq.conf <<DNSEOF
-      # Generated from /var/nifty-filter/dhcp.env
+      # Generated from /var/nifty-filter/nifty-filter.env
       pid-file=/run/dnsmasq.pid
 
       # DNS
@@ -228,18 +353,45 @@
       # Listen on LAN interface and localhost
       interface=${d}DHCP_INTERFACE
       listen-address=${d}ROUTER_IP
+      listen-address=::1
       listen-address=127.0.0.1
-      bind-interfaces
+      bind-dynamic
 
-      # DHCP
-      dhcp-range=${d}DHCP_POOL_START,${d}DHCP_POOL_END,24h
-      dhcp-option=option:router,${d}DHCP_ROUTER
-      dhcp-option=option:dns-server,${d}ROUTER_IP
       dhcp-leasefile=/var/lib/dnsmasq/dnsmasq.leases
 
       # Logging
       log-dhcp
       DNSEOF
+
+      # Add DHCPv4 range if enabled
+      if [ "${d}DHCP4_ENABLED" = "true" ]; then
+        cat >> /run/dnsmasq.conf <<DNSEOF
+
+      # DHCPv4
+      dhcp-range=${d}DHCP_POOL_START,${d}DHCP_POOL_END,24h
+      dhcp-option=option:router,${d}DHCP_ROUTER
+      dhcp-option=option:dns-server,${d}ROUTER_IP
+      DNSEOF
+      fi
+
+      # Add DHCPv6 range if enabled
+      DHCPV6_ENABLED=${d}(envget DHCPV6_ENABLED "${d}ENV_FILE")
+      DHCPV6_ENABLED=${d}{DHCPV6_ENABLED:-false}
+      if [ "${d}DHCPV6_ENABLED" = "true" ]; then
+        DHCPV6_POOL_START=${d}(envget DHCPV6_POOL_START "${d}ENV_FILE")
+        DHCPV6_POOL_END=${d}(envget DHCPV6_POOL_END "${d}ENV_FILE")
+        SUBNET_LAN_IPV6=${d}(envget SUBNET_LAN_IPV6 "${d}ENV_FILE")
+        ROUTER_IPV6=${d}(echo "${d}SUBNET_LAN_IPV6" | cut -d/ -f1)
+        if [ -n "${d}DHCPV6_POOL_START" ] && [ -n "${d}DHCPV6_POOL_END" ]; then
+          cat >> /run/dnsmasq.conf <<DNSEOF
+
+      # DHCPv6
+      dhcp-range=${d}DHCPV6_POOL_START,${d}DHCPV6_POOL_END,64,24h
+      dhcp-option=option6:dns-server,[${d}ROUTER_IPV6]
+      enable-ra
+      DNSEOF
+        fi
+      fi
     '';
   };
 
@@ -291,11 +443,10 @@
 
   # --- Minimal packages ---
   environment.systemPackages = with pkgs; [
-    (writeShellScriptBin "nifty-config" (builtins.readFile ./nifty-config.sh))
-    (writeShellScriptBin "nifty-maintenance" (builtins.readFile ./nifty-maintenance.sh))
-    (writeShellScriptBin "nifty-upgrade" (builtins.readFile ./nifty-upgrade.sh))
+    (writeShellScriptBin "nifty-config" ''exec nifty-filter config "$@"'')
+    (writeShellScriptBin "nifty-maintenance" ''exec nifty-filter maintenance "$@"'')
+    (writeShellScriptBin "nifty-upgrade" ''exec nifty-filter upgrade "$@"'')
     git
-  ] ++ lib.optional (scriptWizard != null) scriptWizard ++ [
     vim
     htop
     ethtool
@@ -322,12 +473,20 @@
     fi
   '';
 
-  # Auto-login on console in maintenance mode only
+  # Auto-login on console (SSH is primary access; console is for emergencies)
   systemd.services."getty@tty1" = {
     overrideStrategy = "asDropin";
     serviceConfig.ExecStart = lib.mkForce [
       ""  # clear default
-      "${pkgs.bash}/bin/bash -c 'if grep -q nifty.maintenance=1 /proc/cmdline; then exec ${pkgs.shadow}/bin/login -f admin; else exec ${pkgs.util-linux}/bin/agetty --noclear --keep-baud tty1 115200,38400,9600 linux; fi'"
+      "${pkgs.util-linux}/bin/agetty --autologin admin --noclear --keep-baud %I 115200,38400,9600 $TERM"
+    ];
+  };
+  # Serial console auto-login
+  systemd.services."serial-getty@ttyS0" = {
+    overrideStrategy = "asDropin";
+    serviceConfig.ExecStart = lib.mkForce [
+      ""  # clear default
+      "${pkgs.util-linux}/bin/agetty --autologin admin --keep-baud ttyS0 115200,38400,9600 vt100"
     ];
   };
   # Pre-login banner using agetty built-in escapes (works on read-only root)

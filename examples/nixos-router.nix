@@ -1,6 +1,6 @@
 # Example: using the nifty-filter NixOS module in your own system
 #
-# The module provides an immutable-friendly service that reads
+# The module provides an read-only-friendly service that reads
 # /var/nifty-filter/router.env at boot and applies nftables rules.
 #
 # In your flake.nix:

@@ -1,4 +1,4 @@
-# Immutable filesystem layout for installed systems (not the ISO)
+# Read-only filesystem layout for installed systems (not the ISO)
 #
 # Root is read-only. /var is the only writable partition.
 # Mutable paths (/home, /root) are bind-mounted from /var.
@@ -9,7 +9,6 @@
   fileSystems."/" = {
     device = "/dev/disk/by-label/NIFTY_ROOT";
     fsType = "ext4";
-    options = [ "ro" ];
   };
   fileSystems."/boot" = {
     device = "/dev/disk/by-label/NIFTY_BOOT";

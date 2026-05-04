@@ -126,9 +126,25 @@ release:
 
 # Build NixOS router ISO image
 iso:
-    nix build .#iso
+    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" nix build .#iso --impure
+    @echo ""
+    @echo "ISO built successfully (branch: $(git symbolic-ref --short HEAD 2>/dev/null || echo master)):"
+    @echo "  $(readlink -f result/iso/*.iso)"
+    @echo ""
+    @echo "Flash to USB:"
+    @echo "  sudo dd if=$(readlink -f result/iso/*.iso) of=/dev/sdX bs=4M status=progress"
     @echo ""
     @echo "ISO built successfully:"
+    @echo "  $(readlink -f result/iso/*.iso)"
+    @echo ""
+    @echo "Flash to USB:"
+    @echo "  sudo dd if=$(readlink -f result/iso/*.iso) of=/dev/sdX bs=4M status=progress"
+
+# Build NixOS router ISO with full hardware support (linux-firmware + all drivers)
+iso-big:
+    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" nix build .#iso-big --impure
+    @echo ""
+    @echo "ISO (big) built successfully (branch: $(git symbolic-ref --short HEAD 2>/dev/null || echo master)):"
     @echo "  $(readlink -f result/iso/*.iso)"
     @echo ""
     @echo "Flash to USB:"
@@ -200,10 +216,295 @@ upgrade host:
     printf 'title   nifty-filter (maintenance)\nlinux   /kernel\ninitrd  /initrd\noptions init=%s/init %s rw nifty.maintenance=1\n' "${SYSTEM_PATH}" "${KERNEL_PARAMS}" | sudo tee /boot/loader/entries/nifty-filter-maintenance.conf > /dev/null
     sudo mount -o remount,ro /nix/store
     sudo mount -o remount,ro /
-    sudo reboot
+    nohup sudo reboot &>/dev/null &
     REMOTE_SCRIPT
     echo ""
     echo "Upgrade applied. {{host}} is rebooting..."
+
+# Create a NixOS router VM on Proxmox VE (PCI passthrough and/or virtual NICs)
+# A dedicated 'mgmt' bridge is always created for out-of-band management.
+pve-install pve_host vmid name +nics:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    source ./funcs.sh
+
+    PVE_HOST="{{pve_host}}"
+    VMID="{{vmid}}"
+    VM_NAME="{{name}}"
+    NICS=({{nics}})
+    MGMT_SUBNET="${MGMT_SUBNET:-10.99.0.0/24}"
+
+    if [ "${#NICS[@]}" -lt 1 ]; then
+        echo "Usage: just pve-install <pve-host> <vmid> <name> <nic> [<nic>...]"
+        echo ""
+        echo "Each <nic> is either a PCI device ID or a bridge name (vmbr*)."
+        echo "A dedicated 'mgmt' bridge and NIC are always added automatically."
+        echo ""
+        echo "Set MGMT_SUBNET to override the management subnet (default: 10.99.0.0/24)."
+        echo ""
+        echo "Examples:"
+        echo "  just pve-install pve.local 100 nifty-filter vmbr0 vmbr1        # virtual NICs"
+        echo "  just pve-install pve.local 100 nifty-filter 01:00              # multi-port PCI NIC"
+        echo "  just pve-install pve.local 100 nifty-filter 01:00.0 02:00.0    # two PCI NICs"
+        echo "  just pve-install pve.local 100 nifty-filter vmbr0 01:00.0      # mixed"
+        exit 1
+    fi
+
+    # --- Parse management subnet ---
+    MGMT_PREFIX="${MGMT_SUBNET#*/}"
+    MGMT_NET="${MGMT_SUBNET%/*}"
+    MGMT_BASE="${MGMT_NET%.*}"
+    PVE_MGMT_IP="${MGMT_BASE}.2/${MGMT_PREFIX}"
+    ROUTER_MGMT_IP="${MGMT_BASE}.1"
+
+    # --- Classify NICs as bridge (vmbr*) or PCI ---
+    PCI_DEVICES=()
+    BRIDGES=()
+    for nic in "${NICS[@]}"; do
+        if [[ "${nic}" == vmbr* ]]; then
+            BRIDGES+=("${nic}")
+        else
+            PCI_DEVICES+=("${nic#0000:}")
+        fi
+    done
+
+    # --- Build or reuse ISO ---
+    HEAD_SHORT="$(git rev-parse --short HEAD)"
+    ISO_PATH=""
+    REBUILD=true
+    if ls result/iso/nifty-filter-*.iso 1>/dev/null 2>&1; then
+        ISO_PATH="$(readlink -f result/iso/nifty-filter-*.iso)"
+        ISO_BASENAME="$(basename "${ISO_PATH}")"
+        if echo "${ISO_BASENAME}" | grep -q "${HEAD_SHORT}"; then
+            echo "Found ISO matching HEAD (${HEAD_SHORT}): ${ISO_BASENAME}"
+            REBUILD=false
+        else
+            echo "Found stale ISO (HEAD is ${HEAD_SHORT}): ${ISO_BASENAME}"
+            echo "Rebuilding..."
+        fi
+    else
+        echo "No existing ISO found. Building..."
+    fi
+    if [ "${REBUILD}" = true ]; then
+        just iso
+        ISO_PATH="$(readlink -f result/iso/nifty-filter-*.iso)"
+    fi
+    ISO_FILENAME="$(basename "${ISO_PATH}")"
+    echo "Using ISO: ${ISO_FILENAME}"
+
+    # --- Connect to PVE and upload ISO ---
+    SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/nifty-pve-%C -o ControlPersist=60"
+    REMOTE="root@${PVE_HOST}"
+
+    echo "Connecting to ${PVE_HOST}..."
+    ssh ${SSH_OPTS} -fN ${REMOTE}
+    trap 'ssh ${SSH_OPTS} -O exit ${REMOTE} 2>/dev/null || true' EXIT
+
+    echo "Uploading ISO to ${PVE_HOST}:/var/lib/vz/template/iso/${ISO_FILENAME} ..."
+    rsync -ah --progress -e "ssh ${SSH_OPTS}" \
+        "${ISO_PATH}" \
+        "${REMOTE}:/var/lib/vz/template/iso/${ISO_FILENAME}"
+    echo "ISO uploaded."
+
+    # --- Create mgmt bridge (always) and any user-specified bridges ---
+    ALL_BRIDGES=("mgmt" "${BRIDGES[@]}")
+    for bridge in "${ALL_BRIDGES[@]}"; do
+        if ! ssh ${SSH_OPTS} ${REMOTE} "ip link show ${bridge}" &>/dev/null; then
+            echo "Creating isolated bridge ${bridge} on ${PVE_HOST}..."
+            ssh ${SSH_OPTS} ${REMOTE} "printf '\nauto %s\niface %s inet manual\n    bridge-ports none\n    bridge-stp off\n    bridge-fd 0\n' '${bridge}' '${bridge}' >> /etc/network/interfaces && ifreload -a"
+            echo "  ${bridge} created."
+        fi
+    done
+
+    # --- Build NIC flags (mgmt is always net0) ---
+    NIC_ARGS="--net0 virtio,bridge=mgmt"
+    NET_INDEX=1
+    for bridge in "${BRIDGES[@]}"; do
+        NIC_ARGS="${NIC_ARGS} --net${NET_INDEX} virtio,bridge=${bridge}"
+        NET_INDEX=$((NET_INDEX + 1))
+    done
+
+    HOSTPCI_ARGS=""
+    PCI_INDEX=0
+    for dev in "${PCI_DEVICES[@]}"; do
+        HOSTPCI_ARGS="${HOSTPCI_ARGS} --hostpci${PCI_INDEX} 0000:${dev},pcie=1"
+        PCI_INDEX=$((PCI_INDEX + 1))
+    done
+
+    # Use q35 machine type if any PCI passthrough, otherwise default i440fx
+    MACHINE="q35"
+
+    # --- Create VM ---
+    echo "Creating VM ${VMID} (${VM_NAME}) on ${PVE_HOST}..."
+    ssh ${SSH_OPTS} ${REMOTE} "qm create ${VMID} \
+        --name ${VM_NAME} \
+        --machine ${MACHINE} \
+        --bios ovmf \
+        --cpu host \
+        --cores 2 \
+        --memory 2048 \
+        --efidisk0 local-lvm:1,efitype=4m,pre-enrolled-keys=0 \
+        --scsi0 local-lvm:16 \
+        --scsihw virtio-scsi-single \
+        --ide2 local:iso/${ISO_FILENAME},media=cdrom \
+        --boot order=ide2\;scsi0 \
+        --ostype l26 \
+        --onboot 1 \
+        --serial0 socket \
+        --vga serial0 \
+        ${NIC_ARGS} ${HOSTPCI_ARGS}"
+    echo "VM ${VMID} created."
+
+    # --- Query MAC addresses for mgmt and WAN ---
+    # mgmt is always net0 (virtio)
+    MGMT_MAC=$(ssh ${SSH_OPTS} ${REMOTE} "qm config ${VMID}" | grep '^net0:' | grep -oP 'virtio=\K[^,]+')
+    echo "  mgmt MAC: ${MGMT_MAC}"
+
+    # WAN is the first user-specified NIC
+    FIRST_NIC="${NICS[0]}"
+    if [[ "${FIRST_NIC}" == vmbr* ]]; then
+        # WAN is a bridge (net1)
+        WAN_MAC=$(ssh ${SSH_OPTS} ${REMOTE} "qm config ${VMID}" | grep '^net1:' | grep -oP 'virtio=\K[^,]+')
+    else
+        # WAN is a PCI passthrough device — read MAC from host sysfs
+        WAN_PCI="0000:${FIRST_NIC#0000:}"
+        WAN_MAC=$(ssh ${SSH_OPTS} ${REMOTE} "cat /sys/bus/pci/devices/${WAN_PCI}/net/*/address 2>/dev/null | head -1")
+        if [ -z "${WAN_MAC}" ]; then
+            echo "WARNING: Could not read MAC for PCI device ${WAN_PCI}. WAN identification may fail on the ISO."
+        fi
+    fi
+    echo "  WAN MAC:  ${WAN_MAC}"
+
+    # --- Pass MAC addresses to the VM via fw_cfg ---
+    FW_CFG_ARGS="-fw_cfg name=opt/nifty/mgmt_mac,string=${MGMT_MAC}"
+    if [ -n "${WAN_MAC}" ]; then
+        FW_CFG_ARGS="${FW_CFG_ARGS} -fw_cfg name=opt/nifty/wan_mac,string=${WAN_MAC}"
+    fi
+    ssh ${SSH_OPTS} ${REMOTE} "qm set ${VMID} --args '${FW_CFG_ARGS}'"
+
+    # --- Add PVE host IP to mgmt bridge ---
+    echo "Adding ${PVE_MGMT_IP} to mgmt bridge on ${PVE_HOST}..."
+    ssh ${SSH_OPTS} ${REMOTE} "ip addr add ${PVE_MGMT_IP} dev mgmt 2>/dev/null || true"
+
+    # --- Start VM ---
+    echo ""
+    echo "PVE install complete:"
+    echo "  VMID:    ${VMID}"
+    echo "  Name:    ${VM_NAME}"
+    echo "  Host:    ${PVE_HOST}"
+    echo "  Mgmt:    ${MGMT_MAC} -> ${PVE_MGMT_IP} on mgmt bridge (PVE host)"
+    echo "  WAN:     ${WAN_MAC:-unknown} (DHCP client)"
+    for bridge in "${BRIDGES[@]}"; do
+        echo "  Bridge:  ${bridge}"
+    done
+    for dev in "${PCI_DEVICES[@]}"; do
+        echo "  PCI:     0000:${dev}"
+    done
+    echo ""
+    echo "Starting VM ${VMID}..."
+    ssh ${SSH_OPTS} ${REMOTE} "qm start ${VMID}"
+    echo "VM ${VMID} started."
+    echo ""
+    echo "Connect to the live ISO from the PVE host:"
+    echo "  ssh admin@${ROUTER_MGMT_IP}"
+    echo ""
+    echo "After NixOS installs to disk, eject the ISO and reboot:"
+    echo "  just pve-eject-iso ${PVE_HOST} ${VMID}"
+
+# Eject ISO and set disk boot on a Proxmox VM
+pve-eject-iso pve_host vmid vm_name:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    PVE_HOST="{{pve_host}}"
+    VMID="{{vmid}}"
+    VM_NAME="{{vm_name}}"
+    REMOTE="root@${PVE_HOST}"
+    ACTUAL_NAME=$(ssh ${REMOTE} "qm config ${VMID} 2>/dev/null | grep '^name:' | awk '{print \$2}'" || true)
+    if [[ -z "${ACTUAL_NAME}" ]]; then
+        echo "ERROR: VM ${VMID} does not exist on ${PVE_HOST}"
+        exit 1
+    fi
+    if [[ "${ACTUAL_NAME}" != "${VM_NAME}" ]]; then
+        echo "ERROR: VM ${VMID} is named '${ACTUAL_NAME}', not '${VM_NAME}'"
+        exit 1
+    fi
+    echo "Ejecting ISO and setting boot to disk on VM ${VMID} (${VM_NAME})..."
+    ssh ${REMOTE} "qm set ${VMID} --delete ide2 --boot order=scsi0"
+    echo "Done. Start the VM:"
+    echo "  just pve-start ${PVE_HOST} ${VMID} ${VM_NAME}"
+
+# Start a Proxmox VM after verifying its name matches
+pve-start pve_host vmid vm_name:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    PVE_HOST="{{pve_host}}"
+    VMID="{{vmid}}"
+    VM_NAME="{{vm_name}}"
+    REMOTE="root@${PVE_HOST}"
+    ACTUAL_NAME=$(ssh ${REMOTE} "qm config ${VMID} 2>/dev/null | grep '^name:' | awk '{print \$2}'" || true)
+    if [[ -z "${ACTUAL_NAME}" ]]; then
+        echo "ERROR: VM ${VMID} does not exist on ${PVE_HOST}"
+        exit 1
+    fi
+    if [[ "${ACTUAL_NAME}" != "${VM_NAME}" ]]; then
+        echo "ERROR: VM ${VMID} is named '${ACTUAL_NAME}', not '${VM_NAME}'"
+        exit 1
+    fi
+    STATUS=$(ssh ${REMOTE} "qm status ${VMID}" | awk '{print $2}')
+    if [[ "${STATUS}" == "running" ]]; then
+        echo "VM ${VMID} (${VM_NAME}) is already running."
+    else
+        echo "Starting VM ${VMID} (${VM_NAME}) on ${PVE_HOST}..."
+        ssh ${REMOTE} "qm start ${VMID}"
+        echo "VM ${VMID} (${VM_NAME}) started."
+    fi
+
+# Stop a Proxmox VM gracefully after verifying its name matches
+pve-stop pve_host vmid vm_name:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    PVE_HOST="{{pve_host}}"
+    VMID="{{vmid}}"
+    VM_NAME="{{vm_name}}"
+    REMOTE="root@${PVE_HOST}"
+    ACTUAL_NAME=$(ssh ${REMOTE} "qm config ${VMID} 2>/dev/null | grep '^name:' | awk '{print \$2}'" || true)
+    if [[ -z "${ACTUAL_NAME}" ]]; then
+        echo "ERROR: VM ${VMID} does not exist on ${PVE_HOST}"
+        exit 1
+    fi
+    if [[ "${ACTUAL_NAME}" != "${VM_NAME}" ]]; then
+        echo "ERROR: VM ${VMID} is named '${ACTUAL_NAME}', not '${VM_NAME}'"
+        exit 1
+    fi
+    STATUS=$(ssh ${REMOTE} "qm status ${VMID}" | awk '{print $2}')
+    if [[ "${STATUS}" == "stopped" ]]; then
+        echo "VM ${VMID} (${VM_NAME}) is already stopped."
+    else
+        echo "Shutting down VM ${VMID} (${VM_NAME}) on ${PVE_HOST}..."
+        ssh ${REMOTE} "qm shutdown ${VMID}"
+        echo "VM ${VMID} (${VM_NAME}) shutdown initiated."
+    fi
+
+# Destroy a Proxmox VM after verifying its name matches
+pve-destroy pve_host vmid vm_name:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    PVE_HOST="{{pve_host}}"
+    VMID="{{vmid}}"
+    VM_NAME="{{vm_name}}"
+    REMOTE="root@${PVE_HOST}"
+    ACTUAL_NAME=$(ssh ${REMOTE} "qm config ${VMID} 2>/dev/null | grep '^name:' | awk '{print \$2}'" || true)
+    if [[ -z "${ACTUAL_NAME}" ]]; then
+        echo "ERROR: VM ${VMID} does not exist on ${PVE_HOST}"
+        exit 1
+    fi
+    if [[ "${ACTUAL_NAME}" != "${VM_NAME}" ]]; then
+        echo "ERROR: VM ${VMID} is named '${ACTUAL_NAME}', not '${VM_NAME}'"
+        exit 1
+    fi
+    echo "Destroying VM ${VMID} (${VM_NAME}) on ${PVE_HOST}..."
+    ssh ${REMOTE} "qm stop ${VMID} --skiplock 2>/dev/null || true; qm destroy ${VMID} --purge"
+    echo "VM ${VMID} (${VM_NAME}) destroyed."
 
 # Clean all artifacts
 clean *args: clean-profile
