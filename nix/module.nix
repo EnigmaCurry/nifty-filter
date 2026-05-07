@@ -15,7 +15,8 @@ let
   cfg = config.services.nifty-filter;
   inherit (lib) mkEnableOption mkOption types mkIf;
 
-  nifty-filter = self.packages.${pkgs.system}.nifty-filter;
+  nifty-filter = self.packages.${pkgs.stdenv.hostPlatform.system}.nifty-filter;
+  sodola-switch = self.packages.${pkgs.stdenv.hostPlatform.system}.sodola-switch;
 
   configDir = "/var/nifty-filter";
   envFile = "${configDir}/nifty-filter.env";
@@ -49,7 +50,7 @@ in
     };
 
     # Make the binary available system-wide
-    environment.systemPackages = [ nifty-filter ];
+    environment.systemPackages = [ nifty-filter sodola-switch ];
 
     # Seed the default config on first boot if it doesn't exist
     systemd.services.nifty-filter-init = {

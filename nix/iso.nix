@@ -190,10 +190,20 @@
     HOST_IP=''${HOST_IP:-<this-host>}
     if [ -s "$HOME/.ssh/authorized_keys" ]; then
       echo ""
-      echo "  SSH key installed. Ready to install."
+      echo "  Authorized keys:"
+      while IFS= read -r line; do
+        # Extract key type and comment (skip the base64 blob)
+        key_type=$(echo "$line" | ${pkgs.gawk}/bin/awk '{print $1}')
+        key_comment=$(echo "$line" | ${pkgs.gawk}/bin/awk '{print $3}')
+        if [ -n "$key_comment" ]; then
+          echo "    $key_type $key_comment"
+        else
+          echo "    $key_type (no comment)"
+        fi
+      done < "$HOME/.ssh/authorized_keys"
       echo ""
-      echo "   1. Run :"
-      echo "        nifty-install"
+      echo "  Ready to install. Run:"
+      echo "    nifty-install"
       echo ""
     else
       echo ""

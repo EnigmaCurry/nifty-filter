@@ -94,6 +94,16 @@ impl EnvFile {
         Ok(())
     }
 
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.lines.iter().filter_map(|line| {
+            if let Line::KeyValue(k, _) = line {
+                Some(k.as_str())
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn reload(&mut self) -> Result<(), String> {
         let reloaded = Self::load(&self.path)?;
         self.lines = reloaded.lines;

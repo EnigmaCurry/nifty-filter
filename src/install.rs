@@ -285,23 +285,116 @@ fn print_interface_table(ifaces: &[String]) {
 
 // --- Interactive prompts ---
 
+struct VlanInstallConfig {
+    id: u16,
+    name: String,
+    subnet: String,
+    router_ip: String,
+    egress: bool,
+    enable_ipv6: bool,
+    subnet_ipv6: String,
+    dhcp_start: String,
+    dhcp_end: String,
+}
+
 struct InstallConfig {
     hostname: String,
     disk: String,
     wan_iface: String,
-    lan_iface: String,
+    trunk_iface: String,
     wan_mac: String,
-    lan_mac: String,
+    trunk_mac: String,
     mgmt_iface: Option<String>,
     mgmt_mac: Option<String>,
     subnet_mgmt: Option<String>,
     extra_ifaces: Vec<(String, String, String)>, // (original, new_name, mac)
-    subnet_lan: String,
-    router_ip: String,
-    dhcp_start: String,
-    dhcp_end: String,
+    wan_enable_ipv6: bool,
+    vlan_aware_switch: bool,
+    vlans: Vec<VlanInstallConfig>,
     dns_servers: String,
     git_remote: Option<String>,
+}
+
+fn prompt_vlan_config(vlan_id: u16, default_subnet_base: &str, used_names: &mut Vec<String>) -> VlanInstallConfig {
+    let iface_name_re = Regex::new(r"^[a-zA-Z][a-zA-Z0-9_-]{0,14}$").unwrap();
+    let name = prompt_text_validated(
+        &format!("VLAN {vlan_id} interface name"),
+        "",
+        |v| {
+            if !iface_name_re.is_match(v) {
+                return Some("Invalid name. Use 1-15 chars: letters, digits, hyphens, underscores.");
+            }
+            if used_names.iter().any(|n| n == v) {
+                return Some("Name already in use.");
+            }
+            None
+        },
+    );
+    used_names.push(name.clone());
+
+    let default_subnet = format!("{default_subnet_base}.1/24");
+    let subnet = prompt_text_validated(
+        &format!("VLAN {vlan_id} subnet (router IP/prefix)"),
+        &default_subnet,
+        |v| {
+            if v.parse::<IpNetwork>().is_ok() {
+                None
+            } else {
+                Some("Invalid subnet. Use CIDR notation (e.g. 10.10.0.1/24).")
+            }
+        },
+    );
+    let router_ip = subnet
+        .split_once('/')
+        .map(|(ip, _)| ip)
+        .unwrap_or(&subnet)
+        .to_string();
+    let network_base = router_ip
+        .rsplit_once('.')
+        .map(|(base, _)| base)
+        .unwrap_or(&router_ip)
+        .to_string();
+    let dhcp_start = format!("{network_base}.100");
+    let dhcp_end = format!("{network_base}.250");
+
+    let egress = prompt_confirm(&format!("VLAN {vlan_id}: allow internet access?"));
+
+    let enable_ipv6 = prompt_confirm(&format!("VLAN {vlan_id}: enable IPv6?"));
+    let subnet_ipv6 = if enable_ipv6 {
+        let default_v6 = format!("fd00:{vlan_id:x}::1/64");
+        let v6 = prompt_text_validated(
+            &format!("VLAN {vlan_id} IPv6 subnet (router IP/prefix)"),
+            &default_v6,
+            |v| {
+                if v.parse::<IpNetwork>().is_ok() {
+                    None
+                } else {
+                    Some("Invalid subnet. Use CIDR notation (e.g. fd00:10::1/64).")
+                }
+            },
+        );
+        v6
+    } else {
+        String::new()
+    };
+
+    println!(
+        "  VLAN {vlan_id} ({name}): {subnet} (internet: {}, IPv6: {})",
+        if egress { "yes" } else { "no" },
+        if enable_ipv6 { "yes" } else { "no" }
+    );
+
+    VlanInstallConfig {
+        id: vlan_id,
+        name,
+        subnet,
+        router_ip,
+        egress,
+        enable_ipv6,
+        subnet_ipv6,
+        dhcp_start,
+        dhcp_end,
+    }
 }
 
 fn gather_config(git_remote: Option<String>) -> InstallConfig {
@@ -354,26 +447,26 @@ fn gather_config(git_remote: Option<String>) -> InstallConfig {
     let wan_iface = prompt_select("Select WAN interface (upstream/internet):", ifaces.clone());
     println!("  WAN: {wan_iface} -> will be renamed to 'wan'");
 
-    let lan_ifaces: Vec<String> = ifaces.into_iter().filter(|i| i != &wan_iface).collect();
-    let lan_iface = if lan_ifaces.len() == 1 {
+    let trunk_ifaces: Vec<String> = ifaces.into_iter().filter(|i| i != &wan_iface).collect();
+    let trunk_iface = if trunk_ifaces.len() == 1 {
         println!(
-            "  LAN: {} -> will be renamed to 'lan' (only remaining interface)",
-            lan_ifaces[0]
+            "  TRUNK: {} -> will be renamed to 'trunk' (only remaining interface)",
+            trunk_ifaces[0]
         );
-        lan_ifaces[0].clone()
+        trunk_ifaces[0].clone()
     } else {
-        let choice = prompt_select("Select LAN interface (local network):", lan_ifaces.clone());
-        println!("  LAN: {choice} -> will be renamed to 'lan'");
+        let choice = prompt_select("Select trunk interface (local network / switch uplink):", trunk_ifaces.clone());
+        println!("  TRUNK: {choice} -> will be renamed to 'trunk'");
         choice
     };
 
     let wan_mac = get_mac(&wan_iface);
-    let lan_mac = get_mac(&lan_iface);
+    let trunk_mac = get_mac(&trunk_iface);
 
     // Optional management interface
-    let mut remaining_ifaces: Vec<String> = lan_ifaces
+    let mut remaining_ifaces: Vec<String> = trunk_ifaces
         .into_iter()
-        .filter(|i| i != &lan_iface)
+        .filter(|i| i != &trunk_iface)
         .collect();
     let (mgmt_iface, mgmt_mac, subnet_mgmt) = if !remaining_ifaces.is_empty()
         && prompt_confirm("Configure a management interface? (for PVE/out-of-band access)")
@@ -415,7 +508,7 @@ fn gather_config(git_remote: Option<String>) -> InstallConfig {
     let iface_name_re = Regex::new(r"^[a-zA-Z][a-zA-Z0-9_-]{0,14}$").unwrap();
     let mut used_names: Vec<String> = vec![
         "wan".to_string(),
-        "lan".to_string(),
+        "trunk".to_string(),
         "lo".to_string(),
     ];
     if mgmt_iface.is_some() {
@@ -453,37 +546,113 @@ fn gather_config(git_remote: Option<String>) -> InstallConfig {
         }
     }
 
-    // LAN subnet
+    // WAN IPv6
     println!();
-    println!("==> Configure LAN network:");
-    let subnet_lan = prompt_text_validated("LAN subnet (router IP/prefix)", "10.99.1.1/24", |v| {
-        if v.parse::<IpNetwork>().is_ok() {
-            None
+    let wan_enable_ipv6 = prompt_confirm("Enable IPv6 on WAN? (requires ISP support)");
+    if wan_enable_ipv6 {
+        println!("  WAN IPv6 enabled (will request prefix delegation from ISP).");
+    }
+
+    // VLAN configuration
+    println!();
+    let vlan_aware_switch =
+        prompt_confirm("Do you have a VLAN-aware managed switch?");
+
+    let vlans = if vlan_aware_switch {
+        println!();
+        println!("==> Configure VLANs:");
+        let vlan_input = prompt_text_validated(
+            "VLAN IDs (comma-separated, e.g. 10,20,30)",
+            "10,20",
+            |v| {
+                let ids: Vec<&str> = v.split(',').map(|s| s.trim()).collect();
+                for id_str in &ids {
+                    match id_str.parse::<u16>() {
+                        Ok(id) if id > 1 && id <= 4094 => {}
+                        _ => return Some("All VLAN IDs must be numbers between 2 and 4094."),
+                    }
+                }
+                None
+            },
+        );
+        let vlan_ids: Vec<u16> = vlan_input
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+
+        println!();
+        let mut vlan_names: Vec<String> = used_names.clone();
+        vlan_ids
+            .iter()
+            .map(|&id| {
+                let base = format!("10.99.{}", id);
+                prompt_vlan_config(id, &base, &mut vlan_names)
+            })
+            .collect()
+    } else {
+        // Simple mode: single VLAN 1
+        println!();
+        println!("==> Configure trunk network:");
+        let subnet = prompt_text_validated("Trunk subnet (router IP/prefix)", "10.99.1.1/24", |v| {
+            if v.parse::<IpNetwork>().is_ok() {
+                None
+            } else {
+                Some("Invalid subnet. Use CIDR notation (e.g. 10.99.1.1/24).")
+            }
+        });
+        println!("  Subnet: {subnet}");
+
+        let router_ip = subnet
+            .split_once('/')
+            .map(|(ip, _)| ip)
+            .unwrap_or(&subnet)
+            .to_string();
+        let network_base = router_ip
+            .rsplit_once('.')
+            .map(|(base, _)| base)
+            .unwrap_or(&router_ip)
+            .to_string();
+
+        println!();
+        println!("==> Configure DHCP pool:");
+        let enable_ipv6 = prompt_confirm("Enable IPv6 on trunk?");
+        let subnet_ipv6 = if enable_ipv6 {
+            let v6 = prompt_text_validated(
+                "Trunk IPv6 subnet (router IP/prefix)",
+                "fd00:1::1/64",
+                |v| {
+                    if v.parse::<IpNetwork>().is_ok() {
+                        None
+                    } else {
+                        Some("Invalid subnet. Use CIDR notation (e.g. fd00:1::1/64).")
+                    }
+                },
+            );
+            v6
         } else {
-            Some("Invalid subnet. Use CIDR notation (e.g. 10.99.1.1/24).")
-        }
-    });
-    println!("  Subnet: {subnet_lan}");
+            String::new()
+        };
 
-    let router_ip = subnet_lan
-        .split_once('/')
-        .map(|(ip, _)| ip)
-        .unwrap_or(&subnet_lan)
-        .to_string();
-    let network_base = router_ip
-        .rsplit_once('.')
-        .map(|(base, _)| base)
-        .unwrap_or(&router_ip)
-        .to_string();
-    let default_start = format!("{network_base}.100");
-    let default_end = format!("{network_base}.250");
+        println!();
+        println!("==> Configure DHCP pool:");
+        let dhcp_start =
+            prompt_text_validated("DHCP pool start", &format!("{network_base}.100"), |_| None);
+        let dhcp_end =
+            prompt_text_validated("DHCP pool end", &format!("{network_base}.250"), |_| None);
+        println!("  Pool: {dhcp_start} - {dhcp_end}");
 
-    // DHCP pool
-    println!();
-    println!("==> Configure DHCP pool:");
-    let dhcp_start = prompt_text_validated("DHCP pool start", &default_start, |_| None);
-    let dhcp_end = prompt_text_validated("DHCP pool end", &default_end, |_| None);
-    println!("  Pool: {dhcp_start} - {dhcp_end}");
+        vec![VlanInstallConfig {
+            id: 1,
+            name: String::new(),
+            subnet,
+            router_ip,
+            egress: true,
+            enable_ipv6,
+            subnet_ipv6,
+            dhcp_start,
+            dhcp_end,
+        }]
+    };
 
     let dns_servers =
         prompt_text_validated("DNS servers for DHCP clients", "1.1.1.1, 1.0.0.1", |_| None);
@@ -493,17 +662,16 @@ fn gather_config(git_remote: Option<String>) -> InstallConfig {
         hostname,
         disk: disk_path,
         wan_iface,
-        lan_iface,
+        trunk_iface,
         wan_mac,
-        lan_mac,
+        trunk_mac,
         mgmt_iface,
         mgmt_mac,
         subnet_mgmt,
         extra_ifaces,
-        subnet_lan,
-        router_ip,
-        dhcp_start,
-        dhcp_end,
+        wan_enable_ipv6,
+        vlan_aware_switch,
+        vlans,
         dns_servers,
         git_remote,
     }
@@ -514,8 +682,8 @@ fn show_summary(cfg: &InstallConfig) {
     println!("==> Installation summary:");
     println!("  Hostname:     {}", cfg.hostname);
     println!("  Disk:         {}", cfg.disk);
-    println!("  WAN:          {} ({}) -> wan", cfg.wan_iface, cfg.wan_mac);
-    println!("  LAN:          {} ({}) -> lan", cfg.lan_iface, cfg.lan_mac);
+    println!("  WAN:          {} ({}) -> wan (IPv4{}", cfg.wan_iface, cfg.wan_mac, if cfg.wan_enable_ipv6 { " + IPv6)" } else { ")" });
+    println!("  TRUNK:        {} ({}) -> trunk", cfg.trunk_iface, cfg.trunk_mac);
     if let (Some(ref iface), Some(ref mac), Some(ref subnet)) =
         (&cfg.mgmt_iface, &cfg.mgmt_mac, &cfg.subnet_mgmt)
     {
@@ -529,8 +697,24 @@ fn show_summary(cfg: &InstallConfig) {
             println!("  EXTRA:        {orig} ({mac})");
         }
     }
-    println!("  LAN subnet:   {}", cfg.subnet_lan);
-    println!("  DHCP pool:    {} - {}", cfg.dhcp_start, cfg.dhcp_end);
+    println!("  Switch mode:  {}", if cfg.vlan_aware_switch { "VLAN-aware" } else { "simple (VLAN 1)" });
+    for vlan in &cfg.vlans {
+        let egress_label = if vlan.egress { "yes" } else { "no" };
+        let ipv6_label = if vlan.enable_ipv6 {
+            format!(", IPv6: {}", vlan.subnet_ipv6)
+        } else {
+            String::new()
+        };
+        let name_label = if vlan.name.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", vlan.name)
+        };
+        println!(
+            "  VLAN {:>4}{}: {} (internet: {}, DHCP: {}-{}{})",
+            vlan.id, name_label, vlan.subnet, egress_label, vlan.dhcp_start, vlan.dhcp_end, ipv6_label
+        );
+    }
     println!("  DNS servers:  {}", cfg.dns_servers);
     if let Some(ref remote) = cfg.git_remote {
         println!("  Git remote:   {remote}");
@@ -709,7 +893,6 @@ fn setup_var(mnt: &str, cfg: &InstallConfig) {
     println!("==> Setting up /var...");
     for dir in [
         "nifty-filter/ssh",
-        "nifty-filter/network",
         "home/admin/.ssh",
         "root",
         "log/journal",
@@ -717,33 +900,63 @@ fn setup_var(mnt: &str, cfg: &InstallConfig) {
         fs::create_dir_all(format!("{mnt}/var/{dir}")).ok();
     }
 
-    // Interface rename rules
-    println!("==> Creating interface rename rules...");
-    fs::write(
-        format!("{mnt}/var/nifty-filter/network/10-wan.link"),
-        format!("[Match]\nMACAddress={}\n\n[Link]\nName=wan\n", cfg.wan_mac),
-    )
-    .ok();
-    fs::write(
-        format!("{mnt}/var/nifty-filter/network/10-lan.link"),
-        format!("[Match]\nMACAddress={}\n\n[Link]\nName=lan\n", cfg.lan_mac),
-    )
-    .ok();
-    if let Some(ref mac) = cfg.mgmt_mac {
-        fs::write(
-            format!("{mnt}/var/nifty-filter/network/10-mgmt.link"),
-            format!("[Match]\nMACAddress={mac}\n\n[Link]\nName=mgmt\n"),
-        )
-        .ok();
+    // Interface rename rules are now generated at boot from env vars (nifty-link service).
+    // No static .link files needed.
+
+    // Build per-VLAN env content
+    let mut vlan_config = String::new();
+    let vlan_ids: Vec<String> = cfg.vlans.iter().map(|v| v.id.to_string()).collect();
+
+    if cfg.vlan_aware_switch {
+        vlan_config.push_str(&format!("VLAN_AWARE_SWITCH=true\nVLANS={}\n", vlan_ids.join(",")));
+    } else {
+        vlan_config.push_str("VLAN_AWARE_SWITCH=false\n");
     }
-    for (orig, new_name, mac) in &cfg.extra_ifaces {
-        if new_name != orig {
-            fs::write(
-                format!("{mnt}/var/nifty-filter/network/10-{new_name}.link"),
-                format!("[Match]\nMACAddress={mac}\n\n[Link]\nName={new_name}\n"),
-            )
-            .ok();
-        }
+    vlan_config.push('\n');
+
+    for vlan in &cfg.vlans {
+        let id = vlan.id;
+        let egress_v4 = if vlan.egress { "0.0.0.0/0" } else { "" };
+        let egress_v6 = if vlan.egress && vlan.enable_ipv6 { "::/0" } else { "" };
+        let tcp_accept = if vlan.id == 1 || vlan.egress { "22" } else { "" };
+        let udp_accept = if vlan.enable_ipv6 { "67,68,546,547" } else { "67,68" };
+        let name_line = if vlan.name.is_empty() {
+            String::new()
+        } else {
+            format!("VLAN_{id}_NAME={name}\n", id = id, name = vlan.name)
+        };
+        vlan_config.push_str(&format!(
+            "# VLAN {id}\n\
+             {name_line}\
+             VLAN_{id}_SUBNET_IPV4={subnet}\n\
+             VLAN_{id}_SUBNET_IPV6={subnet_v6}\n\
+             VLAN_{id}_EGRESS_ALLOWED_IPV4={egress_v4}\n\
+             VLAN_{id}_EGRESS_ALLOWED_IPV6={egress_v6}\n\
+             VLAN_{id}_ICMP_ACCEPT=echo-request,echo-reply,destination-unreachable,time-exceeded\n\
+             VLAN_{id}_TCP_ACCEPT={tcp_accept}\n\
+             VLAN_{id}_UDP_ACCEPT={udp_accept}\n\
+             VLAN_{id}_TCP_FORWARD=\n\
+             VLAN_{id}_UDP_FORWARD=\n\
+             VLAN_{id}_DHCP_ENABLED=true\n\
+             VLAN_{id}_DHCP_POOL_START={dhcp_start}\n\
+             VLAN_{id}_DHCP_POOL_END={dhcp_end}\n\
+             VLAN_{id}_DHCP_ROUTER={router_ip}\n\
+             VLAN_{id}_DHCP_DNS={router_ip}\n\
+             VLAN_{id}_DHCPV6_ENABLED={dhcpv6}\n\
+             VLAN_{id}_DHCPV6_POOL_START=\n\
+             VLAN_{id}_DHCPV6_POOL_END=\n\n",
+            id = id,
+            subnet = vlan.subnet,
+            subnet_v6 = vlan.subnet_ipv6,
+            egress_v4 = egress_v4,
+            egress_v6 = egress_v6,
+            tcp_accept = tcp_accept,
+            udp_accept = udp_accept,
+            dhcp_start = vlan.dhcp_start,
+            dhcp_end = vlan.dhcp_end,
+            router_ip = vlan.router_ip,
+            dhcpv6 = if vlan.enable_ipv6 { "true" } else { "false" },
+        ));
     }
 
     // Write combined config
@@ -756,54 +969,56 @@ fn setup_var(mnt: &str, cfg: &InstallConfig) {
 ENABLED=true
 HOSTNAME={hostname}
 
-# Network interfaces
-INTERFACE_LAN=lan
+# Network interfaces (MAC addresses for rename rules)
 INTERFACE_WAN=wan
-{mgmt_config}
-# LAN subnet in CIDR notation (router's LAN IP / prefix length)
-SUBNET_LAN={subnet}
+WAN_MAC={wan_mac}
+INTERFACE_TRUNK=trunk
+TRUNK_MAC={trunk_mac}
+{mgmt_config}{extra_ifaces_config}
+# WAN protocol enablement
+WAN_ENABLE_IPV4=true
+WAN_ENABLE_IPV6={wan_ipv6}
 
-# ICMP types accepted on each interface
-ICMP_ACCEPT_LAN=echo-request,echo-reply,destination-unreachable,time-exceeded
+# ICMP types accepted on WAN
 ICMP_ACCEPT_WAN=
+ICMPV6_ACCEPT_WAN=nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,destination-unreachable,packet-too-big,time-exceeded
 
-# TCP/UDP ports the router itself accepts
-TCP_ACCEPT_LAN=22
-UDP_ACCEPT_LAN=67,68
+# TCP/UDP ports the router accepts from WAN
 TCP_ACCEPT_WAN=22
 UDP_ACCEPT_WAN=
 
-# Port forwarding rules
+# Port forwarding rules from WAN
 # Format: incoming_port:destination_ip:destination_port
-TCP_FORWARD_LAN=
-UDP_FORWARD_LAN=
 TCP_FORWARD_WAN=
 UDP_FORWARD_WAN=
 
-# DHCP server configuration
-DHCP_INTERFACE=lan
-DHCP_SUBNET={subnet}
-DHCP_POOL_START={dhcp_start}
-DHCP_POOL_END={dhcp_end}
-DHCP_ROUTER={router_ip}
-DHCP_DNS="{dns}"
-
-# DHCPv6 (enable and configure via nifty-config after install)
-DHCPV6_ENABLED=false
-DHCPV6_POOL_START=
-DHCPV6_POOL_END=
+# VLAN configuration
+{vlan_config}
+# DNS servers for DHCP clients (global upstream)
+DHCP_UPSTREAM_DNS="{dns}"
 "#,
         hostname = cfg.hostname,
-        mgmt_config = match &cfg.subnet_mgmt {
-            Some(subnet) => format!(
-                "\n# Management interface (out-of-band access)\nINTERFACE_MGMT=mgmt\nSUBNET_MGMT={subnet}\n"
+        wan_mac = cfg.wan_mac,
+        trunk_mac = cfg.trunk_mac,
+        mgmt_config = match (&cfg.mgmt_iface, &cfg.mgmt_mac, &cfg.subnet_mgmt) {
+            (Some(_), Some(mac), Some(subnet)) => format!(
+                "INTERFACE_MGMT=mgmt\nMGMT_MAC={mac}\nSUBNET_MGMT={subnet}\n"
             ),
-            None => String::new(),
+            _ => String::new(),
         },
-        subnet = cfg.subnet_lan,
-        dhcp_start = cfg.dhcp_start,
-        dhcp_end = cfg.dhcp_end,
-        router_ip = cfg.router_ip,
+        extra_ifaces_config = {
+            let mut lines = Vec::new();
+            for (_, new_name, mac) in &cfg.extra_ifaces {
+                lines.push(format!("{mac}={new_name}"));
+            }
+            if !lines.is_empty() {
+                format!("\n# Extra interface rename rules (MAC=name)\nEXTRA_LINKS=\"{}\"\n", lines.join(","))
+            } else {
+                String::new()
+            }
+        },
+        wan_ipv6 = if cfg.wan_enable_ipv6 { "true" } else { "false" },
+        vlan_config = vlan_config,
         dns = cfg.dns_servers,
     );
     let env_path = format!("{mnt}/var/nifty-filter/nifty-filter.env");
@@ -902,12 +1117,555 @@ fn unmount_and_shutdown(mnt: &str) {
     run_cmd("systemctl", &["poweroff"]);
 }
 
+// --- PVE mode: config-only install (no disk operations) ---
+
+fn setup_var_pve(cfg: &InstallConfig) {
+    println!("==> Writing configuration to /var/nifty-filter...");
+
+    for dir in [
+        "nifty-filter/ssh",
+        "home/admin/.ssh",
+        "root",
+        "log/journal",
+    ] {
+        fs::create_dir_all(format!("/var/{dir}")).ok();
+    }
+
+    // Reuse the same env file generation from setup_var
+    // Build per-VLAN env content
+    let mut vlan_config = String::new();
+    let vlan_ids: Vec<String> = cfg.vlans.iter().map(|v| v.id.to_string()).collect();
+
+    if cfg.vlan_aware_switch {
+        vlan_config.push_str(&format!("VLAN_AWARE_SWITCH=true\nVLANS={}\n", vlan_ids.join(",")));
+    } else {
+        vlan_config.push_str("VLAN_AWARE_SWITCH=false\n");
+    }
+    vlan_config.push('\n');
+
+    for vlan in &cfg.vlans {
+        let id = vlan.id;
+        let egress_v4 = if vlan.egress { "0.0.0.0/0" } else { "" };
+        let egress_v6 = if vlan.egress && vlan.enable_ipv6 { "::/0" } else { "" };
+        let tcp_accept = if vlan.id == 1 || vlan.egress { "22" } else { "" };
+        let udp_accept = if vlan.enable_ipv6 { "67,68,546,547" } else { "67,68" };
+        let name_line = if vlan.name.is_empty() {
+            String::new()
+        } else {
+            format!("VLAN_{id}_NAME={name}\n", id = id, name = vlan.name)
+        };
+        vlan_config.push_str(&format!(
+            "# VLAN {id}\n\
+             {name_line}\
+             VLAN_{id}_SUBNET_IPV4={subnet}\n\
+             VLAN_{id}_SUBNET_IPV6={subnet_v6}\n\
+             VLAN_{id}_EGRESS_ALLOWED_IPV4={egress_v4}\n\
+             VLAN_{id}_EGRESS_ALLOWED_IPV6={egress_v6}\n\
+             VLAN_{id}_ICMP_ACCEPT=echo-request,echo-reply,destination-unreachable,time-exceeded\n\
+             VLAN_{id}_TCP_ACCEPT={tcp_accept}\n\
+             VLAN_{id}_UDP_ACCEPT={udp_accept}\n\
+             VLAN_{id}_TCP_FORWARD=\n\
+             VLAN_{id}_UDP_FORWARD=\n\
+             VLAN_{id}_DHCP_ENABLED=true\n\
+             VLAN_{id}_DHCP_POOL_START={dhcp_start}\n\
+             VLAN_{id}_DHCP_POOL_END={dhcp_end}\n\
+             VLAN_{id}_DHCP_ROUTER={router_ip}\n\
+             VLAN_{id}_DHCP_DNS={router_ip}\n\
+             VLAN_{id}_DHCPV6_ENABLED={dhcpv6}\n\
+             VLAN_{id}_DHCPV6_POOL_START=\n\
+             VLAN_{id}_DHCPV6_POOL_END=\n\n",
+            id = id,
+            subnet = vlan.subnet,
+            subnet_v6 = vlan.subnet_ipv6,
+            egress_v4 = egress_v4,
+            egress_v6 = egress_v6,
+            tcp_accept = tcp_accept,
+            udp_accept = udp_accept,
+            dhcp_start = vlan.dhcp_start,
+            dhcp_end = vlan.dhcp_end,
+            router_ip = vlan.router_ip,
+            dhcpv6 = if vlan.enable_ipv6 { "true" } else { "false" },
+        ));
+    }
+
+    let env_content = format!(
+        r#"# nifty-filter configuration
+# Edit this file and run: nifty-config -> Apply changes
+#
+# This file lives on the writable /var partition.
+# The rest of the system is read-only (unless booted in maintenance mode).
+ENABLED=true
+HOSTNAME={hostname}
+
+# Network interfaces (MAC addresses for rename rules)
+INTERFACE_WAN=wan
+WAN_MAC={wan_mac}
+INTERFACE_TRUNK=trunk
+TRUNK_MAC={trunk_mac}
+{mgmt_config}{extra_ifaces_config}
+# WAN protocol enablement
+WAN_ENABLE_IPV4=true
+WAN_ENABLE_IPV6={wan_ipv6}
+
+# ICMP types accepted on WAN
+ICMP_ACCEPT_WAN=
+ICMPV6_ACCEPT_WAN=nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,destination-unreachable,packet-too-big,time-exceeded
+
+# TCP/UDP ports the router accepts from WAN
+TCP_ACCEPT_WAN=22
+UDP_ACCEPT_WAN=
+
+# Port forwarding rules from WAN
+# Format: incoming_port:destination_ip:destination_port
+TCP_FORWARD_WAN=
+UDP_FORWARD_WAN=
+
+# VLAN configuration
+{vlan_config}
+# DNS servers for DHCP clients (global upstream)
+DHCP_UPSTREAM_DNS="{dns}"
+"#,
+        hostname = cfg.hostname,
+        wan_mac = cfg.wan_mac,
+        trunk_mac = cfg.trunk_mac,
+        mgmt_config = match (&cfg.mgmt_iface, &cfg.mgmt_mac, &cfg.subnet_mgmt) {
+            (Some(_), Some(mac), Some(subnet)) => format!(
+                "INTERFACE_MGMT=mgmt\nMGMT_MAC={mac}\nSUBNET_MGMT={subnet}\n"
+            ),
+            _ => String::new(),
+        },
+        extra_ifaces_config = {
+            let mut lines = Vec::new();
+            for (_, new_name, mac) in &cfg.extra_ifaces {
+                lines.push(format!("{mac}={new_name}"));
+            }
+            if !lines.is_empty() {
+                format!("\n# Extra interface rename rules (MAC=name)\nEXTRA_LINKS=\"{}\"\n", lines.join(","))
+            } else {
+                String::new()
+            }
+        },
+        wan_ipv6 = if cfg.wan_enable_ipv6 { "true" } else { "false" },
+        vlan_config = vlan_config,
+        dns = cfg.dns_servers,
+    );
+    let env_path = "/var/nifty-filter/nifty-filter.env";
+    fs::write(env_path, env_content).ok();
+    run_cmd("chmod", &["0600", env_path]);
+
+    // Initialize git repo
+    println!("==> Initializing git repo in /var/nifty-filter...");
+    let nf_dir = "/var/nifty-filter";
+    if !Path::new(&format!("{nf_dir}/.git")).exists() {
+        run_cmd("git", &["-C", nf_dir, "init", "-b", "main"]);
+    }
+    fs::write(format!("{nf_dir}/.gitignore"), "ssh/ssh_host_*\n").ok();
+    run_cmd("git", &["-C", nf_dir, "add", "-A"]);
+    run_cmd(
+        "git",
+        &[
+            "-C",
+            nf_dir,
+            "-c",
+            "user.name=nifty-filter",
+            "-c",
+            "user.email=nifty-filter@localhost",
+            "commit",
+            "-m",
+            "initial configuration",
+        ],
+    );
+
+    // Record build branch (read from /etc, persist to /var)
+    let build_branch = fs::read_to_string("/etc/nifty-filter/build-branch")
+        .unwrap_or_else(|_| "master".to_string())
+        .trim()
+        .to_string();
+    fs::write(format!("{nf_dir}/branch"), &build_branch).ok();
+    println!("  Build branch: {build_branch}");
+
+    if let Some(ref remote) = cfg.git_remote {
+        run_cmd("git", &["-C", nf_dir, "remote", "add", "origin", remote]);
+        println!("==> Cloning source repo for on-device upgrades...");
+        let src_dir = format!("{nf_dir}/src");
+        if run_cmd("git", &["clone", "-b", &build_branch, remote, &src_dir]) {
+            run_cmd("chown", &["-R", "1000:100", &src_dir]);
+        } else {
+            println!("  WARNING: Could not clone source repo.");
+        }
+    }
+
+    run_cmd("chown", &["-R", "1000:100", nf_dir]);
+}
+
+fn show_pve_summary(cfg: &InstallConfig) {
+    println!();
+    println!("==> Configuration summary:");
+    println!("  Hostname:     {}", cfg.hostname);
+    println!("  WAN:          {} ({}) -> wan (IPv4{}", cfg.wan_iface, cfg.wan_mac, if cfg.wan_enable_ipv6 { " + IPv6)" } else { ")" });
+    println!("  TRUNK:        {} ({}) -> trunk", cfg.trunk_iface, cfg.trunk_mac);
+    if let (Some(ref iface), Some(ref mac), Some(ref subnet)) =
+        (&cfg.mgmt_iface, &cfg.mgmt_mac, &cfg.subnet_mgmt)
+    {
+        println!("  MGMT:         {iface} ({mac}) -> mgmt");
+        println!("  MGMT subnet:  {subnet}");
+    }
+    for (orig, new_name, mac) in &cfg.extra_ifaces {
+        if new_name != orig {
+            println!("  EXTRA:        {orig} ({mac}) -> {new_name}");
+        } else {
+            println!("  EXTRA:        {orig} ({mac})");
+        }
+    }
+    println!("  Switch mode:  {}", if cfg.vlan_aware_switch { "VLAN-aware" } else { "simple (VLAN 1)" });
+    for vlan in &cfg.vlans {
+        let egress_label = if vlan.egress { "yes" } else { "no" };
+        let ipv6_label = if vlan.enable_ipv6 {
+            format!(", IPv6: {}", vlan.subnet_ipv6)
+        } else {
+            String::new()
+        };
+        let name_label = if vlan.name.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", vlan.name)
+        };
+        println!(
+            "  VLAN {:>4}{}: {} (internet: {}, DHCP: {}-{}{})",
+            vlan.id, name_label, vlan.subnet, egress_label, vlan.dhcp_start, vlan.dhcp_end, ipv6_label
+        );
+    }
+    println!("  DNS servers:  {}", cfg.dns_servers);
+    if let Some(ref remote) = cfg.git_remote {
+        println!("  Git remote:   {remote}");
+    }
+    println!();
+}
+
+// --- fw_cfg helpers (QEMU firmware config passed from PVE host) ---
+
+fn read_fw_cfg(name: &str) -> Option<String> {
+    let path = format!("/sys/firmware/qemu_fw_cfg/by_name/opt/nifty/{name}/raw");
+    fs::read_to_string(&path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+fn find_iface_by_mac(mac: &str) -> Option<String> {
+    let ifaces = list_interfaces();
+    for iface in &ifaces {
+        if get_mac(iface).eq_ignore_ascii_case(mac) {
+            return Some(iface.clone());
+        }
+    }
+    None
+}
+
+/// Get the PCI bus address for an interface (e.g. "0000:01:00.0")
+fn get_iface_pci_addr(iface: &str) -> String {
+    let path = format!("/sys/class/net/{iface}/device");
+    fs::read_link(&path)
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_default()
+}
+
+/// Sort interfaces by PCI bus address (QEMU assigns slots sequentially for hostpci0, hostpci1, ...)
+fn sort_ifaces_by_pci(ifaces: &[String]) -> Vec<String> {
+    let mut with_addr: Vec<(String, String)> = ifaces
+        .iter()
+        .map(|i| (i.clone(), get_iface_pci_addr(i)))
+        .collect();
+    with_addr.sort_by(|a, b| a.1.cmp(&b.1));
+    with_addr.into_iter().map(|(i, _)| i).collect()
+}
+
+/// PVE-specific config gathering: reads interface assignments from fw_cfg,
+/// skipping the interactive interface selection prompts.
+fn gather_config_pve(git_remote: Option<String>) -> InstallConfig {
+    let hostname_re = Regex::new(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$").unwrap();
+
+    // Read fw_cfg
+    let mgmt_mac_cfg = read_fw_cfg("mgmt_mac");
+    let nic_roles_cfg = read_fw_cfg("nic_roles"); // e.g. "wan,trunk" or "wan,trunk,extra1"
+    let wan_mac_cfg = read_fw_cfg("wan_mac");   // only set for virtual NICs
+    let trunk_mac_cfg = read_fw_cfg("trunk_mac"); // only set for virtual NICs
+
+    // Show interface table for context
+    println!("==> Network interfaces (auto-detected from PVE):");
+    let ifaces = list_interfaces();
+    print_interface_table(&ifaces);
+
+    // Identify mgmt interface by MAC (always a virtio NIC with known MAC)
+    let mgmt_iface = mgmt_mac_cfg.as_ref().and_then(|mac| find_iface_by_mac(mac));
+
+    // Identify WAN/trunk: try MAC first (works for virtual NICs), then fall back
+    // to PCI bus order (works for PCI passthrough where MAC isn't passed)
+    let mut wan_iface: Option<String> = wan_mac_cfg.as_ref().and_then(|mac| find_iface_by_mac(mac));
+    let mut trunk_iface: Option<String> = trunk_mac_cfg.as_ref().and_then(|mac| find_iface_by_mac(mac));
+
+    // If MACs didn't resolve, use PCI bus order + nic_roles
+    if wan_iface.is_none() || trunk_iface.is_none() {
+        // Get non-mgmt interfaces sorted by PCI bus address
+        let mgmt_name = mgmt_iface.as_deref().unwrap_or("");
+        let non_mgmt: Vec<String> = ifaces.iter()
+            .filter(|i| i.as_str() != mgmt_name)
+            .cloned()
+            .collect();
+        let sorted = sort_ifaces_by_pci(&non_mgmt);
+
+        // Parse roles from fw_cfg (default: "wan:trunk", colon-separated to avoid QEMU comma issues)
+        let roles_str = nic_roles_cfg.as_deref().unwrap_or("wan:trunk");
+        let roles: Vec<&str> = roles_str.split(':').collect();
+
+        // Assign roles by position
+        for (i, role) in roles.iter().enumerate() {
+            if i >= sorted.len() {
+                break;
+            }
+            match *role {
+                "wan" if wan_iface.is_none() => wan_iface = Some(sorted[i].clone()),
+                "trunk" if trunk_iface.is_none() => trunk_iface = Some(sorted[i].clone()),
+                _ => {}
+            }
+        }
+    }
+
+    // Validate we found the required interfaces (fall back to manual if still missing)
+    let wan_iface = match wan_iface {
+        Some(i) => {
+            let mac = get_mac(&i);
+            println!("  WAN: {i} ({mac}) -> will be renamed to 'wan'");
+            i
+        }
+        None => {
+            println!("  WARNING: Could not auto-detect WAN interface.");
+            let choice = prompt_select("Select WAN interface:", ifaces.clone());
+            println!("  WAN: {choice} -> will be renamed to 'wan'");
+            choice
+        }
+    };
+
+    let trunk_iface = match trunk_iface {
+        Some(i) => {
+            let mac = get_mac(&i);
+            println!("  TRUNK: {i} ({mac}) -> will be renamed to 'trunk'");
+            i
+        }
+        None => {
+            println!("  WARNING: Could not auto-detect trunk interface.");
+            let remaining: Vec<String> = ifaces.iter().filter(|i| **i != wan_iface).cloned().collect();
+            let choice = prompt_select("Select trunk interface:", remaining);
+            println!("  TRUNK: {choice} -> will be renamed to 'trunk'");
+            choice
+        }
+    };
+
+    let wan_mac = get_mac(&wan_iface);
+    let trunk_mac = get_mac(&trunk_iface);
+
+    // Management interface (auto-detected)
+    let (mgmt_iface_name, mgmt_mac_val, subnet_mgmt) = match mgmt_iface {
+        Some(ref iface) => {
+            let mac = get_mac(iface);
+            println!("  MGMT: {iface} ({mac}) -> will be renamed to 'mgmt'");
+            println!();
+            println!("==> Configure management network:");
+            let subnet = prompt_text_validated(
+                "Management subnet (router IP/prefix)",
+                "10.99.0.1/24",
+                |v| {
+                    if v.parse::<IpNetwork>().is_ok() {
+                        None
+                    } else {
+                        Some("Invalid subnet. Use CIDR notation (e.g. 10.99.0.1/24).")
+                    }
+                },
+            );
+            println!("  Management subnet: {subnet}");
+            (Some(iface.clone()), Some(mac), Some(subnet))
+        }
+        None => (None, None, None),
+    };
+
+    // Remaining interfaces
+    let mut used: Vec<&str> = vec![&wan_iface, &trunk_iface];
+    if let Some(ref m) = mgmt_iface {
+        used.push(m.as_str());
+    }
+    let remaining_ifaces: Vec<String> = ifaces.iter()
+        .filter(|i| !used.contains(&i.as_str()))
+        .cloned()
+        .collect();
+
+    let iface_name_re = Regex::new(r"^[a-zA-Z][a-zA-Z0-9_-]{0,14}$").unwrap();
+    let mut used_names: Vec<String> = vec![
+        "wan".to_string(),
+        "trunk".to_string(),
+        "lo".to_string(),
+    ];
+    if mgmt_iface_name.is_some() {
+        used_names.push("mgmt".to_string());
+    }
+    let mut extra_ifaces: Vec<(String, String, String)> = Vec::new();
+    if !remaining_ifaces.is_empty() {
+        println!();
+        println!("==> Name remaining interfaces:");
+        for iface in &remaining_ifaces {
+            let mac = get_mac(iface);
+            let driver = get_iface_driver(iface);
+            let new_name = prompt_text_validated(
+                &format!("Name for {iface} ({mac}, {driver})"),
+                iface,
+                |v| {
+                    if !iface_name_re.is_match(v) {
+                        return Some("Invalid name. Use 1-15 chars: letters, digits, hyphens, underscores.");
+                    }
+                    if used_names.iter().any(|n| n == v) {
+                        return Some("Name already in use.");
+                    }
+                    None
+                },
+            );
+            used_names.push(new_name.clone());
+            if new_name != *iface {
+                println!("  {iface} -> will be renamed to '{new_name}'");
+            } else {
+                println!("  {iface} -> keeping current name");
+            }
+            extra_ifaces.push((iface.clone(), new_name, mac));
+        }
+    }
+
+    // Hostname
+    println!();
+    println!("==> Configure hostname:");
+    let hostname = prompt_text_validated("Hostname for this router", "nifty-filter", |v| {
+        if hostname_re.is_match(v) {
+            None
+        } else {
+            Some("Invalid hostname. Must be 1-63 chars: letters, digits, hyphens.")
+        }
+    });
+    println!("  Hostname: {hostname}");
+
+    // WAN IPv6
+    println!();
+    let wan_enable_ipv6 = prompt_confirm("Enable IPv6 on WAN? (requires ISP support)");
+    if wan_enable_ipv6 {
+        println!("  WAN IPv6 enabled.");
+    }
+
+    // VLAN configuration
+    println!();
+    let vlan_aware_switch = prompt_confirm("Do you have a VLAN-aware managed switch?");
+
+    let vlans = if vlan_aware_switch {
+        println!();
+        println!("==> Configure VLANs:");
+        let vlan_input = prompt_text_validated(
+            "VLAN IDs (comma-separated, e.g. 10,20,30)",
+            "10,20",
+            |v| {
+                let ids: Vec<&str> = v.split(',').map(|s| s.trim()).collect();
+                for id_str in &ids {
+                    match id_str.parse::<u16>() {
+                        Ok(id) if id > 1 && id <= 4094 => {}
+                        _ => return Some("All VLAN IDs must be numbers between 2 and 4094."),
+                    }
+                }
+                None
+            },
+        );
+        let vlan_ids: Vec<u16> = vlan_input
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+
+        println!();
+        let mut vlan_names: Vec<String> = used_names.clone();
+        vlan_ids
+            .iter()
+            .map(|&id| {
+                let base = format!("10.99.{}", id);
+                prompt_vlan_config(id, &base, &mut vlan_names)
+            })
+            .collect()
+    } else {
+        println!();
+        println!("==> Configure trunk network:");
+        let subnet = prompt_text_validated("Trunk subnet (router IP/prefix)", "10.99.1.1/24", |v| {
+            if v.parse::<IpNetwork>().is_ok() {
+                None
+            } else {
+                Some("Invalid subnet. Use CIDR notation (e.g. 10.99.1.1/24).")
+            }
+        });
+        println!("  Subnet: {subnet}");
+
+        let router_ip = subnet.split_once('/').map(|(ip, _)| ip).unwrap_or(&subnet).to_string();
+        let network_base = router_ip.rsplit_once('.').map(|(base, _)| base).unwrap_or(&router_ip).to_string();
+
+        println!();
+        let enable_ipv6 = prompt_confirm("Enable IPv6 on trunk?");
+        let subnet_ipv6 = if enable_ipv6 {
+            prompt_text_validated("Trunk IPv6 subnet (router IP/prefix)", "fd00:1::1/64", |v| {
+                if v.parse::<IpNetwork>().is_ok() { None } else { Some("Invalid subnet.") }
+            })
+        } else {
+            String::new()
+        };
+
+        println!();
+        println!("==> Configure DHCP pool:");
+        let dhcp_start = prompt_text_validated("DHCP pool start", &format!("{network_base}.100"), |_| None);
+        let dhcp_end = prompt_text_validated("DHCP pool end", &format!("{network_base}.250"), |_| None);
+        println!("  Pool: {dhcp_start} - {dhcp_end}");
+
+        vec![VlanInstallConfig {
+            id: 1,
+            name: String::new(),
+            subnet,
+            router_ip,
+            egress: true,
+            enable_ipv6,
+            subnet_ipv6,
+            dhcp_start,
+            dhcp_end,
+        }]
+    };
+
+    let dns_servers = prompt_text_validated("DNS servers for DHCP clients", "1.1.1.1, 1.0.0.1", |_| None);
+    println!("  DNS: {dns_servers}");
+
+    InstallConfig {
+        hostname,
+        disk: String::new(), // not used in PVE mode
+        wan_iface,
+        trunk_iface,
+        wan_mac,
+        trunk_mac,
+        mgmt_iface: mgmt_iface_name,
+        mgmt_mac: mgmt_mac_val,
+        subnet_mgmt,
+        extra_ifaces,
+        wan_enable_ipv6,
+        vlan_aware_switch,
+        vlans,
+        dns_servers,
+        git_remote,
+    }
+}
+
 // --- Entry point ---
 
+fn is_pve_install() -> bool {
+    Path::new("/etc/nifty-filter/pve-install").exists()
+}
+
 pub fn run(git_remote: Option<String>) {
-    // Only run on the live ISO
-    if !Path::new("/etc/nifty-filter/installed-system").exists() {
-        die("This command can only be run from the nifty-filter live ISO.");
+    let pve_mode = is_pve_install();
+
+    if !pve_mode && !Path::new("/etc/nifty-filter/installed-system").exists() {
+        die("This command can only be run from the nifty-filter live ISO or a PVE disk image.");
     }
 
     // Re-exec with sudo if not root, preserving SSH_CONNECTION
@@ -925,37 +1683,66 @@ pub fn run(git_remote: Option<String>) {
         std::process::exit(status.code().unwrap_or(1));
     }
 
-    // Pre-flight
     println!("nifty-filter {} ({})", env!("CARGO_PKG_VERSION"), option_env!("GIT_SHA").unwrap_or("unknown"));
     println!();
-    check_authorized_keys();
-    println!("==> Checking SSH authentication method...");
-    check_ssh_auth();
-    println!("  OK: key authentication confirmed");
-    show_authorized_keys();
 
-    // Interactive configuration
-    let cfg = gather_config(git_remote);
-    show_summary(&cfg);
+    if pve_mode {
+        // PVE mode: config wizard only (no disk operations)
+        println!("PVE disk image detected — running configuration wizard.");
+        println!("(Disk is already set up. Only writing configuration.)");
+        println!();
 
-    if !prompt_confirm("Proceed with installation?") {
-        println!("Aborted.");
-        process::exit(1);
+        show_authorized_keys();
+
+        let cfg = gather_config_pve(git_remote);
+        show_pve_summary(&cfg);
+
+        if !prompt_confirm("Apply this configuration?") {
+            println!("Aborted.");
+            process::exit(1);
+        }
+        println!();
+
+        setup_var_pve(&cfg);
+
+        println!();
+        println!("Configuration complete!");
+        println!("A reboot is required for interface renaming to take effect.");
+        println!();
+        for i in (1..=3).rev() {
+            eprint!("\rRebooting in {i:2} seconds... ");
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        eprintln!();
+        run_cmd("systemctl", &["reboot"]);
+    } else {
+        // ISO mode: full install (disk operations + config)
+        check_authorized_keys();
+        println!("==> Checking SSH authentication method...");
+        check_ssh_auth();
+        println!("  OK: key authentication confirmed");
+        show_authorized_keys();
+
+        let cfg = gather_config(git_remote);
+        show_summary(&cfg);
+
+        if !prompt_confirm("Proceed with installation?") {
+            println!("Aborted.");
+            process::exit(1);
+        }
+        println!();
+
+        let mnt = run_cmd_output("mktemp", &["-d"]).trim().to_string();
+        if mnt.is_empty() {
+            die("Failed to create temp directory");
+        }
+
+        let (boot, root, var) = partition_paths(&cfg.disk);
+        partition_disk(&cfg.disk);
+        format_partitions(&boot, &root, &var);
+        mount_partitions(&mnt, &boot, &root, &var);
+        copy_system_closure(&mnt);
+        setup_var(&mnt, &cfg);
+        unmount_and_shutdown(&mnt);
     }
-    println!();
-
-    // Create mount point
-    let mnt = run_cmd_output("mktemp", &["-d"]).trim().to_string();
-    if mnt.is_empty() {
-        die("Failed to create temp directory");
-    }
-
-    // Install
-    let (boot, root, var) = partition_paths(&cfg.disk);
-    partition_disk(&cfg.disk);
-    format_partitions(&boot, &root, &var);
-    mount_partitions(&mnt, &boot, &root, &var);
-    copy_system_closure(&mnt);
-    setup_var(&mnt, &cfg);
-    unmount_and_shutdown(&mnt);
 }

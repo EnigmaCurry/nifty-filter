@@ -4,6 +4,7 @@ pub mod cidr_list;
 pub mod forward_route;
 pub mod icmp_type;
 pub mod icmpv6_type;
+pub mod inbound_rule;
 pub mod interface;
 pub mod port;
 pub mod subnet;
@@ -13,6 +14,7 @@ pub use cidr_list::CidrList;
 pub use forward_route::ForwardRouteList;
 pub use icmp_type::IcmpType;
 pub use icmpv6_type::Icmpv6Type;
+pub use inbound_rule::InboundRuleList;
 pub use interface::Interface;
 #[allow(unused_imports)]
 pub use port::Port;
@@ -131,6 +133,21 @@ pub fn get_port_accept(var_name: &str, _errors: &mut [String], default: PortList
     match get_string_var(var_name) {
         Ok(val) => match PortList::new(&val) {
             Ok(port_list) => port_list,
+            Err(_) => default,
+        },
+        Err(_) => default,
+    }
+}
+
+/// Gets an `InboundRuleList` from an environment variable, or returns a default.
+pub fn get_inbound_rules(
+    var_name: &str,
+    _errors: &mut [String],
+    default: InboundRuleList,
+) -> InboundRuleList {
+    match get_string_var(var_name) {
+        Ok(val) => match InboundRuleList::new(&val) {
+            Ok(list) => list,
             Err(_) => default,
         },
         Err(_) => default,
