@@ -3,6 +3,11 @@
 flush ruleset
 
 table inet filter {
+    flowtable ft {
+        hook ingress priority 0
+        devices = { {{ interface_wan }}, {% for vlan in vlans %}{{ vlan.interface_name }}{% if !loop.last %}, {% endif %}{% endfor %} }
+    }
+
     # Filter traffic destined for the router itself:
     chain input {
         type filter hook input priority 0; policy drop;
@@ -118,8 +123,8 @@ table inet filter {
     # This filters traffic before the postrouting chain.
     chain forward {
         type filter hook forward priority 0; policy drop;
-        # Allow existing established and related connections
-        ct state established,related accept
+        # Offload established/related connections to flowtable fastpath
+        ct state established,related flow add @ft accept
         # Drop invalid conntrack state (malformed, out-of-sequence packets)
         ct state invalid drop
 
