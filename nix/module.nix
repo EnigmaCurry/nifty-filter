@@ -27,6 +27,7 @@ let
   # Collect enabled optional packages
   optionalPackages = lib.concatLists [
     (lib.optional cfg.packages.sodola-switch.enable sodola-switch)
+    (lib.optional cfg.packages.iperf.enable pkgs.iperf3)
   ];
 
 in
@@ -43,6 +44,9 @@ in
     packages = {
       sodola-switch = {
         enable = mkEnableOption "Sodola SL-SWTGW218AS managed switch client";
+      };
+      iperf = {
+        enable = mkEnableOption "iperf3 bandwidth testing server";
       };
     };
   };
@@ -139,6 +143,22 @@ in
           exit 1
         fi
       '';
+    };
+
+    # iperf3 bandwidth testing server (enabled via packages.iperf.enable)
+    systemd.services.nifty-iperf = mkIf cfg.packages.iperf.enable {
+      description = "iperf3 bandwidth testing server";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network.target" "nifty-filter.service" ];
+
+      serviceConfig = {
+        Type = "simple";
+        EnvironmentFile = cfg.configPath;
+        ExecStart = "${pkgs.bash}/bin/bash -c '${pkgs.iperf3}/bin/iperf3 --server --port \${IPERF_PORT:-5201}'";
+        Restart = "on-failure";
+        RestartSec = "5s";
+        DynamicUser = true;
+      };
     };
 
     # Sodola switch supervisor (enabled via packages.sodola-switch.enable)

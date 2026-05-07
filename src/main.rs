@@ -122,6 +122,9 @@ struct RouterTemplate {
     tcp_forward_wan: ForwardRouteList,
     udp_forward_wan: ForwardRouteList,
 
+    // iperf3 server port
+    iperf_port: u16,
+
     // Anti-spoofing: bogon source addresses to drop on WAN
     wan_bogons_ipv4: String,
     wan_bogons_ipv6: String,
@@ -218,6 +221,15 @@ impl RouterTemplate {
             ForwardRouteList::new("").unwrap(),
         );
 
+        // iperf3 port
+        let iperf_port: u16 = env::var("IPERF_PORT")
+            .unwrap_or_else(|_| "5201".to_string())
+            .parse()
+            .unwrap_or_else(|_| {
+                errors.push("IPERF_PORT must be a valid port number.".to_string());
+                5201
+            });
+
         // Anti-spoofing bogon lists
         let wan_bogons_ipv4 = if enable_ipv4 {
             get_cidr_list(
@@ -259,6 +271,7 @@ impl RouterTemplate {
             udp_accept_wan,
             tcp_forward_wan,
             udp_forward_wan,
+            iperf_port,
             wan_bogons_ipv4,
             wan_bogons_ipv6,
         })
@@ -451,6 +464,7 @@ mod tests {
                     || k.starts_with("LAN_")
                     || k.starts_with("WAN_")
                     || k.starts_with("DHCP")
+                    || k.starts_with("IPERF")
                     || k == "VLANS"
                     || k == "VLAN_AWARE_SWITCH"
             })

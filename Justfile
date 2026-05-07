@@ -740,6 +740,66 @@ pve-snapshot pve_host vmid vm_name comment="":
     echo "  Description: ${DESC}"
     echo "  Rollback: ssh ${REMOTE} qm rollback ${VMID} ${SNAP_NAME}"
 
+# Delete all snapshots for a VM and create a fresh one
+pve-snapshot-prune pve_host vmid vm_name:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    PVE_HOST="{{pve_host}}"
+    VMID="{{vmid}}"
+    VM_NAME="{{vm_name}}"
+    REMOTE="root@${PVE_HOST}"
+    ACTUAL_NAME=$(ssh ${REMOTE} "qm config ${VMID} 2>/dev/null | grep '^name:' | awk '{print \$2}'" || true)
+    if [[ -z "${ACTUAL_NAME}" ]]; then
+        echo "ERROR: VM ${VMID} does not exist on ${PVE_HOST}"
+        exit 1
+    fi
+    if [[ "${ACTUAL_NAME}" != "${VM_NAME}" ]]; then
+        echo "ERROR: VM ${VMID} is named '${ACTUAL_NAME}', not '${VM_NAME}'"
+        exit 1
+    fi
+
+    # List existing snapshots (skip 'current' which is the live state)
+    SNAPSHOTS=$(ssh ${REMOTE} "qm listsnapshot ${VMID}" | grep -v '^\s*`->.*current' | awk '{print $2}' | grep -v '^$' || true)
+    SNAP_COUNT=$(echo "${SNAPSHOTS}" | grep -c . || true)
+
+    if [[ "${SNAP_COUNT}" -eq 0 ]]; then
+        echo "No snapshots found for VM ${VMID} (${VM_NAME})."
+    else
+        echo "Found ${SNAP_COUNT} snapshot(s) for VM ${VMID} (${VM_NAME}):"
+        echo "${SNAPSHOTS}" | sed 's/^/  /'
+    fi
+
+    VERSION=$(grep -Po '^version = \K.*' Cargo.toml | sed 's/"//g' | head -1)
+    GIT_SHA=$(git rev-parse --short HEAD)
+    NEW_SNAP="v${VERSION//./-}-${GIT_SHA}-$(date +%Y%m%d-%H%M%S)"
+
+    echo ""
+    echo "This will:"
+    if [[ "${SNAP_COUNT}" -gt 0 ]]; then
+        echo "  1. Delete all ${SNAP_COUNT} existing snapshot(s)"
+    fi
+    echo "  2. Create new snapshot: ${NEW_SNAP}"
+    echo ""
+    read -rp "Proceed? [y/N] " REPLY
+    if [[ ! "${REPLY}" =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 0
+    fi
+
+    # Delete all existing snapshots
+    for snap in ${SNAPSHOTS}; do
+        echo "Deleting snapshot: ${snap}"
+        ssh ${REMOTE} "qm delsnapshot ${VMID} '${snap}'"
+    done
+
+    # Create new snapshot
+    DESC="nifty-filter v${VERSION} (${GIT_SHA})"
+    echo "Creating snapshot ${NEW_SNAP}..."
+    ssh ${REMOTE} "qm snapshot ${VMID} '${NEW_SNAP}' --description '${DESC}'"
+    echo "  Snapshot: ${NEW_SNAP}"
+    echo "  Description: ${DESC}"
+    echo "  Rollback: ssh ${REMOTE} qm rollback ${VMID} ${NEW_SNAP}"
+
 # Clean all artifacts
 clean *args: clean-profile
     cargo clean {{args}}

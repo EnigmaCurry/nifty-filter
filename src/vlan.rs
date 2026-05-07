@@ -29,6 +29,7 @@ pub struct Vlan {
     pub udp_forward: ForwardRouteList,
     pub tcp_allow_inbound: InboundRuleList,
     pub udp_allow_inbound: InboundRuleList,
+    pub iperf_enabled: bool,
     pub dhcp_enabled: bool,
     pub dhcp_pool_start: String,
     pub dhcp_pool_end: String,
@@ -141,6 +142,13 @@ fn apply_legacy_aliases() {
             if env::var(vlan_var).is_err() {
                 env::set_var(vlan_var, &val);
             }
+        }
+    }
+
+    // Map IPERF_ENABLED
+    if let Ok(val) = env::var("IPERF_ENABLED") {
+        if env::var("VLAN_1_IPERF_ENABLED").is_err() {
+            env::set_var("VLAN_1_IPERF_ENABLED", &val);
         }
     }
 
@@ -282,6 +290,13 @@ fn parse_single_vlan(
         String::new()
     };
 
+    // iperf3 server access
+    let iperf_enabled = get_bool(
+        &format!("VLAN_{}_IPERF_ENABLED", vlan_id),
+        errors,
+        Some(false),
+    );
+
     // DHCP (read early so we can adjust UDP defaults)
     let dhcp_enabled = get_bool(
         &format!("VLAN_{}_DHCP_ENABLED", vlan_id),
@@ -365,6 +380,7 @@ fn parse_single_vlan(
         udp_forward,
         tcp_allow_inbound,
         udp_allow_inbound,
+        iperf_enabled,
         dhcp_enabled,
         dhcp_pool_start,
         dhcp_pool_end,

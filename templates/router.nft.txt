@@ -3,10 +3,13 @@
 flush ruleset
 
 table inet filter {
+    {% if !vlan_aware_switch %}
+    # Flowtable offload requires physical interfaces; VLAN sub-interfaces cannot be offloaded.
     flowtable ft {
         hook ingress priority 0
         devices = { {{ interface_wan }}, {% for vlan in vlans %}{{ vlan.interface_name }}{% if !loop.last %}, {% endif %}{% endfor %} }
     }
+    {% endif %}
 
     # Filter traffic destined for the router itself:
     chain input {
@@ -77,6 +80,16 @@ table inet filter {
         # No source address filter — DHCP clients use 0.0.0.0 before they have a lease
         iif "{{ vlan.interface_name }}" udp dport { {{ vlan.udp_accept }} } accept
         {% endif %}
+
+        {% if vlan.iperf_enabled %}
+        # Allow iperf3 from VLAN {{ vlan.id }}
+        {% if enable_ipv4 && vlan.subnet_ipv4 != "" %}
+        ip saddr {{ vlan.subnet_ipv4 }} iif "{{ vlan.interface_name }}" tcp dport {{ iperf_port }} accept
+        {% endif %}
+        {% if enable_ipv6 && vlan.subnet_ipv6 != "" %}
+        ip6 saddr {{ vlan.subnet_ipv6 }} iif "{{ vlan.interface_name }}" tcp dport {{ iperf_port }} accept
+        {% endif %}
+        {% endif %}
         {% endfor %}
 
         {% if enable_ipv4 %}
@@ -124,7 +137,11 @@ table inet filter {
     chain forward {
         type filter hook forward priority 0; policy drop;
         # Offload established/related connections to flowtable fastpath
+        {% if vlan_aware_switch %}
+        ct state established,related accept
+        {% else %}
         ct state established,related flow add @ft accept
+        {% endif %}
         # Drop invalid conntrack state (malformed, out-of-sequence packets)
         ct state invalid drop
 
