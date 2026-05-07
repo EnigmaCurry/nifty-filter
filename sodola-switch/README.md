@@ -95,7 +95,7 @@ sodola-switch reboot
 
 Credentials are stored at `~/.local/share/nifty-filter/sodola-switch/credentials` (mode 0600).
 
-Route defaults can be overridden with `SODOLA_TRUNK_IFACE` and `SODOLA_ROUTER_IP` env vars.
+Route defaults can be overridden with `SODOLA_MGMT_IFACE` and `SODOLA_ROUTER_IP` env vars.
 
 ## How it works
 

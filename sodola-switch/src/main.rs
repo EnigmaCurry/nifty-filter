@@ -150,7 +150,7 @@ enum Commands {
     /// Add IP address to trunk interface so the switch is reachable (requires sudo)
     RouteUp {
         /// Network interface connected to the switch
-        #[arg(long, env = "SODOLA_TRUNK_IFACE", default_value = "trunk")]
+        #[arg(long, env = "SODOLA_MGMT_IFACE", default_value = "trunk")]
         iface: String,
         /// IP address to assign (in the switch's subnet)
         #[arg(long, env = "SODOLA_ROUTER_IP", default_value = "192.168.2.2/24")]
@@ -159,7 +159,7 @@ enum Commands {
     /// Remove IP address from trunk interface (requires sudo)
     RouteDown {
         /// Network interface connected to the switch
-        #[arg(long, env = "SODOLA_TRUNK_IFACE", default_value = "trunk")]
+        #[arg(long, env = "SODOLA_MGMT_IFACE", default_value = "trunk")]
         iface: String,
         /// IP address to remove
         #[arg(long, env = "SODOLA_ROUTER_IP", default_value = "192.168.2.2/24")]
@@ -181,6 +181,15 @@ enum Commands {
         /// Save configuration to flash ROM after applying changes
         #[arg(long)]
         save: bool,
+        /// Run as a daemon, checking every N seconds (0 = run once and exit)
+        #[arg(long, env = "SODOLA_INTERVAL", default_value = "0")]
+        interval: u64,
+        /// Network interface for route-up (only used with --interval)
+        #[arg(long, env = "SODOLA_MGMT_IFACE", default_value = "trunk")]
+        iface: Option<String>,
+        /// IP address for route-up (only used with --interval)
+        #[arg(long, env = "SODOLA_ROUTER_IP", default_value = "192.168.2.2/24")]
+        ip: Option<String>,
     },
 }
 
@@ -280,9 +289,13 @@ fn parse_desired_state(env_file: &std::path::Path) -> Result<Option<DesiredState
     dotenvy::from_filename(env_file)
         .map_err(|e| format!("failed to load {}: {}", env_file.display(), e))?;
 
-    let vlans_str = match env::var("SWITCH_VLANS") {
-        Ok(s) if !s.is_empty() => s,
-        _ => return Ok(None),
+    // SWITCH_VLANS takes priority; fall back to VLANS (auto-adding VLAN 1)
+    let vlans_str = match env::var("SWITCH_VLANS").ok().filter(|s| !s.is_empty()) {
+        Some(s) => s,
+        None => match env::var("VLANS").ok().filter(|s| !s.is_empty()) {
+            Some(s) => format!("1,{}", s),
+            None => return Ok(None),
+        },
     };
     let managed_vids: HashSet<u16> = vlans_str
         .split(',')
@@ -300,8 +313,10 @@ fn parse_desired_state(env_file: &std::path::Path) -> Result<Option<DesiredState
             .map_err(|_| format!("{} not set (required for VLAN {})", ports_key, vid))?;
         let ports = parse_port_modes(&ports_str)
             .map_err(|e| format!("{}: {}", ports_key, e))?;
-        let name_key = format!("SWITCH_VLAN_{}_NAME", vid);
-        let name = env::var(&name_key).unwrap_or_default();
+        // SWITCH_VLAN_{ID}_NAME takes priority, falls back to VLAN_{ID}_NAME
+        let name = env::var(format!("SWITCH_VLAN_{}_NAME", vid))
+            .or_else(|_| env::var(format!("VLAN_{}_NAME", vid)))
+            .unwrap_or_default();
         vlans.push(DesiredVlan { vid, name, ports });
     }
 
@@ -373,17 +388,17 @@ fn run_supervise(client: &mut SodolaClient, env_file: &std::path::Path, state_fi
         }
         Err(e) => {
             eprintln!("supervise: config error: {}", e);
-            exit(1);
+            return;
         }
     };
 
     let current_vlans = match client.vlans() {
         Ok(v) => v,
-        Err(e) => { eprintln!("supervise: failed to read VLANs: {}", e); exit(1); }
+        Err(e) => { eprintln!("supervise: failed to read VLANs: {}", e); return; }
     };
     let current_pvid = match client.pvid() {
         Ok(p) => p,
-        Err(e) => { eprintln!("supervise: failed to read PVID: {}", e); exit(1); }
+        Err(e) => { eprintln!("supervise: failed to read PVID: {}", e); return; }
     };
 
     let mut changes = 0u32;
@@ -491,6 +506,31 @@ fn run_supervise(client: &mut SodolaClient, env_file: &std::path::Path, state_fi
     }
 }
 
+fn route_up(iface: &str, ip: &str) {
+    let output = if unsafe { libc::geteuid() } == 0 {
+        Command::new("ip").args(["addr", "add", ip, "dev", iface]).output()
+    } else {
+        Command::new("sudo").args(["ip", "addr", "add", ip, "dev", iface]).output()
+    };
+    match output {
+        Ok(o) if o.status.success() => {
+            eprintln!("Added {} to {}", ip, iface);
+        }
+        Ok(o) => {
+            // exit code 2 = already exists, silently ignore
+            if o.status.code() != Some(2) {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                eprintln!("Failed to add {} to {} (exit {}): {}", ip, iface, o.status, stderr.trim());
+                exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to run ip: {}", e);
+            exit(1);
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
     let mut client = SodolaClient::new(&cli.url);
@@ -498,47 +538,25 @@ fn main() {
     // Route commands run ip(8) directly — no switch connection needed
     match &cli.command {
         Commands::RouteUp { iface, ip } => {
-            let status = if unsafe { libc::geteuid() } == 0 {
-                Command::new("ip").args(["addr", "add", ip, "dev", iface]).status()
-            } else {
-                Command::new("sudo").args(["ip", "addr", "add", ip, "dev", iface]).status()
-            };
-            match status {
-                Ok(s) if s.success() => {
-                    eprintln!("Added {} to {}", ip, iface);
-                    return;
-                }
-                Ok(s) => {
-                    // exit code 2 = already exists, treat as success
-                    if s.code() == Some(2) {
-                        return;
-                    }
-                    eprintln!("Failed to add {} to {} (exit {})", ip, iface, s);
-                    exit(1);
-                }
-                Err(e) => {
-                    eprintln!("Failed to run ip: {}", e);
-                    exit(1);
-                }
-            }
+            route_up(iface, ip);
+            return;
         }
         Commands::RouteDown { iface, ip } => {
-            let status = if unsafe { libc::geteuid() } == 0 {
-                Command::new("ip").args(["addr", "del", ip, "dev", iface]).status()
+            let output = if unsafe { libc::geteuid() } == 0 {
+                Command::new("ip").args(["addr", "del", ip, "dev", iface]).output()
             } else {
-                Command::new("sudo").args(["ip", "addr", "del", ip, "dev", iface]).status()
+                Command::new("sudo").args(["ip", "addr", "del", ip, "dev", iface]).output()
             };
-            match status {
-                Ok(s) if s.success() => {
+            match output {
+                Ok(o) if o.status.success() => {
                     eprintln!("Removed {} from {}", ip, iface);
                     return;
                 }
                 Ok(_) => {
-                    eprintln!("{} not present on {}", ip, iface);
                     return;
                 }
                 Err(e) => {
-                    eprintln!("Failed to run sudo: {}", e);
+                    eprintln!("Failed to run ip: {}", e);
                     exit(1);
                 }
             }
@@ -561,7 +579,7 @@ fn main() {
     }
 
     // Supervise handles its own auth from the env file
-    if let Commands::Supervise { ref env_file, ref state_file, dry_run, save } = cli.command {
+    if let Commands::Supervise { ref env_file, ref state_file, dry_run, save, interval, ref iface, ref ip } = cli.command {
         let path = env_file.clone().unwrap_or_else(|| config_dir().join("config.env"));
         // Load env file first so SODOLA_URL/USER/PASS are available
         if let Err(e) = dotenvy::from_filename(&path) {
@@ -571,12 +589,31 @@ fn main() {
         let url = env::var("SODOLA_URL").unwrap_or_else(|_| "http://192.168.2.1".to_string());
         let user = env::var("SODOLA_USER").unwrap_or_else(|_| "admin".to_string());
         let pass = env::var("SODOLA_PASS").unwrap_or_else(|_| "admin".to_string());
-        let mut client = SodolaClient::new(&url);
-        if let Err(e) = client.login(&user, &pass) {
-            eprintln!("supervise: login failed: {}", e);
-            exit(1);
+
+        if interval == 0 {
+            // One-shot mode
+            let mut client = SodolaClient::new(&url);
+            if let Err(e) = client.login(&user, &pass) {
+                eprintln!("supervise: login failed: {}", e);
+                exit(1);
+            }
+            run_supervise(&mut client, &path, state_file.as_deref(), dry_run, save);
+        } else {
+            // Daemon mode: route-up first, then loop
+            if let (Some(iface), Some(ip)) = (iface, ip) {
+                route_up(iface, ip);
+            }
+            eprintln!("supervise: starting daemon (interval={}s)", interval);
+            loop {
+                let mut client = SodolaClient::new(&url);
+                if let Err(e) = client.login(&user, &pass) {
+                    eprintln!("supervise: login failed (will retry): {}", e);
+                } else {
+                    run_supervise(&mut client, &path, state_file.as_deref(), dry_run, save);
+                }
+                std::thread::sleep(std::time::Duration::from_secs(interval));
+            }
         }
-        run_supervise(&mut client, &path, state_file.as_deref(), dry_run, save);
         return;
     }
 

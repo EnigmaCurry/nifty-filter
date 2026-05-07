@@ -144,32 +144,23 @@ in
     # Sodola switch supervisor (enabled via packages.sodola-switch.enable)
     systemd.services.nifty-sodola-switch = mkIf cfg.packages.sodola-switch.enable {
       description = "Supervise Sodola switch VLAN configuration";
+      wantedBy = [ "multi-user.target" ];
       after = [ "network.target" "nifty-filter.service" ];
 
       path = [ pkgs.iproute2 pkgs.nftables ];
       serviceConfig = {
-        Type = "oneshot";
+        Type = "simple";
         RuntimeDirectory = "nifty-filter";
         RuntimeDirectoryPreserve = "yes";
         EnvironmentFile = cfg.configPath;
         ExecStartPre = [
-          "${sodola-switch}/bin/sodola-switch route-up"
           # Block forwarded traffic to the switch management subnet —
           # only the router itself (output chain) may reach the switch.
           "${pkgs.bash}/bin/bash -c 'NETWORK=$(echo $SODOLA_ROUTER_IP | sed \"s|\\.[0-9]*/|.0/|\"); nft insert rule inet filter forward ip daddr $NETWORK drop comment \"block switch mgmt\" 2>/dev/null || true'"
         ];
-        ExecStart = "${sodola-switch}/bin/sodola-switch supervise --env-file ${cfg.configPath} --state-file /run/nifty-filter/sodola-switch.json";
-      };
-    };
-
-    systemd.timers.nifty-sodola-switch = mkIf cfg.packages.sodola-switch.enable {
-      description = "Supervise Sodola switch every 60s";
-      wantedBy = [ "timers.target" ];
-
-      timerConfig = {
-        OnBootSec = "30s";
-        OnUnitActiveSec = "60s";
-        Unit = "nifty-sodola-switch.service";
+        ExecStart = "${sodola-switch}/bin/sodola-switch supervise --interval 60 --env-file ${cfg.configPath} --state-file /run/nifty-filter/sodola-switch.json";
+        Restart = "on-failure";
+        RestartSec = "10s";
       };
     };
   };
