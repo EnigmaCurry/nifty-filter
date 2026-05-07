@@ -44,6 +44,7 @@ in
 
   # --- Nifty-filter firewall (reads /var/nifty-filter/nifty-filter.env at boot) ---
   services.nifty-filter.enable = true;
+  services.nifty-filter.packages.sodola-switch.enable = true;
 
   # Set hostname from /var/nifty-filter/nifty-filter.env at boot
   systemd.services.nifty-hostname = {
@@ -364,6 +365,9 @@ in
         cat > /run/systemd/network/10-trunk.network <<NETEOF
       [Match]
       Name=${d}INTERFACE_TRUNK
+
+      [Link]
+      RequiredForOnline=no
 
       [Network]
       ${d}TRUNK_VLAN_LINES

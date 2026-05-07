@@ -638,7 +638,7 @@ dependencies = [
 
 [[package]]
 name = "nifty-filter"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "askama",
  "clap",
@@ -939,6 +939,8 @@ name = "sodola-switch"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "dotenvy",
+ "libc",
  "md-5",
  "rpassword",
  "serde",

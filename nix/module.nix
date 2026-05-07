@@ -16,10 +16,18 @@ let
   inherit (lib) mkEnableOption mkOption types mkIf;
 
   nifty-filter = self.packages.${pkgs.stdenv.hostPlatform.system}.nifty-filter;
-  sodola-switch = self.packages.${pkgs.stdenv.hostPlatform.system}.sodola-switch;
 
   configDir = "/var/nifty-filter";
   envFile = "${configDir}/nifty-filter.env";
+
+  sodola-switch = self.packages.${pkgs.stdenv.hostPlatform.system}.sodola-switch;
+  sodolaConfigDir = "${configDir}/sodola-switch";
+  sodola-credentials = "${sodolaConfigDir}/credentials";
+
+  # Collect enabled optional packages
+  optionalPackages = lib.concatLists [
+    (lib.optional cfg.packages.sodola-switch.enable sodola-switch)
+  ];
 
 in
 {
@@ -30,6 +38,12 @@ in
       type = types.str;
       default = envFile;
       description = "Path to the nifty-filter.env configuration file on the writable partition.";
+    };
+
+    packages = {
+      sodola-switch = {
+        enable = mkEnableOption "Sodola SL-SWTGW218AS managed switch client";
+      };
     };
   };
 
@@ -50,7 +64,7 @@ in
     };
 
     # Make the binary available system-wide
-    environment.systemPackages = [ nifty-filter sodola-switch ];
+    environment.systemPackages = [ nifty-filter ] ++ optionalPackages;
 
     # Seed the default config on first boot if it doesn't exist
     systemd.services.nifty-filter-init = {
@@ -125,6 +139,38 @@ in
           exit 1
         fi
       '';
+    };
+
+    # Sodola switch supervisor (enabled via packages.sodola-switch.enable)
+    systemd.services.nifty-sodola-switch = mkIf cfg.packages.sodola-switch.enable {
+      description = "Supervise Sodola switch VLAN configuration";
+      after = [ "network.target" "nifty-filter.service" ];
+
+      path = [ pkgs.iproute2 pkgs.nftables ];
+      serviceConfig = {
+        Type = "oneshot";
+        RuntimeDirectory = "nifty-filter";
+        RuntimeDirectoryPreserve = "yes";
+        EnvironmentFile = cfg.configPath;
+        ExecStartPre = [
+          "${sodola-switch}/bin/sodola-switch route-up"
+          # Block forwarded traffic to the switch management subnet —
+          # only the router itself (output chain) may reach the switch.
+          "${pkgs.bash}/bin/bash -c 'NETWORK=$(echo $SODOLA_ROUTER_IP | sed \"s|\\.[0-9]*/|.0/|\"); nft insert rule inet filter forward ip daddr $NETWORK drop comment \"block switch mgmt\" 2>/dev/null || true'"
+        ];
+        ExecStart = "${sodola-switch}/bin/sodola-switch supervise --env-file ${cfg.configPath} --state-file /run/nifty-filter/sodola-switch.json";
+      };
+    };
+
+    systemd.timers.nifty-sodola-switch = mkIf cfg.packages.sodola-switch.enable {
+      description = "Supervise Sodola switch every 60s";
+      wantedBy = [ "timers.target" ];
+
+      timerConfig = {
+        OnBootSec = "30s";
+        OnUnitActiveSec = "60s";
+        Unit = "nifty-sodola-switch.service";
+      };
     };
   };
 }

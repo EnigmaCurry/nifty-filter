@@ -73,7 +73,7 @@
         in {
           nifty-filter = pkgs.rustPlatform.buildRustPackage {
             pname = "nifty-filter";
-            version = "0.2.0";
+            version = "0.2.1";
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
             buildFeatures = [ "nixos" ];
