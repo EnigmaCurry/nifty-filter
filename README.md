@@ -265,13 +265,4 @@ All config lives in `/var/nifty-filter/`:
     ssh_host_*            # Persistent SSH host keys
 ```
 
-### Default firewall rules
-
- * Default deny on input, forward, and output chains
- * Stateful connection tracking (established/related)
- * LAN-to-WAN forwarding with masquerade NAT
- * SSH (port 22) accepted on both WAN and LAN
- * DHCP (ports 67/68) accepted on LAN
- * ICMP echo accepted on LAN
- * Configurable port forwarding (DNAT)
 
