@@ -10,6 +10,9 @@ nifty-filter is two things that share the same name:
    DNS, VLANs, and an interactive installer. Deploy it on Proxmox VE
    or bare metal.
 
+nifty-filter is in a stage of development and should be used for research purposes
+only. Use it at your own risk!
+
 ## Standalone usage
 
 ```bash
@@ -44,8 +47,7 @@ firewall, and an interactive configuration TUI — all driven by env
 files on the writable `/var` partition. The root filesystem is
 read-only.
 
-This router is in development and is to be used for research purposes
-only. Install it on Proxmox VE (preferred for backups and QoL) or
+Install it on Proxmox VE (preferred for backups and QoL) or
 bare metal. You can use virtual NICs (for routing other VMs) or real
 network hardware via PCI passthrough. A full router on a hypervisor
 platform is useful to put your apps right on the edge of your network.
