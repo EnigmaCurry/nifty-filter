@@ -1,14 +1,13 @@
 # nifty-filter
 
-nifty-filter is two things that share the same name:
+nifty-filter is a declarative config to deploy routers and firewalls. It is two things that share the same name:
 
-1. **A standalone nftables rule generator** — a Rust binary that reads
+1. **A standalone nftables rule generator** — a Rust library and CLI tool that reads
    env vars (or a `.env` file) and emits a complete nftables ruleset.
    Install it with `cargo install nifty-filter` and use it anywhere.
-2. **A declarative NixOS router distribution** — an immutable,
-   read-only NixOS system built around that same binary, with DHCP,
-   DNS, VLANs, and an interactive installer. Deploy it on Proxmox VE
-   or bare metal.
+   
+2. **A declarative NixOS router distribution** — a declarative NixOS system built around that same binary, with DHCP,
+   DNS, VLANs, and an interactive installer. Deploy it on Proxmox VE or bare metal.
 
 nifty-filter is in a stage of development and should be used for research purposes
 only. Use it at your own risk!
