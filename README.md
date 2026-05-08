@@ -1,6 +1,6 @@
 # nifty-filter
 
-nifty-filter is a declarative config to deploy routers and firewalls. It is two things that share the same name:
+nifty-filter is a declarative config to deploy network routers and firewalls. It is two things that share the same name:
 
 1. **A standalone nftables rule generator** — a Rust library and CLI tool that reads
    env vars (or a `.env` file) and emits a complete nftables ruleset.
