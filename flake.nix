@@ -114,7 +114,7 @@
                   pname = "nifty-dashboard-frontend";
                   version = "0.1.0";
                   src = ./crates/nifty-dashboard/frontend;
-                  hash = "sha256-AOIYrdLOyzHLRo+PNFra21uowZLLBYxIRD/5ZANtTPs=";
+                  hash = "sha256-PCIjOq4qHY/I/TvU+pdOBbWWdhETwsuxwaehbVm1hg8=";
                   fetcherVersion = 2;
                 };
                 buildPhase = ''
@@ -132,7 +132,7 @@
               cargoLock = {
                 lockFile = ./crates/nifty-dashboard/Cargo.lock;
                 outputHashes = {
-                  "conf-0.4.5" = "sha256-efuSj5LKTfKZ5IIR9/7Qmr/W2rSGBBrcWQJXC6ktm4Q=";
+                  "conf-0.4.5" = "sha256-gxxB8t0bl8ZudylXe4edAIVjO4KNHZshUhifvpm1b5E=";
                 };
               };
               cargoBuildFlags = [ "-p" "nifty-dashboard" ];
