@@ -1,0 +1,9 @@
+# Ignore specific advirsories from `cargo audit`
+# This is mostly due to red herrings due to weak features
+# See https://github.com/launchbadge/sqlx/issues/3211
+
+[advisories]
+ignore = [
+  # Ignore warning about using RSA crate, because we're not using MySQL.
+  "RUSTSEC-2023-0071",
+]

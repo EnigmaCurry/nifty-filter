@@ -5,6 +5,7 @@ pub mod forward_route;
 pub mod icmp_type;
 pub mod icmpv6_type;
 pub mod inbound_rule;
+pub mod inter_vlan_rule;
 pub mod interface;
 pub mod port;
 pub mod subnet;

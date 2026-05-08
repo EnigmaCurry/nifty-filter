@@ -563,17 +563,17 @@ mod tests {
         assert!(rendered.contains("ip saddr 10.10.0.1/24 ip daddr { 0.0.0.0/0 }"));
         // VLAN 20 should NOT have egress (empty)
         assert!(!rendered.contains("ip saddr 10.20.0.1/24 ip daddr"));
-        // VLAN 10 should have SSH
-        assert!(rendered.contains(r#"ip saddr 10.10.0.1/24 iif "trunk.10" tcp dport { 22 }"#));
-        // VLAN 20 should NOT have TCP accept (empty)
-        assert!(!rendered.contains(r#"iif "trunk.20" tcp dport"#));
+        // VLAN 10 should jump to per-VLAN input chain
+        assert!(rendered.contains(r#"iif "trunk.10" jump input_vlan_10"#));
+        // VLAN 10 should have SSH in its per-VLAN chain
+        assert!(rendered.contains(r#"ip saddr 10.10.0.1/24 tcp dport { 22 }"#));
+        // VLAN 20 should jump to per-VLAN input chain
+        assert!(rendered.contains(r#"iif "trunk.20" jump input_vlan_20"#));
         // Should have untagged trunk drop (switch-aware)
         assert!(rendered.contains("Dropped untagged trunk input"));
         assert!(rendered.contains("Dropped untagged trunk forward"));
-        // Should have inter-VLAN drops
-        assert!(rendered.contains("inter-VLAN"));
-        assert!(rendered.contains(r#"iif "trunk.10" oif "trunk.20""#));
-        assert!(rendered.contains(r#"iif "trunk.20" oif "trunk.10""#));
+        // Inter-VLAN traffic is dropped by the default drop policy (no explicit inter-VLAN drop rules needed)
+        assert!(rendered.contains("Default drop"));
 
         clear_env();
     }
@@ -658,9 +658,8 @@ mod tests {
         assert!(rendered.contains(r#"iif "iot""#));
         assert!(!rendered.contains("trunk.10"));
         assert!(!rendered.contains("trunk.20"));
-        // Inter-VLAN isolation uses custom names
-        assert!(rendered.contains(r#"iif "trusted" oif "iot""#));
-        assert!(rendered.contains(r#"iif "iot" oif "trusted""#));
+        // Inter-VLAN traffic is dropped by the default drop policy
+        assert!(rendered.contains("Default drop"));
 
         clear_env();
     }
@@ -690,15 +689,63 @@ mod tests {
         let tmpl = RouterTemplate::from_env().unwrap_or_else(|e| panic!("should parse: {:?}", e));
         let rendered = tmpl.render().unwrap();
 
-        // VLAN 10 gets SSH
-        assert!(rendered.contains(r#"ip saddr 10.10.0.1/24 iif "trunk.10" tcp dport { 22 }"#));
-        // VLAN 20 does NOT get any TCP accept (empty string, block skipped)
-        // Verify no tcp dport rule for trunk.20
-        assert!(!rendered.contains(r#"iif "trunk.20" tcp dport"#));
-        // VLAN 10 gets full ICMP
-        assert!(rendered.contains(r#"iif "trunk.10" ip saddr 10.10.0.1/24 icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded }"#));
-        // VLAN 20 gets minimal ICMP
-        assert!(rendered.contains(r#"iif "trunk.20" ip saddr 10.20.0.1/24 icmp type { destination-unreachable }"#));
+        // VLAN 10 gets SSH in its per-VLAN chain
+        assert!(rendered.contains(r#"iif "trunk.10" jump input_vlan_10"#));
+        assert!(rendered.contains(r#"ip saddr 10.10.0.1/24 tcp dport { 22 }"#));
+        // VLAN 20 jumps to its chain but has no TCP accept
+        assert!(rendered.contains(r#"iif "trunk.20" jump input_vlan_20"#));
+        // VLAN 10 gets full ICMP in its per-VLAN chain
+        assert!(rendered.contains(r#"ip saddr 10.10.0.1/24 icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded }"#));
+        // VLAN 20 gets minimal ICMP in its per-VLAN chain
+        assert!(rendered.contains(r#"ip saddr 10.20.0.1/24 icmp type { destination-unreachable }"#));
+
+        clear_env();
+    }
+
+    #[test]
+    fn test_inter_vlan_allow_rules() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+
+        env::set_var("INTERFACE_TRUNK", "trunk");
+        env::set_var("INTERFACE_WAN", "wan");
+        env::set_var("VLAN_AWARE_SWITCH", "true");
+        env::set_var("VLANS", "10,40");
+
+        env::set_var("VLAN_10_NAME", "trusted");
+        env::set_var("VLAN_10_SUBNET_IPV4", "10.99.10.1/24");
+        env::set_var("VLAN_10_EGRESS_ALLOWED_IPV4", "0.0.0.0/0");
+        env::set_var("VLAN_10_TCP_ACCEPT", "22");
+        env::set_var("VLAN_10_UDP_ACCEPT", "67,68");
+
+        env::set_var("VLAN_40_NAME", "lab");
+        env::set_var("VLAN_40_SUBNET_IPV4", "10.99.40.1/24");
+        env::set_var("VLAN_40_TCP_ACCEPT", "");
+        env::set_var("VLAN_40_UDP_ACCEPT", "67,68");
+
+        // Allow all of VLAN 10 to reach 10.99.40.5:80 (2-tuple)
+        // Allow only 10.99.10.50 to reach 10.99.40.5:443 (3-tuple)
+        env::set_var("VLAN_40_ALLOW_FROM_10_TCP", "10.99.40.5:80,10.99.10.50:10.99.40.5:443");
+        env::set_var("VLAN_40_ALLOW_FROM_10_UDP", "10.99.40.5:53");
+
+        let tmpl = RouterTemplate::from_env().unwrap_or_else(|e| panic!("should parse inter-VLAN allow: {:?}", e));
+        let rendered = tmpl.render().unwrap();
+
+        // 2-tuple: no saddr filter
+        assert!(rendered.contains(
+            r#"iif "trusted" oif "lab" ip daddr 10.99.40.5 tcp dport 80 accept"#
+        ));
+        // 3-tuple: saddr filter
+        assert!(rendered.contains(
+            r#"iif "trusted" oif "lab" ip saddr 10.99.10.50 ip daddr 10.99.40.5 tcp dport 443 accept"#
+        ));
+        // UDP rule
+        assert!(rendered.contains(
+            r#"iif "trusted" oif "lab" ip daddr 10.99.40.5 udp dport 53 accept"#
+        ));
+        // Comments
+        assert!(rendered.contains("Allow inter-VLAN TCP from VLAN 10 to VLAN 40"));
+        assert!(rendered.contains("Allow inter-VLAN UDP from VLAN 10 to VLAN 40"));
 
         clear_env();
     }

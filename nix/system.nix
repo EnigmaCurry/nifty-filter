@@ -45,6 +45,7 @@ in
   # --- Nifty-filter firewall (reads /var/nifty-filter/nifty-filter.env at boot) ---
   services.nifty-filter.enable = true;
   services.nifty-filter.packages.sodola-switch.enable = true;
+  services.nifty-filter.packages.nifty-dashboard.enable = true;
   services.nifty-filter.packages.iperf.enable = true;
 
   # Set hostname from /var/nifty-filter/nifty-filter.env at boot

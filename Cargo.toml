@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "sodola-switch"]
+members = [".", "crates/sodola-switch"]
 
 [package]
 name = "nifty-filter"

@@ -99,6 +99,57 @@
             };
           };
 
+          nifty-dashboard =
+            let
+              frontend = pkgs.stdenv.mkDerivation {
+                pname = "nifty-dashboard-frontend";
+                version = "0.1.0";
+                src = ./crates/nifty-dashboard/frontend;
+                nativeBuildInputs = [
+                  pkgs.pnpm
+                  pkgs.pnpmConfigHook
+                  pkgs.nodejs
+                ];
+                pnpmDeps = pkgs.fetchPnpmDeps {
+                  pname = "nifty-dashboard-frontend";
+                  version = "0.1.0";
+                  src = ./crates/nifty-dashboard/frontend;
+                  hash = "sha256-AOIYrdLOyzHLRo+PNFra21uowZLLBYxIRD/5ZANtTPs=";
+                  fetcherVersion = 2;
+                };
+                buildPhase = ''
+                  pnpm build
+                '';
+                installPhase = ''
+                  cp -r build $out
+                '';
+              };
+            in
+            pkgs.rustPlatform.buildRustPackage {
+              pname = "nifty-dashboard";
+              version = "0.1.0";
+              src = ./crates/nifty-dashboard;
+              cargoLock = {
+                lockFile = ./crates/nifty-dashboard/Cargo.lock;
+                outputHashes = {
+                  "conf-0.4.5" = "sha256-efuSj5LKTfKZ5IIR9/7Qmr/W2rSGBBrcWQJXC6ktm4Q=";
+                };
+              };
+              cargoBuildFlags = [ "-p" "nifty-dashboard" ];
+              nativeBuildInputs = [ pkgs.pkg-config ];
+              buildInputs = [ pkgs.openssl ];
+              preBuild = ''
+                rm -rf frontend/build
+                ln -s ${frontend} frontend/build
+                cp ${./LICENSE.md} LICENSE.md
+              '';
+              meta = {
+                description = "Web dashboard for nifty-filter";
+                license = pkgs.lib.licenses.mit;
+                mainProgram = "nifty-dashboard";
+              };
+            };
+
           iso = (mkRouterIso { inherit system; }).config.system.build.isoImage;
           iso-big = (mkRouterIso { inherit system; extraModules = [ ./nix/iso-big.nix ]; }).config.system.build.isoImage;
 

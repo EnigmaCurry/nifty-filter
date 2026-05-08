@@ -1,0 +1,8 @@
+**/target
+**/_test
+**/*.profraw
+**/*.profdata
+**/.env*
+**/*.db
+**/data.db-shm
+**/data.db-wal

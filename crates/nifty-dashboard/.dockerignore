@@ -1,0 +1,12 @@
+**/target
+**/Dockerfile*
+**/node_modules
+**/_test
+**/*.profraw
+**/*.profdata
+**/.env*
+**/*.db
+**/*.db-shm
+**/*.db-wal
+Justfile
+README.md

@@ -4,364 +4,354 @@ flush ruleset
 
 table inet filter {
     {% if !vlan_aware_switch %}
-    # Flowtable offload requires physical interfaces; VLAN sub-interfaces cannot be offloaded.
     flowtable ft {
         hook ingress priority 0
         devices = { {{ interface_wan }}, {% for vlan in vlans %}{{ vlan.interface_name }}{% if !loop.last %}, {% endif %}{% endfor %} }
     }
     {% endif %}
 
-    # Filter traffic destined for the router itself:
     chain input {
         type filter hook input priority 0; policy drop;
-        # Allow existing established and related connections
-        ct state established,related accept
-        # Drop invalid conntrack state (malformed, out-of-sequence packets)
-        ct state invalid drop
+        ct state established,related accept comment "nf:Allow established/related connections"
+        ct state invalid drop comment "nf:Drop invalid conntrack state"
+        iif "lo" accept comment "nf:Allow localhost loopback"
+        jump input_invalid_sources comment "nf:Check for bogon/spoofed sources"
 
-        # Allow localhost loopback traffic
-        iif "lo" accept
-
-        {% if wan_bogons_ipv4 != "" %}
-        # Drop spoofed/bogon IPv4 source addresses on WAN (RFC 5735, BCP 38)
-        iif "{{ interface_wan }}" ip saddr { {{ wan_bogons_ipv4 }} } drop
-        {% endif %}
-        {% if wan_bogons_ipv6 != "" %}
-        # Drop spoofed/bogon IPv6 source addresses on WAN
-        iif "{{ interface_wan }}" ip6 saddr { {{ wan_bogons_ipv6 }} } drop
-        {% endif %}
-
-        {% if vlan_aware_switch %}
-        # Drop untagged traffic on bare trunk (switch-aware mode)
-        iif "{{ interface_trunk }}" limit rate 5/minute log prefix "(sample) Dropped untagged trunk input: "
-        iif "{{ interface_trunk }}" drop
-        {% endif %}
+        {% for vlan in vlans %}
+        iif "{{ vlan.interface_name }}" jump input_vlan_{{ vlan.id }} comment "nf:VLAN {{ vlan.id }} input rules"
+        {% endfor %}
 
         {% if interface_mgmt != "" %}
-        # Reject LAN clients trying to reach the management subnet (sends ICMP unreachable)
-        {% for vlan in vlans %}
-        iif "{{ vlan.interface_name }}" ip daddr {{ subnet_mgmt_ipv4 }} reject with icmp type admin-prohibited
-        {% endfor %}
-        # Drop all other non-mgmt interfaces reaching the management subnet
-        iif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} limit rate 5/minute log prefix "(sample) Dropped non-mgmt input: "
-        iif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} drop
+        jump input_mgmt_isolation comment "nf:Block non-mgmt access to mgmt subnet"
         {% endif %}
-
-        {% for vlan in vlans %}
-        # --- VLAN {{ vlan.id }} ({{ vlan.interface_name }}) input rules ---
-        {% if enable_ipv4 && vlan.subnet_ipv4 != "" %}
-        {% if vlan.icmp_accept != "" %}
-        # Allow specific ICMP queries from VLAN {{ vlan.id }} (IPv4)
-        iif "{{ vlan.interface_name }}" ip saddr {{ vlan.subnet_ipv4 }} icmp type { {{ vlan.icmp_accept }} } accept
-        {% endif %}
-        {% endif %}
-
-        {% if enable_ipv6 && vlan.subnet_ipv6 != "" %}
-        {% if vlan.icmpv6_accept != "" %}
-        # Allow specific ICMPv6 queries from VLAN {{ vlan.id }}
-        iif "{{ vlan.interface_name }}" ip6 saddr {{ vlan.subnet_ipv6 }} icmpv6 type { {{ vlan.icmpv6_accept }} } accept
-        {% endif %}
-
-        # Allow DHCPv6 server replies on VLAN {{ vlan.id }} (server port 547 → client port 546, link-local only)
-        iif "{{ vlan.interface_name }}" ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept
-        {% endif %}
-
-        {% if vlan.tcp_accept != "" %}
-        # Allow access to specific TCP ports from VLAN {{ vlan.id }}
-        {% if enable_ipv4 && vlan.subnet_ipv4 != "" %}
-        ip saddr {{ vlan.subnet_ipv4 }} iif "{{ vlan.interface_name }}" tcp dport { {{ vlan.tcp_accept }} } accept
-        {% endif %}
-        {% if enable_ipv6 && vlan.subnet_ipv6 != "" %}
-        ip6 saddr {{ vlan.subnet_ipv6 }} iif "{{ vlan.interface_name }}" tcp dport { {{ vlan.tcp_accept }} } accept
-        {% endif %}
-        {% endif %}
-        {% if vlan.udp_accept != "" %}
-        # Allow access to specific UDP ports from VLAN {{ vlan.id }}
-        # No source address filter — DHCP clients use 0.0.0.0 before they have a lease
-        iif "{{ vlan.interface_name }}" udp dport { {{ vlan.udp_accept }} } accept
-        {% endif %}
-
-        {% if vlan.iperf_enabled %}
-        # Allow iperf3 from VLAN {{ vlan.id }}
-        {% if enable_ipv4 && vlan.subnet_ipv4 != "" %}
-        ip saddr {{ vlan.subnet_ipv4 }} iif "{{ vlan.interface_name }}" tcp dport {{ iperf_port }} accept
-        {% endif %}
-        {% if enable_ipv6 && vlan.subnet_ipv6 != "" %}
-        ip6 saddr {{ vlan.subnet_ipv6 }} iif "{{ vlan.interface_name }}" tcp dport {{ iperf_port }} accept
-        {% endif %}
-        {% endif %}
-        {% endfor %}
 
         {% if enable_ipv4 %}
         {% if icmp_accept_wan != "" %}
-        # Allow specific ICMP queries on wan interface (IPv4)
-        iif "{{ interface_wan }}" icmp type { {{ icmp_accept_wan }} } accept
+        iif "{{ interface_wan }}" icmp type { {{ icmp_accept_wan }} } accept comment "nf:Allow ICMP on WAN (IPv4)"
         {% endif %}
         {% endif %}
 
         {% if enable_ipv6 %}
         {% if icmpv6_accept_wan != "" %}
-        # Allow specific ICMPv6 queries on wan interface
-        iif "{{ interface_wan }}" icmpv6 type { {{ icmpv6_accept_wan }} } accept
+        iif "{{ interface_wan }}" icmpv6 type { {{ icmpv6_accept_wan }} } accept comment "nf:Allow ICMPv6 on WAN"
         {% endif %}
-
-        # Allow DHCPv6 server replies on wan (server port 547 → client port 546, link-local only)
-        iif "{{ interface_wan }}" ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept
+        iif "{{ interface_wan }}" ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept comment "nf:Allow DHCPv6 replies on WAN"
         {% endif %}
 
         {% if tcp_accept_wan != "" %}
-        # Allow access to specific TCP ports from the wan interface
-        iif "{{ interface_wan }}" tcp dport { {{ tcp_accept_wan }} } accept
+        iif "{{ interface_wan }}" tcp dport { {{ tcp_accept_wan }} } accept comment "nf:Allow TCP ports on WAN"
         {% endif %}
 
         {% if udp_accept_wan != "" %}
-        # Allow access to specific UDP ports from the wan interface
-        iif "{{ interface_wan }}" udp dport { {{ udp_accept_wan }} } accept
+        iif "{{ interface_wan }}" udp dport { {{ udp_accept_wan }} } accept comment "nf:Allow UDP ports on WAN"
         {% endif %}
 
         {% if interface_mgmt != "" %}
-        # Allow ICMP ping on management interface
-        iif "{{ interface_mgmt }}" icmp type { echo-request, echo-reply } accept
-        # Allow SSH on management interface
-        iif "{{ interface_mgmt }}" tcp dport 22 accept
+        iif "{{ interface_mgmt }}" icmp type { echo-request, echo-reply } accept comment "nf:Allow ICMP ping on mgmt"
+        iif "{{ interface_mgmt }}" tcp dport 22 accept comment "nf:Allow SSH on mgmt"
         {% endif %}
 
-        # Drop and log everything else (rate-limited)
-        limit rate 5/minute log prefix "(sample) Dropped input: "
-        drop
+        limit rate 5/minute log prefix "(sample) Dropped input: " comment "nf:Log dropped input (rate-limited)"
+        drop comment "nf:Default drop"
     }
 
-    # Filter forwarded traffic (traffic passing through the router):
-    # This filters traffic after the NAT prerouting chain modifies the destination route.
-    # This filters traffic before the postrouting chain.
-    chain forward {
-        type filter hook forward priority 0; policy drop;
-        # Offload established/related connections to flowtable fastpath
-        {% if vlan_aware_switch %}
-        ct state established,related accept
-        {% else %}
-        ct state established,related flow add @ft accept
-        {% endif %}
-        # Drop invalid conntrack state (malformed, out-of-sequence packets)
-        ct state invalid drop
-
+    chain input_invalid_sources {
         {% if wan_bogons_ipv4 != "" %}
-        # Drop spoofed/bogon IPv4 source addresses on WAN (RFC 5735, BCP 38)
-        iif "{{ interface_wan }}" ip saddr { {{ wan_bogons_ipv4 }} } drop
+        iif "{{ interface_wan }}" ip saddr { {{ wan_bogons_ipv4 }} } drop comment "nf:Drop bogon IPv4 sources on WAN"
         {% endif %}
         {% if wan_bogons_ipv6 != "" %}
-        # Drop spoofed/bogon IPv6 source addresses on WAN
-        iif "{{ interface_wan }}" ip6 saddr { {{ wan_bogons_ipv6 }} } drop
+        iif "{{ interface_wan }}" ip6 saddr { {{ wan_bogons_ipv6 }} } drop comment "nf:Drop bogon IPv6 sources on WAN"
         {% endif %}
 
         {% if vlan_aware_switch %}
-        # Drop untagged forwarded traffic on bare trunk (switch-aware mode)
-        iif "{{ interface_trunk }}" limit rate 5/minute log prefix "(sample) Dropped untagged trunk forward: "
-        iif "{{ interface_trunk }}" drop
+        iif "{{ interface_trunk }}" limit rate 5/minute log prefix "(sample) Dropped untagged trunk input: " comment "nf:Log untagged trunk input"
+        iif "{{ interface_trunk }}" drop comment "nf:Drop untagged trunk input"
         {% endif %}
+    }
+
+    {% if interface_mgmt != "" %}
+    chain input_mgmt_isolation {
+        {% for vlan in vlans %}
+        iif "{{ vlan.interface_name }}" ip daddr {{ subnet_mgmt_ipv4 }} reject with icmp type admin-prohibited comment "nf:Reject {{ vlan.interface_name }} to mgmt subnet"
+        {% endfor %}
+        iif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} limit rate 5/minute log prefix "(sample) Dropped non-mgmt input: " comment "nf:Log non-mgmt to mgmt subnet"
+        iif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} drop comment "nf:Drop non-mgmt to mgmt subnet"
+    }
+    {% endif %}
+
+    {% for vlan in vlans %}
+    chain input_vlan_{{ vlan.id }} {
+        {% if enable_ipv4 && vlan.subnet_ipv4 != "" %}
+        {% if vlan.icmp_accept != "" %}
+        ip saddr {{ vlan.subnet_ipv4 }} icmp type { {{ vlan.icmp_accept }} } accept comment "nf:Allow ICMP (IPv4)"
+        {% endif %}
+        {% endif %}
+
+        {% if enable_ipv6 && vlan.subnet_ipv6 != "" %}
+        {% if vlan.icmpv6_accept != "" %}
+        ip6 saddr {{ vlan.subnet_ipv6 }} icmpv6 type { {{ vlan.icmpv6_accept }} } accept comment "nf:Allow ICMPv6"
+        {% endif %}
+        ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept comment "nf:Allow DHCPv6 replies"
+        {% endif %}
+
+        {% if vlan.tcp_accept != "" %}
+        {% if enable_ipv4 && vlan.subnet_ipv4 != "" %}
+        ip saddr {{ vlan.subnet_ipv4 }} tcp dport { {{ vlan.tcp_accept }} } accept comment "nf:Allow TCP ports (IPv4)"
+        {% endif %}
+        {% if enable_ipv6 && vlan.subnet_ipv6 != "" %}
+        ip6 saddr {{ vlan.subnet_ipv6 }} tcp dport { {{ vlan.tcp_accept }} } accept comment "nf:Allow TCP ports (IPv6)"
+        {% endif %}
+        {% endif %}
+        {% if vlan.udp_accept != "" %}
+        udp dport { {{ vlan.udp_accept }} } accept comment "nf:Allow UDP ports (no src filter for DHCP)"
+        {% endif %}
+
+        {% if vlan.iperf_enabled %}
+        {% if enable_ipv4 && vlan.subnet_ipv4 != "" %}
+        ip saddr {{ vlan.subnet_ipv4 }} tcp dport {{ iperf_port }} accept comment "nf:Allow iperf3 (IPv4)"
+        {% endif %}
+        {% if enable_ipv6 && vlan.subnet_ipv6 != "" %}
+        ip6 saddr {{ vlan.subnet_ipv6 }} tcp dport {{ iperf_port }} accept comment "nf:Allow iperf3 (IPv6)"
+        {% endif %}
+        {% endif %}
+    }
+    {% endfor %}
+
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+        {% if vlan_aware_switch %}
+        ct state established,related accept comment "nf:Allow established/related connections"
+        {% else %}
+        ct state established,related flow add @ft accept comment "nf:Allow established/related (offload)"
+        {% endif %}
+        ct state invalid drop comment "nf:Drop invalid conntrack state"
+        jump forward_invalid_sources comment "nf:Check for bogon/spoofed sources"
+
+        {% for vlan in vlans %}
+        iif "{{ vlan.interface_name }}" jump forward_vlan_{{ vlan.id }} comment "nf:VLAN {{ vlan.id }} forward rules"
+        {% endfor %}
 
         {% if interface_mgmt != "" %}
-        # Reject LAN clients trying to forward to the management subnet (sends ICMP unreachable)
-        {% for vlan in vlans %}
-        iif "{{ vlan.interface_name }}" ip daddr {{ subnet_mgmt_ipv4 }} reject with icmp type admin-prohibited
-        {% endfor %}
-        # Drop all other non-mgmt interfaces forwarding to the management subnet
-        iif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} limit rate 5/minute log prefix "(sample) Dropped non-mgmt forward: "
-        iif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} drop
-        # Block non-mgmt traffic from routing out the management interface
-        iif != "{{ interface_mgmt }}" oif "{{ interface_mgmt }}" limit rate 5/minute log prefix "(sample) Dropped non-mgmt egress to mgmt: "
-        iif != "{{ interface_mgmt }}" oif "{{ interface_mgmt }}" drop
+        jump forward_mgmt_isolation comment "nf:Block non-mgmt access to mgmt subnet"
         {% endif %}
 
         {% for vlan in vlans %}
-        {% if enable_ipv4 && vlan.subnet_ipv4 != "" && vlan.egress_allowed_ipv4 != "" %}
-        # Allow IPv4 egress from VLAN {{ vlan.id }} ({{ vlan.interface_name }}) to WAN
-        ip saddr {{ vlan.subnet_ipv4 }} ip daddr { {{ vlan.egress_allowed_ipv4 }} } iif "{{ vlan.interface_name }}" oif "{{ interface_wan }}" accept
+        {% if vlan.tcp_allow_inter_vlan.len() > 0 %}
+            {% for entry in vlan.tcp_allow_inter_vlan.entries %}
+            {% for rule in entry.rules %}
+            {% if rule.has_src() %}
+                {% if rule.dest_is_ipv4() %}
+        iif "{{ entry.source_interface }}" oif "{{ vlan.interface_name }}" ip saddr {{ rule.src.unwrap() }} ip daddr {{ rule.dest }} tcp dport {{ rule.port }} accept comment "nf:Allow inter-VLAN TCP from VLAN {{ entry.source_vlan_id }} to VLAN {{ vlan.id }}"
+                {% else %}
+        iif "{{ entry.source_interface }}" oif "{{ vlan.interface_name }}" ip6 saddr {{ rule.src.unwrap() }} ip6 daddr {{ rule.dest }} tcp dport {{ rule.port }} accept comment "nf:Allow inter-VLAN TCP from VLAN {{ entry.source_vlan_id }} to VLAN {{ vlan.id }}"
+                {% endif %}
+            {% else %}
+                {% if rule.dest_is_ipv4() %}
+        iif "{{ entry.source_interface }}" oif "{{ vlan.interface_name }}" ip daddr {{ rule.dest }} tcp dport {{ rule.port }} accept comment "nf:Allow inter-VLAN TCP from VLAN {{ entry.source_vlan_id }} to VLAN {{ vlan.id }}"
+                {% else %}
+        iif "{{ entry.source_interface }}" oif "{{ vlan.interface_name }}" ip6 daddr {{ rule.dest }} tcp dport {{ rule.port }} accept comment "nf:Allow inter-VLAN TCP from VLAN {{ entry.source_vlan_id }} to VLAN {{ vlan.id }}"
+                {% endif %}
+            {% endif %}
+            {% endfor %}
+            {% endfor %}
         {% endif %}
-
-        {% if enable_ipv6 && vlan.subnet_ipv6 != "" && vlan.egress_allowed_ipv6 != "" %}
-        # Allow IPv6 egress from VLAN {{ vlan.id }} ({{ vlan.interface_name }}) to WAN
-        ip6 saddr {{ vlan.subnet_ipv6 }} ip6 daddr { {{ vlan.egress_allowed_ipv6 }} } iif "{{ vlan.interface_name }}" oif "{{ interface_wan }}" accept
+        {% if vlan.udp_allow_inter_vlan.len() > 0 %}
+            {% for entry in vlan.udp_allow_inter_vlan.entries %}
+            {% for rule in entry.rules %}
+            {% if rule.has_src() %}
+                {% if rule.dest_is_ipv4() %}
+        iif "{{ entry.source_interface }}" oif "{{ vlan.interface_name }}" ip saddr {{ rule.src.unwrap() }} ip daddr {{ rule.dest }} udp dport {{ rule.port }} accept comment "nf:Allow inter-VLAN UDP from VLAN {{ entry.source_vlan_id }} to VLAN {{ vlan.id }}"
+                {% else %}
+        iif "{{ entry.source_interface }}" oif "{{ vlan.interface_name }}" ip6 saddr {{ rule.src.unwrap() }} ip6 daddr {{ rule.dest }} udp dport {{ rule.port }} accept comment "nf:Allow inter-VLAN UDP from VLAN {{ entry.source_vlan_id }} to VLAN {{ vlan.id }}"
+                {% endif %}
+            {% else %}
+                {% if rule.dest_is_ipv4() %}
+        iif "{{ entry.source_interface }}" oif "{{ vlan.interface_name }}" ip daddr {{ rule.dest }} udp dport {{ rule.port }} accept comment "nf:Allow inter-VLAN UDP from VLAN {{ entry.source_vlan_id }} to VLAN {{ vlan.id }}"
+                {% else %}
+        iif "{{ entry.source_interface }}" oif "{{ vlan.interface_name }}" ip6 daddr {{ rule.dest }} udp dport {{ rule.port }} accept comment "nf:Allow inter-VLAN UDP from VLAN {{ entry.source_vlan_id }} to VLAN {{ vlan.id }}"
+                {% endif %}
+            {% endif %}
+            {% endfor %}
+            {% endfor %}
         {% endif %}
         {% endfor %}
-
-        {% if vlans.len() > 1 %}
-        # Inter-VLAN isolation: explicitly log and drop traffic between VLAN interfaces
-        {% for src in vlans %}
-        {% for dst in vlans %}
-        {% if src.interface_name != dst.interface_name %}
-        iif "{{ src.interface_name }}" oif "{{ dst.interface_name }}" limit rate 5/minute log prefix "(sample) Dropped inter-VLAN: "
-        iif "{{ src.interface_name }}" oif "{{ dst.interface_name }}" drop
-        {% endif %}
-        {% endfor %}
-        {% endfor %}
-        {% endif %}
 
         {% for vlan in vlans %}
         {% if vlan.tcp_allow_inbound.len() > 0 %}
-        # Allow inbound TCP to VLAN {{ vlan.id }} (no NAT — direct public addressing)
             {% for rule in vlan.tcp_allow_inbound.rules %}
             {% if rule.is_ipv4() %}
-        iif "{{ interface_wan }}" oif "{{ vlan.interface_name }}" ip daddr {{ rule.address }} tcp dport {{ rule.port }} accept
+        iif "{{ interface_wan }}" oif "{{ vlan.interface_name }}" ip daddr {{ rule.address }} tcp dport {{ rule.port }} accept comment "nf:Allow inbound TCP to VLAN {{ vlan.id }}"
             {% else %}
-        iif "{{ interface_wan }}" oif "{{ vlan.interface_name }}" ip6 daddr {{ rule.address }} tcp dport {{ rule.port }} accept
+        iif "{{ interface_wan }}" oif "{{ vlan.interface_name }}" ip6 daddr {{ rule.address }} tcp dport {{ rule.port }} accept comment "nf:Allow inbound TCP to VLAN {{ vlan.id }}"
             {% endif %}
             {% endfor %}
         {% endif %}
         {% if vlan.udp_allow_inbound.len() > 0 %}
-        # Allow inbound UDP to VLAN {{ vlan.id }} (no NAT — direct public addressing)
             {% for rule in vlan.udp_allow_inbound.rules %}
             {% if rule.is_ipv4() %}
-        iif "{{ interface_wan }}" oif "{{ vlan.interface_name }}" ip daddr {{ rule.address }} udp dport {{ rule.port }} accept
+        iif "{{ interface_wan }}" oif "{{ vlan.interface_name }}" ip daddr {{ rule.address }} udp dport {{ rule.port }} accept comment "nf:Allow inbound UDP to VLAN {{ vlan.id }}"
             {% else %}
-        iif "{{ interface_wan }}" oif "{{ vlan.interface_name }}" ip6 daddr {{ rule.address }} udp dport {{ rule.port }} accept
-            {% endif %}
-            {% endfor %}
-        {% endif %}
-        {% endfor %}
-
-        {% for vlan in vlans %}
-        {% if vlan.tcp_forward.len() > 0 %}
-        # DNAT forward TCP from VLAN {{ vlan.id }} (ct status dnat ensures packet was actually translated)
-            {% for route in vlan.tcp_forward.routes %}
-            {% if route.is_ipv4() %}
-        ct status dnat ip saddr {{ vlan.subnet_ipv4 }} iif "{{ vlan.interface_name }}" ip daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
-            {% else %}
-        ct status dnat ip6 saddr {{ vlan.subnet_ipv6 }} iif "{{ vlan.interface_name }}" ip6 daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
-            {% endif %}
-            {% endfor %}
-        {% endif %}
-        {% if vlan.udp_forward.len() > 0 %}
-        # DNAT forward UDP from VLAN {{ vlan.id }} (ct status dnat ensures packet was actually translated)
-            {% for route in vlan.udp_forward.routes %}
-            {% if route.is_ipv4() %}
-        ct status dnat ip saddr {{ vlan.subnet_ipv4 }} iif "{{ vlan.interface_name }}" ip daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
-            {% else %}
-        ct status dnat ip6 saddr {{ vlan.subnet_ipv6 }} iif "{{ vlan.interface_name }}" ip6 daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+        iif "{{ interface_wan }}" oif "{{ vlan.interface_name }}" ip6 daddr {{ rule.address }} udp dport {{ rule.port }} accept comment "nf:Allow inbound UDP to VLAN {{ vlan.id }}"
             {% endif %}
             {% endfor %}
         {% endif %}
         {% endfor %}
 
         {% if tcp_forward_wan.len() > 0 %}
-        # DNAT forward TCP from wan (ct status dnat ensures packet was actually translated)
             {% for route in tcp_forward_wan.routes %}
             {% if route.is_ipv4() %}
-        ct status dnat iif "{{ interface_wan }}" ip daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+        ct status dnat iif "{{ interface_wan }}" ip daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept comment "nf:DNAT forward TCP from WAN"
             {% else %}
-        ct status dnat iif "{{ interface_wan }}" ip6 daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept
+        ct status dnat iif "{{ interface_wan }}" ip6 daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept comment "nf:DNAT forward TCP from WAN"
             {% endif %}
             {% endfor %}
         {% endif %}
         {% if udp_forward_wan.len() > 0 %}
-        # DNAT forward UDP from wan (ct status dnat ensures packet was actually translated)
             {% for route in udp_forward_wan.routes %}
             {% if route.is_ipv4() %}
-        ct status dnat iif "{{ interface_wan }}" ip daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+        ct status dnat iif "{{ interface_wan }}" ip daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept comment "nf:DNAT forward UDP from WAN"
             {% else %}
-        ct status dnat iif "{{ interface_wan }}" ip6 daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept
+        ct status dnat iif "{{ interface_wan }}" ip6 daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept comment "nf:DNAT forward UDP from WAN"
             {% endif %}
             {% endfor %}
         {% endif %}
 
-        # Log and drop all other packets (rate-limited)
-        limit rate 5/minute log prefix "(sample) Dropped forward: "
-        drop
+        limit rate 5/minute log prefix "(sample) Dropped forward: " comment "nf:Log dropped forward (rate-limited)"
+        drop comment "nf:Default drop"
     }
 
-    # Filter traffic whose source is the router itself:
-    chain output {
-        type filter hook output priority 0; policy drop;
-        # Allow all loopback traffic
-        oif "lo" accept
-
-        {% if interface_mgmt != "" %}
-        # Block non-mgmt interfaces from sending to the management subnet
-        oif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} limit rate 5/minute log prefix "(sample) Dropped output to mgmt subnet: "
-        oif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} drop
+    chain forward_invalid_sources {
+        {% if wan_bogons_ipv4 != "" %}
+        iif "{{ interface_wan }}" ip saddr { {{ wan_bogons_ipv4 }} } drop comment "nf:Drop bogon IPv4 sources on WAN"
+        {% endif %}
+        {% if wan_bogons_ipv6 != "" %}
+        iif "{{ interface_wan }}" ip6 saddr { {{ wan_bogons_ipv6 }} } drop comment "nf:Drop bogon IPv6 sources on WAN"
         {% endif %}
 
-        # Allow all outgoing wan traffic
-        oif "{{ interface_wan }}" accept
+        {% if vlan_aware_switch %}
+        iif "{{ interface_trunk }}" limit rate 5/minute log prefix "(sample) Dropped untagged trunk forward: " comment "nf:Log untagged trunk forward"
+        iif "{{ interface_trunk }}" drop comment "nf:Drop untagged trunk forward"
+        {% endif %}
+    }
+
+    {% if interface_mgmt != "" %}
+    chain forward_mgmt_isolation {
+        {% for vlan in vlans %}
+        iif "{{ vlan.interface_name }}" ip daddr {{ subnet_mgmt_ipv4 }} reject with icmp type admin-prohibited comment "nf:Reject {{ vlan.interface_name }} forward to mgmt"
+        {% endfor %}
+        iif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} limit rate 5/minute log prefix "(sample) Dropped non-mgmt forward: " comment "nf:Log non-mgmt forward to mgmt"
+        iif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} drop comment "nf:Drop non-mgmt forward to mgmt"
+        iif != "{{ interface_mgmt }}" oif "{{ interface_mgmt }}" limit rate 5/minute log prefix "(sample) Dropped non-mgmt egress to mgmt: " comment "nf:Log non-mgmt egress to mgmt"
+        iif != "{{ interface_mgmt }}" oif "{{ interface_mgmt }}" drop comment "nf:Drop non-mgmt egress to mgmt"
+    }
+    {% endif %}
+
+    {% for vlan in vlans %}
+    chain forward_vlan_{{ vlan.id }} {
+        {% if enable_ipv4 && vlan.subnet_ipv4 != "" && vlan.egress_allowed_ipv4 != "" %}
+        ip saddr {{ vlan.subnet_ipv4 }} ip daddr { {{ vlan.egress_allowed_ipv4 }} } oif "{{ interface_wan }}" accept comment "nf:Allow IPv4 egress to WAN"
+        {% endif %}
+
+        {% if enable_ipv6 && vlan.subnet_ipv6 != "" && vlan.egress_allowed_ipv6 != "" %}
+        ip6 saddr {{ vlan.subnet_ipv6 }} ip6 daddr { {{ vlan.egress_allowed_ipv6 }} } oif "{{ interface_wan }}" accept comment "nf:Allow IPv6 egress to WAN"
+        {% endif %}
+
+        {% if vlan.tcp_forward.len() > 0 %}
+            {% for route in vlan.tcp_forward.routes %}
+            {% if route.is_ipv4() %}
+        ct status dnat ip saddr {{ vlan.subnet_ipv4 }} ip daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept comment "nf:DNAT forward TCP"
+            {% else %}
+        ct status dnat ip6 saddr {{ vlan.subnet_ipv6 }} ip6 daddr {{ route.destination_ip }} tcp dport {{ route.destination_port }} accept comment "nf:DNAT forward TCP"
+            {% endif %}
+            {% endfor %}
+        {% endif %}
+        {% if vlan.udp_forward.len() > 0 %}
+            {% for route in vlan.udp_forward.routes %}
+            {% if route.is_ipv4() %}
+        ct status dnat ip saddr {{ vlan.subnet_ipv4 }} ip daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept comment "nf:DNAT forward UDP"
+            {% else %}
+        ct status dnat ip6 saddr {{ vlan.subnet_ipv6 }} ip6 daddr {{ route.destination_ip }} udp dport {{ route.destination_port }} accept comment "nf:DNAT forward UDP"
+            {% endif %}
+            {% endfor %}
+        {% endif %}
+    }
+    {% endfor %}
+
+    chain output {
+        type filter hook output priority 0; policy drop;
+        oif "lo" accept comment "nf:Allow loopback"
+
+        {% if interface_mgmt != "" %}
+        oif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} limit rate 5/minute log prefix "(sample) Dropped output to mgmt subnet: " comment "nf:Log output to mgmt from non-mgmt"
+        oif != "{{ interface_mgmt }}" ip daddr {{ subnet_mgmt_ipv4 }} drop comment "nf:Drop output to mgmt from non-mgmt"
+        {% endif %}
+
+        oif "{{ interface_wan }}" accept comment "nf:Allow outgoing WAN"
 
         {% for vlan in vlans %}
-        # Allow outgoing traffic to VLAN {{ vlan.id }} ({{ vlan.interface_name }})
-        oif "{{ vlan.interface_name }}" accept
+        oif "{{ vlan.interface_name }}" accept comment "nf:Allow outgoing to VLAN {{ vlan.id }}"
         {% endfor %}
 
         {% if vlan_aware_switch %}
-        # Allow outgoing on bare trunk (required for L2 parent-link behavior)
-        oif "{{ interface_trunk }}" accept
+        oif "{{ interface_trunk }}" accept comment "nf:Allow outgoing on bare trunk"
         {% endif %}
 
         {% if interface_mgmt != "" %}
-        # Allow outgoing management traffic (ICMP replies, SSH responses)
-        oif "{{ interface_mgmt }}" accept
+        oif "{{ interface_mgmt }}" accept comment "nf:Allow outgoing mgmt"
         {% endif %}
     }
 }
 
 table inet nat {
-    # DNAT for incoming traffic:
-    # Modify destination address before routing decision in forwarding chain:
     chain prerouting {
         type nat hook prerouting priority 0; policy accept;
         {% for vlan in vlans %}
         {% if vlan.tcp_forward.len() > 0 %}
-        # DNAT TCP from VLAN {{ vlan.id }}
             {% for route in vlan.tcp_forward.routes %}
             {% if route.is_ipv4() %}
-        iif "{{ vlan.interface_name }}" ip saddr {{ vlan.subnet_ipv4 }} tcp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }}
+        iif "{{ vlan.interface_name }}" ip saddr {{ vlan.subnet_ipv4 }} tcp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }} comment "nf:DNAT TCP from VLAN {{ vlan.id }}"
             {% else %}
-        iif "{{ vlan.interface_name }}" ip6 saddr {{ vlan.subnet_ipv6 }} tcp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }}
+        iif "{{ vlan.interface_name }}" ip6 saddr {{ vlan.subnet_ipv6 }} tcp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }} comment "nf:DNAT TCP from VLAN {{ vlan.id }}"
             {% endif %}
             {% endfor %}
         {% endif %}
 
         {% if vlan.udp_forward.len() > 0 %}
-        # DNAT UDP from VLAN {{ vlan.id }}
             {% for route in vlan.udp_forward.routes %}
             {% if route.is_ipv4() %}
-        iif "{{ vlan.interface_name }}" ip saddr {{ vlan.subnet_ipv4 }} udp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }}
+        iif "{{ vlan.interface_name }}" ip saddr {{ vlan.subnet_ipv4 }} udp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }} comment "nf:DNAT UDP from VLAN {{ vlan.id }}"
             {% else %}
-        iif "{{ vlan.interface_name }}" ip6 saddr {{ vlan.subnet_ipv6 }} udp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }}
+        iif "{{ vlan.interface_name }}" ip6 saddr {{ vlan.subnet_ipv6 }} udp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }} comment "nf:DNAT UDP from VLAN {{ vlan.id }}"
             {% endif %}
             {% endfor %}
         {% endif %}
         {% endfor %}
 
         {% if tcp_forward_wan.len() > 0 %}
-        # DNAT from wan (TCP)
             {% for route in tcp_forward_wan.routes %}
             {% if route.is_ipv4() %}
-        iif "{{ interface_wan }}" tcp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }}
+        iif "{{ interface_wan }}" tcp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }} comment "nf:DNAT TCP from WAN"
             {% else %}
-        iif "{{ interface_wan }}" tcp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }}
+        iif "{{ interface_wan }}" tcp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }} comment "nf:DNAT TCP from WAN"
             {% endif %}
             {% endfor %}
         {% endif %}
 
         {% if udp_forward_wan.len() > 0 %}
-        # DNAT from wan (UDP)
             {% for route in udp_forward_wan.routes %}
             {% if route.is_ipv4() %}
-        iif "{{ interface_wan }}" udp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }}
+        iif "{{ interface_wan }}" udp dport {{ route.incoming_port }} dnat to {{ route.destination_ip }}:{{ route.destination_port }} comment "nf:DNAT UDP from WAN"
             {% else %}
-        iif "{{ interface_wan }}" udp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }}
+        iif "{{ interface_wan }}" udp dport {{ route.incoming_port }} dnat to [{{ route.destination_ip }}]:{{ route.destination_port }} comment "nf:DNAT UDP from WAN"
             {% endif %}
             {% endfor %}
         {% endif %}
     }
 
-    # SNAT for outgoing traffic:
-    # Modify source address after the forwarding chain, before leaving the router:
     chain postrouting {
         type nat hook postrouting priority 100; policy accept;
         {% if enable_ipv4 %}
-        # Masquerade IPv4 LAN-to-WAN traffic (NAT)
-        meta nfproto ipv4 oif "{{ interface_wan }}" masquerade
+        meta nfproto ipv4 oif "{{ interface_wan }}" masquerade comment "nf:Masquerade IPv4 LAN-to-WAN (NAT)"
         {% endif %}
-        # IPv6 does not use NAT — LAN clients have globally routable addresses.
-        # The forward chain's default-deny policy protects LAN from unsolicited inbound.
     }
 }

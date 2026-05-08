@@ -1,0 +1,316 @@
+name: Release
+
+permissions:
+  contents: read
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  CARGO_TERM_COLOR: always
+  PROJECT_DIR: nifty-dashboard
+
+jobs:
+  frontend:
+    name: Build frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            frontend/pnpm-lock.yaml
+
+      - name: Install just
+        uses: taiki-e/cache-cargo-install-action@v2
+        with:
+          tool: just
+
+      - name: Build frontend
+        run: just config build-frontend
+
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/build
+
+  build:
+    name: Build - ${{ matrix.platform.release_for }}
+    needs: frontend
+    runs-on: ${{ matrix.platform.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download frontend build
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build
+          path: ${{ github.workspace }}/frontend/build
+
+      - name: Use Rust stable
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+
+      - name: Prepare Cargo.lock for caching
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+
+          # Read the crate name from the crate's Cargo.toml, but read Cargo.lock from workspace root
+          PROJECT_NAME=$(grep '^name' "${{ env.PROJECT_DIR }}/Cargo.toml" | sed 's/name = "\(.*\)"/\1/')
+
+          awk '/\[\[package\]\]/{p=0} /name = "'"${PROJECT_NAME}"'"/{p=1} p && /version = /{next} 1' \
+            Cargo.lock > "${{ env.PROJECT_DIR }}/Cargo.lock.no-version"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles(format('{0}/Cargo.lock.no-version', env.PROJECT_DIR)) }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Get version from cargo.toml
+        uses: SebRollen/toml-action@v1.2.0
+        id: cargo_version
+        with:
+          file: '${{ env.PROJECT_DIR }}/Cargo.toml'
+          field: 'package.version'
+
+      - name: Get the tag of current release
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> ${GITHUB_OUTPUT}
+        working-directory: ${{ env.PROJECT_DIR }}
+
+      - name: Verify package version is equal to tag version
+        if: ${{ steps.cargo_version.outputs.value != steps.get_version.outputs.VERSION }}
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "${{ steps.cargo_version.outputs.value }}"
+          echo "${{ steps.get_version.outputs.VERSION }}"
+          exit 1
+
+      - name: Install sqlx-cli (cached)
+        uses: taiki-e/cache-cargo-install-action@v2
+        with:
+          tool: sqlx-cli@0.8.6
+          locked: true
+          features: "sqlite"
+      
+      # Create a temp sqlite DB, run migrations, export DATABASE_URL for later steps
+      - name: Create CI sqlite db + migrate
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+
+          # put the temp DB inside the repo so cross container can see it
+          DB_PATH="$(mktemp -p "$PWD" sqlx-ci-XXXX.db)"
+
+          # SQLx sqlite URL; absolute paths become sqlite:////abs/... which sqlx accepts
+          export DATABASE_URL="sqlite://$DB_PATH"
+          echo "DATABASE_URL=$DATABASE_URL" >> "$GITHUB_ENV"
+
+          sqlx database create
+          sqlx migrate run
+
+      - name: Build binary
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          command: ${{ matrix.platform.command }}
+          target: ${{ matrix.platform.target }}
+          args: "--bin ${{ matrix.platform.bin }} --locked --release"
+          working-directory: ${{ env.PROJECT_DIR }}
+
+      - name: move binary into crate dir
+        working-directory: ${{ github.workspace }}
+        run: |
+          mv target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} \
+             ${{ env.PROJECT_DIR }}/
+
+      - name: Package as archive
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          tar czvf ../${{ matrix.platform.bin }}-v${{ steps.cargo_version.outputs.value }}-${{ matrix.platform.name }}.tar.gz \
+                ${{ matrix.platform.bin }}
+        if: startsWith(github.ref, 'refs/tags/v')
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.bin }}-v${{ steps.cargo_version.outputs.value }}-${{ matrix.platform.name }}.tar.gz
+          path: ${{ matrix.platform.bin }}-v${{ steps.cargo_version.outputs.value }}-${{ matrix.platform.name }}.tar.gz
+
+    strategy:
+      matrix:
+        platform:
+          - release_for: Linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: nifty-dashboard
+            name: Linux-x86_64
+            command: build
+          - release_for: Linux-aarch64
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            bin: nifty-dashboard
+            name: Linux-aarch64
+            command: build
+          # - release_for: macOS-x86_64
+          #   os: macOS-latest
+          #   target: x86_64-apple-darwin
+          #   bin: nifty-dashboard
+          #   name: Darwin-x86_64
+          #   command: build
+          # - release_for: macOS-arm64
+          #   os: macOS-latest
+          #   target: aarch64-apple-darwin
+          #   bin: nifty-dashboard
+          #   name: Darwin-arm64
+          #   command: build
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # allow creating the GitHub Release + uploading assets
+
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: |
+            **/nifty-dashboard-v*.tar.gz
+
+  docker:
+    name: Docker image (linux/amd64, linux/arm64)
+    needs: release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write   # needed for ghcr push
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pull down all the tar.gz artifacts your build job uploaded
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Extract linux binaries into dist/
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p ${{ env.PROJECT_DIR }}/dist/linux-amd64 ${{ env.PROJECT_DIR }}/dist/linux-arm64
+
+          # Find and unpack the linux tarballs
+          for f in artifacts/**/nifty-dashboard-v*-Linux-x86_64.tar.gz; do
+            tar -xzf "$f" -C ${{ env.PROJECT_DIR }}/dist/linux-amd64
+          done
+
+          for f in artifacts/**/nifty-dashboard-v*-Linux-aarch64.tar.gz; do
+            tar -xzf "$f" -C ${{ env.PROJECT_DIR }}/dist/linux-arm64
+          done
+
+          # Optional sanity check
+          ls -l ${{ env.PROJECT_DIR }}/dist/linux-amd64 ${{ env.PROJECT_DIR }}/dist/linux-arm64
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}},prefix=v
+            type=raw,value=latest
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.PROJECT_DIR }}
+          file: ${{ env.PROJECT_DIR }}/Dockerfile.binary
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+
+  # publish:
+  #   name: Publish crate
+  #   needs: release
+  #   runs-on: ubuntu-latest
+
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+
+  #     - name: Update Rust stable
+  #       run: rustup toolchain install stable
+  #       working-directory: ${{ env.PROJECT_DIR }}
+
+  #     - name: Prepare Cargo.lock for caching
+  #       working-directory: ${{ env.PROJECT_DIR }}
+  #       run: |
+  #         PROJECT_NAME=$(grep '^name' Cargo.toml | sed 's/name = "\(.*\)"/\1/')
+  #         awk '/\[\[package\]\]/{p=0} /name = "'"${PROJECT_NAME}"'"/{p=1} p && /version = /{next} 1' Cargo.lock > Cargo.lock.no-version
+
+  #     - name: Cache cargo registry
+  #       uses: actions/cache@v3
+  #       with:
+  #         path: ~/.cargo/registry
+  #         key: ${{ runner.os }}-cargo-registry-${{ hashFiles('${{ env.PROJECT_DIR }}/Cargo.lock.no-version') }}
+  #         restore-keys: |
+  #           ${{ runner.os }}-cargo-registry-
+
+  #     - name: Check crate is ready for publishing
+  #       run: cargo package
+  #       working-directory: ${{ env.PROJECT_DIR }}
+
+  #     - name: Publish to crates.io
+  #       env:
+  #         CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+  #       run: cargo publish --token $CARGO_REGISTRY_TOKEN
+  #       working-directory: ${{ env.PROJECT_DIR }}

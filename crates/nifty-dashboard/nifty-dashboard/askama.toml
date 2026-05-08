@@ -1,0 +1,3 @@
+[general]
+dirs = ["templates"]
+# extension = "html"  # default is already "html"

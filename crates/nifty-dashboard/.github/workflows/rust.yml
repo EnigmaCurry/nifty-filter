@@ -1,0 +1,150 @@
+name: Rust
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  PROJECT_DIR: nifty-dashboard
+  DATABASE_PATH: /home/runner/work/nifty-dashboard.db
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            frontend/pnpm-lock.yaml
+
+      - name: Use Rust stable
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+
+      - name: Extract project information
+        id: project_info
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          project_name=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].name')
+          echo "PROJECT_NAME=$project_name" >> "$GITHUB_ENV"
+
+          branch_name="${GITHUB_HEAD_REF:-${GITHUB_REF##*/}}"
+          echo "BRANCH_NAME=$branch_name" >> "$GITHUB_ENV"
+
+          commit_sha="$GITHUB_SHA"
+          commit_url="https://github.com/${{ github.repository }}/commit/${commit_sha}"
+          echo "COMMIT_SHA=$commit_sha" >> "$GITHUB_ENV"
+          echo "COMMIT_URL=$commit_url" >> "$GITHUB_ENV"
+
+      # Preprocess Cargo.lock to ignore version fields for cache id hashing purposes:
+      - name: Prepare Cargo.lock for caching (ignore workspace package version)
+        run: |
+          awk '/\[\[package\]\]/{p=0} /name = "'"${PROJECT_NAME}"'"/{p=1} p && /version = /{next} 1' Cargo.lock \
+            > Cargo.lock.no-version
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock.no-version') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Restore third-party dependencies cache
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-deps-${{ hashFiles('Cargo.lock.no-version') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-deps-
+
+      - name: Install cargo-binstall
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+
+      - name: Install Just
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: cargo binstall --no-confirm just
+
+      - name: Install sqlx-cli (cached)
+        uses: taiki-e/cache-cargo-install-action@v2
+        with:
+          tool: sqlx-cli@0.8.6
+          locked: true
+          features: "sqlite"
+
+      - name: Install other dependencies listed in Justfile (bin-deps)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: just bin-deps
+
+      - name: Configure .env file
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: just config
+
+      - name: Run coverage report
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          just test-coverage --release
+          ls -lha "${{ github.workspace }}/target/llvm-cov/html"
+
+      - name: Inject meta information into index.html
+        run: |
+          sed -i "/<\/body>/i <div style=\"position:fixed;bottom:10px;left:10px;font-size:12px;color:#666\">Project: ${PROJECT_NAME} | Branch: ${BRANCH_NAME} | <a href=\"${COMMIT_URL}\">Commit: ${COMMIT_SHA}</a></div>" \
+            "${{ github.workspace }}/target/llvm-cov/html/index.html"
+
+      - name: Stage Pages content
+        run: |
+          rm -rf pages-root
+          mkdir -p "pages-root/coverage/${BRANCH_NAME}"
+          cp -a "${{ github.workspace }}/target/llvm-cov/html/." "pages-root/coverage/${BRANCH_NAME}/"
+
+      - name: Upload coverage site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages-root
+
+      - name: Remove project-specific artifacts
+        run: |
+          find target -type f -name "*${PROJECT_NAME}*" -print0 | xargs -0r rm -f
+          find target -type d -name "*${PROJECT_NAME}*" -print0 | xargs -0r rm -rf
+
+  deploy-coverage:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+
+    permissions:
+      pages: write
+      id-token: write
+      contents: read
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

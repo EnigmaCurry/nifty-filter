@@ -261,7 +261,7 @@ pve-upgrade pve_host vmid vm_name target_ip="10.99.0.1":
         exit 1
     fi
 
-    SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/nifty-pve-upgrade-%C -o ControlPersist=60 -o ServerAliveInterval=30"
+    SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/nifty-pve-upgrade-%C -o ControlPersist=600 -o ServerAliveInterval=30"
 
     # Open persistent SSH connection through PVE jump host (authenticates once)
     echo "Connecting to {{target_ip}} via ${PVE_HOST}..."
@@ -711,6 +711,60 @@ pve-manage-switch pve_host target_ip="10.99.0.1" switch_ip="192.168.2.1" local_p
     echo "Removing ${ROUTER_CIDR} from trunk..."
     ssh ${SSH_OPTS} ${PROXY} ${REMOTE} "sudo ip addr del ${ROUTER_CIDR} dev trunk 2>/dev/null || true"
     echo "Done."
+
+# Open SSH tunnel to nifty-dashboard web UI on the router VM (reconnects on disconnect)
+pve-manage-dashboard pve_host target_ip="10.99.0.1" dashboard_port="3000" local_port="3000":
+    #!/usr/bin/env bash
+    set -eo pipefail
+    REMOTE="admin@{{target_ip}}"
+    PROXY="-J root@{{pve_host}}"
+    SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/nifty-dashboard-%C -o ControlPersist=3600 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ConnectTimeout=10"
+    DASHBOARD_IP=""
+    OPENED_BROWSER=false
+
+    cleanup() {
+        ssh ${SSH_OPTS} ${PROXY} -O exit ${REMOTE} 2>/dev/null || true
+    }
+    trap cleanup EXIT
+
+    discover_ip() {
+        DASHBOARD_IP=$(ssh ${SSH_OPTS} ${PROXY} ${REMOTE} \
+            "grep '^SUBNET_MGMT=' /var/nifty-filter/nifty-filter.env | cut -d= -f2 | cut -d/ -f1" 2>/dev/null)
+    }
+
+    connect() {
+        # Kill stale control socket if any
+        ssh ${SSH_OPTS} ${PROXY} -O exit ${REMOTE} 2>/dev/null || true
+        ssh ${SSH_OPTS} ${PROXY} -fN ${REMOTE} 2>/dev/null || return 1
+
+        if [ -z "${DASHBOARD_IP}" ]; then
+            discover_ip || return 1
+            if [ -z "${DASHBOARD_IP}" ]; then
+                return 1
+            fi
+        fi
+
+        URL="http://localhost:{{local_port}}"
+        echo "Dashboard available at: ${URL}"
+        if [ "${OPENED_BROWSER}" = false ] && command -v xdg-open &>/dev/null; then
+            (sleep 2 && xdg-open "${URL}") &
+            OPENED_BROWSER=true
+        fi
+
+        ssh ${SSH_OPTS} ${PROXY} -L {{local_port}}:${DASHBOARD_IP}:{{dashboard_port}} -N ${REMOTE} 2>/dev/null
+    }
+
+    echo "Connecting to {{target_ip}} via {{pve_host}}..."
+    echo "Press Ctrl-C to stop."
+    echo ""
+    while true; do
+        if connect; then
+            echo "Tunnel disconnected. Reconnecting in 5s..."
+        else
+            echo "Connection failed. Retrying in 5s..."
+        fi
+        sleep 5
+    done
 
 # Create a named snapshot of a Proxmox VM
 pve-snapshot pve_host vmid vm_name comment="":

@@ -5,6 +5,7 @@ use crate::parsers::forward_route::ForwardRouteList;
 use crate::parsers::icmp_type::IcmpType;
 use crate::parsers::icmpv6_type::Icmpv6Type;
 use crate::parsers::inbound_rule::InboundRuleList;
+use crate::parsers::inter_vlan_rule::InterVlanRuleList;
 use crate::parsers::port::PortList;
 use crate::parsers::{
     get_bool, get_cidr_list, get_forward_routes, get_icmp_types, get_icmpv6_types,
@@ -29,6 +30,8 @@ pub struct Vlan {
     pub udp_forward: ForwardRouteList,
     pub tcp_allow_inbound: InboundRuleList,
     pub udp_allow_inbound: InboundRuleList,
+    pub tcp_allow_inter_vlan: InterVlanRuleList,
+    pub udp_allow_inter_vlan: InterVlanRuleList,
     pub iperf_enabled: bool,
     pub dhcp_enabled: bool,
     pub dhcp_pool_start: String,
@@ -380,6 +383,8 @@ fn parse_single_vlan(
         udp_forward,
         tcp_allow_inbound,
         udp_allow_inbound,
+        tcp_allow_inter_vlan: InterVlanRuleList::new(),
+        udp_allow_inter_vlan: InterVlanRuleList::new(),
         iperf_enabled,
         dhcp_enabled,
         dhcp_pool_start,
@@ -441,14 +446,48 @@ pub fn parse_vlans_from_env(
         }
     }
 
-    let vlans: Vec<Vlan> = vlan_ids
+    let mut vlans: Vec<Vlan> = vlan_ids
         .iter()
         .map(|&id| {
             parse_single_vlan(id, &trunk_name, enable_ipv4, id == 1, errors)
         })
         .collect();
 
+    // Parse inter-VLAN allow rules (VLAN_N_ALLOW_FROM_M_TCP/UDP).
+    // Done after all VLANs are created so we can resolve source interface names.
+    parse_inter_vlan_rules(&mut vlans, errors);
+
     (trunk_name, vlan_aware_switch, vlans)
+}
+
+/// Scan env for VLAN_N_ALLOW_FROM_M_TCP/UDP and populate each VLAN's inter-VLAN rule lists.
+fn parse_inter_vlan_rules(vlans: &mut [Vlan], errors: &mut Vec<String>) {
+    // Build a lookup: vlan_id -> interface_name
+    let vlan_lookup: Vec<(u16, String)> = vlans
+        .iter()
+        .map(|v| (v.id, v.interface_name.clone()))
+        .collect();
+
+    for vlan in vlans.iter_mut() {
+        for &(src_id, ref src_iface) in &vlan_lookup {
+            if src_id == vlan.id {
+                continue;
+            }
+            for (suffix, list) in [
+                ("TCP", &mut vlan.tcp_allow_inter_vlan),
+                ("UDP", &mut vlan.udp_allow_inter_vlan),
+            ] {
+                let var_name = format!("VLAN_{}_ALLOW_FROM_{}_{}", vlan.id, src_id, suffix);
+                if let Ok(val) = env::var(&var_name) {
+                    if !val.is_empty() {
+                        if let Err(e) = list.add_entry(src_id, src_iface.clone(), &val) {
+                            errors.push(format!("{}: {}", var_name, e));
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -517,6 +556,7 @@ mod tests {
         env::remove_var("VLAN_1_SUBNET_IPV4");
 
         // VLAN 10 uses sub-interface by default
+        env::remove_var("VLAN_10_NAME"); // clear any leaked state from other tests
         env::set_var("VLAN_10_SUBNET_IPV4", "10.10.0.1/24");
         let vlan = parse_single_vlan(10, "trunk", true, false, &mut errors);
         assert_eq!(vlan.interface_name, "trunk.10");

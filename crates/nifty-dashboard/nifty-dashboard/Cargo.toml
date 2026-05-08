@@ -1,0 +1,76 @@
+[package]
+name = "nifty-dashboard"
+description = "nifty-dashboard"
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/enigmacurry/nifty-dashboard"
+homepage = "https://github.com/enigmacurry/nifty-dashboard"
+license = "MIT"
+keywords = []
+categories = ["command-line-utilities"]
+readme = "README.md"
+documentation = "https://docs.rs/nifty-dashboard"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
+
+[dependencies]
+aide = { version = "0.15.1", features = ["axum", "axum-json", "macros", "redoc", "scalar", "swagger"] }
+anyhow = "1.0.100"
+askama = "0.14.0"
+async-trait = "0.1.89"
+axum = { version = "0.8.7", features = ["multipart"] }
+bcrypt = "0.17.1"
+bytes = "1.11.0"
+chrono = { version = "0.4.42", features = ["serde"] }
+dirs = "5.0.1"
+env_logger = "0.11.5"
+indexmap = { version = "2.12.1", features = ["serde"] }
+log = "0.4.22"
+mime = "0.3.17"
+mime_guess = "2.0.5"
+regex = "1.12.2"
+rmp-serde = "1.3.0"
+rust-embed = { version = "8.9.0", features = ["debug-embed"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "sqlite", "macros", "chrono", "uuid"] }
+tempfile = "3.23.0"
+time = { version = "0.3.44", features = ["serde", "formatting"] }
+tokio = { version = "1.48.0", features = ["rt-multi-thread", "macros", "process", "fs", "signal"] }
+tower = "0.5.2"
+tower-http = { version = "0.6.6", features = ["fs", "trace"] }
+tower-sessions = "0.14.0"
+tower-sessions-sqlx-store = { version = "0.15.0", features = ["sqlite"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+uuid = { version = "1.18.1", features = ["serde", "v4"] }
+schemars = { version = "0.9", features = ["derive"] }
+api-doc-macros = { path = "../api-doc-macros" }
+app-macros = { path = "../app-macros" }
+axum-server = { version = "0.7.3", features = ["tls-rustls"] }
+rcgen = "0.14.5"
+x509-parser = "0.18.0"
+rustls-pemfile = "2.2.0"
+tokio-rustls-acme = { version = "0.8.0", features = ["axum"] }
+rustls = { version = "0.23.35", default-features = false, features = ["ring"] }
+futures-util = "0.3.31"
+acme-dns-client = "0.1.2"
+sha2 = "0.10.9"
+base64 = "0.22.1"
+instant-acme = { version = "0.8.4", features = ["ring"] }
+url = "2.5.7"
+tokio-stream = "0.1.17"
+thiserror = "2.0.17"
+toml = "0.9.8"
+conf = { git = "https://github.com/cbeck88/conf-rs", branch="develop", features = ["completion"]}
+derivative = "2.2.0"
+axum-oidc = "0.6.0"
+strum = { version = "0.27.2", features = ["strum_macros"] }
+strum_macros = "0.27.2"
+
+[dev-dependencies]
+shell-words = "1.1.0"
+
+[profile.release]
+strip = "symbols"

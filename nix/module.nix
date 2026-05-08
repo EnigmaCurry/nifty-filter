@@ -24,9 +24,12 @@ let
   sodolaConfigDir = "${configDir}/sodola-switch";
   sodola-credentials = "${sodolaConfigDir}/credentials";
 
+  nifty-dashboard = self.packages.${pkgs.stdenv.hostPlatform.system}.nifty-dashboard;
+
   # Collect enabled optional packages
   optionalPackages = lib.concatLists [
     (lib.optional cfg.packages.sodola-switch.enable sodola-switch)
+    (lib.optional cfg.packages.nifty-dashboard.enable nifty-dashboard)
     (lib.optional cfg.packages.iperf.enable pkgs.iperf3)
   ];
 
@@ -44,6 +47,9 @@ in
     packages = {
       sodola-switch = {
         enable = mkEnableOption "Sodola SL-SWTGW218AS managed switch client";
+      };
+      nifty-dashboard = {
+        enable = mkEnableOption "nifty-dashboard web UI";
       };
       iperf = {
         enable = mkEnableOption "iperf3 bandwidth testing server";
@@ -158,6 +164,27 @@ in
         Restart = "on-failure";
         RestartSec = "5s";
         DynamicUser = true;
+      };
+    };
+
+    # nifty-dashboard web UI (enabled via packages.nifty-dashboard.enable)
+    # Binds to the management interface IP only.
+    systemd.services.nifty-dashboard = mkIf cfg.packages.nifty-dashboard.enable {
+      description = "nifty-dashboard web UI";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network.target" "nifty-filter.service" ];
+
+      path = [ pkgs.iproute2 pkgs.nftables ];
+      environment.ROOT_DIR = "/var/lib/nifty-dashboard";
+      environment.SODOLA_STATE_FILE = "/run/nifty-filter/sodola-switch.json";
+      environment.NIFTY_CONFIG_FILE = envFile;
+      serviceConfig = {
+        Type = "simple";
+        EnvironmentFile = cfg.configPath;
+        StateDirectory = "nifty-dashboard";
+        ExecStart = "${pkgs.bash}/bin/bash -c '${nifty-dashboard}/bin/nifty-dashboard serve --net-listen-ip $(echo $SUBNET_MGMT | cut -d/ -f1) --net-listen-port \${NIFTY_DASHBOARD_PORT:-3000}'";
+        Restart = "on-failure";
+        RestartSec = "5s";
       };
     };
 
