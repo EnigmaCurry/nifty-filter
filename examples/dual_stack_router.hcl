@@ -44,7 +44,7 @@ vlan "lan" {
     # icmp_accept   = ["echo-request", "echo-reply", "destination-unreachable", "time-exceeded"]
     # icmpv6_accept = ["nd-neighbor-solicit", "nd-neighbor-advert", "nd-router-solicit", "nd-router-advert", "echo-request", "echo-reply"]
     tcp_accept = [22]
-    udp_accept = [67, 68, 546, 547]
+    udp_accept = [53, 67, 68, 546, 547]
   }
 
   dhcp {

@@ -40,7 +40,7 @@ vlan "trusted" {
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable", "time-exceeded"]
     tcp_accept  = [22]
-    udp_accept  = [67, 68]
+    udp_accept  = [53, 67, 68]
   }
 
   dhcp {
@@ -75,7 +75,7 @@ vlan "iot" {
   firewall {
     icmp_accept = ["destination-unreachable"]
     tcp_accept  = []
-    udp_accept  = [67, 68]
+    udp_accept  = [53, 67, 68]
   }
 
   dhcp {
@@ -99,7 +99,7 @@ vlan "guest" {
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable", "time-exceeded"]
     tcp_accept  = []
-    udp_accept  = [67, 68]
+    udp_accept  = [53, 67, 68]
   }
 
   dhcp {
@@ -128,7 +128,7 @@ vlan "lab" {
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable", "time-exceeded"]
     tcp_accept  = [22]
-    udp_accept  = [67, 68, 546, 547]
+    udp_accept  = [53, 67, 68, 546, 547]
   }
 
   dhcp {

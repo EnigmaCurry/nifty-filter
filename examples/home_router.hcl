@@ -41,7 +41,7 @@ vlan "lan" {
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable", "time-exceeded"]
     tcp_accept  = [22, 80, 443]
-    udp_accept  = [67, 68]
+    udp_accept  = [53, 67, 68]
   }
 
   dhcp {
