@@ -1,6 +1,6 @@
 use aide::axum::ApiRouter;
 
-use super::{config, healthz, hello, status, whoami};
+use super::{config, healthz, hello, qos, status, whoami};
 use crate::prelude::*;
 
 pub fn router(state: AppState) -> ApiRouter<AppState> {
@@ -8,6 +8,7 @@ pub fn router(state: AppState) -> ApiRouter<AppState> {
         .nest("/config", config::router())
         .nest("/healthz", healthz::router())
         .nest("/hello", hello::router(state))
+        .nest("/qos", qos::router())
         .nest("/status", status::router())
         .nest("/whoami", whoami::router())
 }

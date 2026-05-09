@@ -3,13 +3,6 @@
 flush ruleset
 
 table inet filter {
-    {% if !vlan_aware_switch %}
-    flowtable ft {
-        hook ingress priority 0
-        devices = { {{ interface_wan }}, {% for vlan in vlans %}{{ vlan.interface_name }}{% if !loop.last %}, {% endif %}{% endfor %} }
-    }
-    {% endif %}
-
     chain input {
         type filter hook input priority 0; policy drop;
         ct state established,related accept comment "nf:Allow established/related connections"
@@ -119,11 +112,7 @@ table inet filter {
 
     chain forward {
         type filter hook forward priority 0; policy drop;
-        {% if vlan_aware_switch %}
         ct state established,related accept comment "nf:Allow established/related connections"
-        {% else %}
-        ct state established,related flow add @ft accept comment "nf:Allow established/related (offload)"
-        {% endif %}
         ct state invalid drop comment "nf:Drop invalid conntrack state"
         jump forward_invalid_sources comment "nf:Check for bogon/spoofed sources"
 
@@ -355,3 +344,33 @@ table inet nat {
         {% endif %}
     }
 }
+
+{% if qos_enabled %}
+table inet mangle {
+    chain postrouting {
+        type filter hook postrouting priority mangle; policy accept;
+
+        {% for vlan in vlans %}
+        {% match vlan.qos_class %}
+        {% when Some with (class) %}
+        {% if enable_ipv4 && vlan.subnet_ipv4 != "" %}
+        oif "{{ interface_wan }}" ip saddr {{ vlan.subnet_ipv4 }} ip dscp set {{ class.dscp_name() }} comment "nf:QoS VLAN {{ vlan.id }} {{ class }}"
+        {% endif %}
+        {% if enable_ipv6 && vlan.subnet_ipv6 != "" %}
+        oif "{{ interface_wan }}" ip6 saddr {{ vlan.subnet_ipv6 }} ip6 dscp set {{ class.dscp_name() }} comment "nf:QoS VLAN {{ vlan.id }} {{ class }} (IPv6)"
+        {% endif %}
+        {% when None %}
+        {% endmatch %}
+        {% endfor %}
+
+        {% for ovr in qos_overrides %}
+        {% if !ovr.cidrs_ipv4.is_empty() %}
+        oif "{{ interface_wan }}" ip saddr { {{ ovr.cidrs_ipv4.join(", ") }} } ip dscp set {{ ovr.class.dscp_name() }} comment "nf:QoS override {{ ovr.class }}"
+        {% endif %}
+        {% if !ovr.cidrs_ipv6.is_empty() %}
+        oif "{{ interface_wan }}" ip6 saddr { {{ ovr.cidrs_ipv6.join(", ") }} } ip6 dscp set {{ ovr.class.dscp_name() }} comment "nf:QoS override {{ ovr.class }} (IPv6)"
+        {% endif %}
+        {% endfor %}
+    }
+}
+{% endif %}

@@ -35,6 +35,9 @@ use tracing::warn;
 pub struct AppState {
     pub db: SqlitePool,
     pub auth_config: AuthConfig,
+    pub config_changed_tx: tokio::sync::broadcast::Sender<()>,
+    pub config_boot_sha: String,
+    pub config_boot_values: std::collections::HashMap<String, (String, bool)>,
 }
 
 #[derive(Clone, Debug)]
@@ -109,8 +112,43 @@ pub async fn run(
     let oidc_auth_layer = build_oidc_auth_layer(&oidc_cfg).await?;
     debug_assert!(!oidc_cfg.enabled || oidc_auth_layer.is_some());
 
+    // Config file watcher
+    let (config_changed_tx, _) = tokio::sync::broadcast::channel::<()>(16);
+    let config_boot_sha = crate::config_watcher::read_boot_sha().await;
+    info!("config boot SHA: {}", config_boot_sha);
+    let config_boot_values = {
+        // Read the boot-time config snapshot from /run/ (written by nifty-config-sha.service).
+        // Falls back to current config file if snapshot doesn't exist (dev/non-NixOS).
+        let boot_snapshot_path = std::env::var("NIFTY_CONFIG_BOOT_SHA_FILE")
+            .map(|p| {
+                std::path::PathBuf::from(p)
+                    .parent()
+                    .unwrap_or(std::path::Path::new("/run/nifty-filter"))
+                    .join("config-boot-snapshot")
+            })
+            .unwrap_or_else(|_| {
+                std::path::PathBuf::from("/run/nifty-filter/config-boot-snapshot")
+            });
+        let contents = match tokio::fs::read_to_string(&boot_snapshot_path).await {
+            Ok(c) => c,
+            Err(_) => {
+                // Fallback: read current config file
+                let path = crate::config_watcher::config_file_path();
+                tokio::fs::read_to_string(&path).await.unwrap_or_default()
+            }
+        };
+        crate::routes::status::parse_config_values(&contents)
+    };
+    crate::config_watcher::spawn_config_watcher(config_changed_tx.clone());
+
     // Shared state + router
-    let state = AppState { db, auth_config };
+    let state = AppState {
+        db,
+        auth_config,
+        config_changed_tx,
+        config_boot_sha,
+        config_boot_values,
+    };
     let app = build_app(
         forward_auth_cfg,
         forward_for_cfg,
@@ -680,16 +718,23 @@ async fn shutdown_signal(deletion_task_abort_handle: AbortHandle, handle: Option
         _ = terminate => {},
     }
 
+    info!("shutdown signal received; starting graceful shutdown");
+
     // Stop the background deletion task
     deletion_task_abort_handle.abort();
 
     // If we are running behind axum_server, trigger graceful shutdown there too
     if let Some(handle) = handle {
-        // You can tune the timeout; 10 seconds is a typical choice.
-        handle.graceful_shutdown(Some(Duration::from_secs(10)));
+        handle.graceful_shutdown(Some(Duration::from_secs(1)));
     }
 
-    info!("shutdown signal received; starting graceful shutdown");
+    // Force exit after deadline — axum::serve graceful shutdown waits
+    // indefinitely for open connections (e.g. SSE streams).
+    tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        info!("graceful shutdown deadline reached; forcing exit");
+        std::process::exit(0);
+    });
 }
 
 fn privileged_port_hint() -> &'static str {

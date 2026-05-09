@@ -28,7 +28,7 @@ nifty-filter nftables --env-file router.env --strict-env
 nifty-filter nftables --env-file router.env --strict-env --validate
 
 # From environment variables:
-INTERFACE_LAN=lan INTERFACE_WAN=wan SUBNET_LAN=10.99.0.1/24 \
+LAN_INTERFACE=lan WAN_INTERFACE=wan SUBNET_LAN=10.99.0.1/24 \
   nifty-filter nftables
 ```
 

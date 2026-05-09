@@ -7,6 +7,7 @@ use crate::parsers::icmpv6_type::Icmpv6Type;
 use crate::parsers::inbound_rule::InboundRuleList;
 use crate::parsers::inter_vlan_rule::InterVlanRuleList;
 use crate::parsers::port::PortList;
+use crate::parsers::qos_class::QosClass;
 use crate::parsers::{
     get_bool, get_cidr_list, get_forward_routes, get_icmp_types, get_icmpv6_types,
     get_inbound_rules, get_port_accept,
@@ -32,6 +33,7 @@ pub struct Vlan {
     pub udp_allow_inbound: InboundRuleList,
     pub tcp_allow_inter_vlan: InterVlanRuleList,
     pub udp_allow_inter_vlan: InterVlanRuleList,
+    pub qos_class: Option<QosClass>,
     pub iperf_enabled: bool,
     pub dhcp_enabled: bool,
     pub dhcp_pool_start: String,
@@ -167,10 +169,10 @@ fn apply_legacy_aliases() {
         }
     }
 
-    // Map INTERFACE_LAN -> INTERFACE_TRUNK
-    if env::var("INTERFACE_TRUNK").is_err() {
-        if let Ok(val) = env::var("INTERFACE_LAN") {
-            env::set_var("INTERFACE_TRUNK", &val);
+    // Map LAN_INTERFACE -> TRUNK_INTERFACE
+    if env::var("TRUNK_INTERFACE").is_err() {
+        if let Ok(val) = env::var("LAN_INTERFACE") {
+            env::set_var("TRUNK_INTERFACE", &val);
         }
     }
 }
@@ -293,6 +295,14 @@ fn parse_single_vlan(
         String::new()
     };
 
+    // QoS class (optional — only used when QoS is enabled)
+    let qos_class = vlan_env(vlan_id, "QOS_CLASS").map(|val| {
+        QosClass::new(&val).unwrap_or_else(|e| {
+            errors.push(format!("VLAN_{}_QOS_CLASS: {}", vlan_id, e));
+            QosClass::Besteffort
+        })
+    });
+
     // iperf3 server access
     let iperf_enabled = get_bool(
         &format!("VLAN_{}_IPERF_ENABLED", vlan_id),
@@ -385,6 +395,7 @@ fn parse_single_vlan(
         udp_allow_inbound,
         tcp_allow_inter_vlan: InterVlanRuleList::new(),
         udp_allow_inter_vlan: InterVlanRuleList::new(),
+        qos_class,
         iperf_enabled,
         dhcp_enabled,
         dhcp_pool_start,
@@ -408,9 +419,9 @@ pub fn parse_vlans_from_env(
     // Apply legacy aliases before reading anything
     apply_legacy_aliases();
 
-    let trunk_name = env::var("INTERFACE_TRUNK").unwrap_or_default();
+    let trunk_name = env::var("TRUNK_INTERFACE").unwrap_or_default();
     if trunk_name.is_empty() {
-        errors.push("INTERFACE_TRUNK (or INTERFACE_LAN) is required.".to_string());
+        errors.push("TRUNK_INTERFACE (or LAN_INTERFACE) is required.".to_string());
     }
 
     let vlan_aware_switch = get_bool("VLAN_AWARE_SWITCH", errors, Some(false));

@@ -642,13 +642,13 @@ fn show_config(env: &EnvFile) {
     println!("  === Current Configuration ===");
     println!("  ENABLED:        {}", env.get("ENABLED"));
     println!("  HOSTNAME:       {}", env.get("HOSTNAME"));
-    println!("  INTERFACE_WAN:  {} ({})", env.get("INTERFACE_WAN"), env.get("WAN_MAC"));
-    let trunk = env.get("INTERFACE_TRUNK");
-    let trunk_display = if trunk.is_empty() { env.get("INTERFACE_LAN") } else { trunk };
-    println!("  INTERFACE_TRUNK: {} ({})", trunk_display, env.get("TRUNK_MAC"));
+    println!("  WAN_INTERFACE:  {} ({})", env.get("WAN_INTERFACE"), env.get("WAN_MAC"));
+    let trunk = env.get("TRUNK_INTERFACE");
+    let trunk_display = if trunk.is_empty() { env.get("LAN_INTERFACE") } else { trunk };
+    println!("  TRUNK_INTERFACE: {} ({})", trunk_display, env.get("TRUNK_MAC"));
     let mgmt_mac = env.get("MGMT_MAC");
     if !mgmt_mac.is_empty() {
-        println!("  INTERFACE_MGMT: {} ({})", env.get("INTERFACE_MGMT"), mgmt_mac);
+        println!("  MGMT_INTERFACE: {} ({})", env.get("MGMT_INTERFACE"), mgmt_mac);
     }
     println!(
         "  ENABLE_IPV4:    {}",
@@ -710,10 +710,10 @@ fn show_config(env: &EnvFile) {
 
     println!();
     println!("  --- WAN ---");
-    println!("  TCP_ACCEPT_WAN: {}", env.get("TCP_ACCEPT_WAN"));
-    println!("  UDP_ACCEPT_WAN: {}", env.get("UDP_ACCEPT_WAN"));
-    println!("  TCP_FORWARD_WAN: {}", env.get("TCP_FORWARD_WAN"));
-    println!("  UDP_FORWARD_WAN: {}", env.get("UDP_FORWARD_WAN"));
+    println!("  WAN_TCP_ACCEPT: {}", env.get("WAN_TCP_ACCEPT"));
+    println!("  WAN_UDP_ACCEPT: {}", env.get("WAN_UDP_ACCEPT"));
+    println!("  WAN_TCP_FORWARD: {}", env.get("WAN_TCP_FORWARD"));
+    println!("  WAN_UDP_FORWARD: {}", env.get("WAN_UDP_FORWARD"));
     println!();
 }
 
@@ -931,18 +931,18 @@ ENABLED=true
 HOSTNAME={hostname}
 
 # Network interfaces
-INTERFACE_TRUNK=trunk
-INTERFACE_WAN=wan
+TRUNK_INTERFACE=trunk
+WAN_INTERFACE=wan
 VLAN_AWARE_SWITCH=false
 
 # ICMP/ports accepted on WAN
-ICMP_ACCEPT_WAN=
-TCP_ACCEPT_WAN=22
-UDP_ACCEPT_WAN=
+WAN_ICMP_ACCEPT=
+WAN_TCP_ACCEPT=22
+WAN_UDP_ACCEPT=
 
 # WAN port forwarding
-TCP_FORWARD_WAN=
-UDP_FORWARD_WAN=
+WAN_TCP_FORWARD=
+WAN_UDP_FORWARD=
 
 # VLAN 1 (default LAN)
 VLAN_1_SUBNET_IPV4={subnet}
@@ -1086,8 +1086,8 @@ fn menu_firewall(env: &mut EnvFile) {
                 env.get(&vlan_key(*vid, "EGRESS_ALLOWED_IPV6"))
             ));
         }
-        items.push(format!("TCP ports WAN ({})", env.get("TCP_ACCEPT_WAN")));
-        items.push(format!("UDP ports WAN ({})", env.get("UDP_ACCEPT_WAN")));
+        items.push(format!("TCP ports WAN ({})", env.get("WAN_TCP_ACCEPT")));
+        items.push(format!("UDP ports WAN ({})", env.get("WAN_UDP_ACCEPT")));
         items.push("Back".to_string());
 
         match choose("Firewall:", items, cursor) {
@@ -1117,11 +1117,11 @@ fn menu_firewall(env: &mut EnvFile) {
             }
             Some((idx, choice)) if choice.starts_with("TCP ports WAN") => {
                 cursor = idx;
-                edit_ports(env, "TCP_ACCEPT_WAN", "TCP ports WAN")
+                edit_ports(env, "WAN_TCP_ACCEPT", "TCP ports WAN")
             }
             Some((idx, choice)) if choice.starts_with("UDP ports WAN") => {
                 cursor = idx;
-                edit_ports(env, "UDP_ACCEPT_WAN", "UDP ports WAN")
+                edit_ports(env, "WAN_UDP_ACCEPT", "UDP ports WAN")
             }
             Some((_, choice)) if choice == "Back" => break,
             _ => break,
@@ -1144,8 +1144,8 @@ fn menu_port_forwarding(env: &mut EnvFile) {
                 env.get(&vlan_key(*vid, "UDP_FORWARD"))
             ));
         }
-        items.push(format!("TCP forward WAN ({})", env.get("TCP_FORWARD_WAN")));
-        items.push(format!("UDP forward WAN ({})", env.get("UDP_FORWARD_WAN")));
+        items.push(format!("TCP forward WAN ({})", env.get("WAN_TCP_FORWARD")));
+        items.push(format!("UDP forward WAN ({})", env.get("WAN_UDP_FORWARD")));
         items.push("Back".to_string());
 
         match choose("Port Forwarding:", items, cursor) {
@@ -1163,11 +1163,11 @@ fn menu_port_forwarding(env: &mut EnvFile) {
             }
             Some((idx, choice)) if choice.starts_with("TCP forward WAN") => {
                 cursor = idx;
-                edit_forwards(env, "TCP_FORWARD_WAN", "TCP forward WAN")
+                edit_forwards(env, "WAN_TCP_FORWARD", "TCP forward WAN")
             }
             Some((idx, choice)) if choice.starts_with("UDP forward WAN") => {
                 cursor = idx;
-                edit_forwards(env, "UDP_FORWARD_WAN", "UDP forward WAN")
+                edit_forwards(env, "WAN_UDP_FORWARD", "UDP forward WAN")
             }
             Some((_, choice)) if choice == "Back" => break,
             _ => break,

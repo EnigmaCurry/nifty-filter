@@ -15,8 +15,10 @@ mod install;
 mod parsers;
 #[cfg(feature = "nixos")]
 mod pve_setup;
+pub mod qos;
 pub mod vlan;
 use parsers::*;
+use qos::{QosConfig, QosOverride};
 use vlan::Vlan;
 #[allow(unused_imports)]
 use std::net::IpAddr;
@@ -73,6 +75,17 @@ enum Commands {
     /// Print version and build info
     Version,
 
+    /// Generate QoS (tc/CAKE) shell commands for WAN traffic shaping
+    Qos {
+        /// Path to the .env file (actual environment vars supersede this)
+        #[arg(long)]
+        env_file: Option<String>,
+
+        /// Ignore the environment (combine this with --env-file)
+        #[arg(long)]
+        strict_env: bool,
+    },
+
     /// Generate nftables configuration
     #[command(alias = "nft")]
     Nftables {
@@ -128,20 +141,24 @@ struct RouterTemplate {
     // Anti-spoofing: bogon source addresses to drop on WAN
     wan_bogons_ipv4: String,
     wan_bogons_ipv6: String,
+
+    // QoS: DSCP marking for upload traffic prioritization
+    qos_enabled: bool,
+    qos_overrides: Vec<QosOverride>,
 }
 
 impl RouterTemplate {
     fn from_env() -> Result<Self, Vec<String>> {
         let mut errors = Vec::new();
 
-        let interface_wan = get_interface("INTERFACE_WAN", &mut errors);
-        let interface_mgmt = env::var("INTERFACE_MGMT").unwrap_or_default();
+        let interface_wan = get_interface("WAN_INTERFACE", &mut errors);
+        let interface_mgmt = env::var("MGMT_INTERFACE").unwrap_or_default();
         let subnet_mgmt_ipv4 = if !interface_mgmt.is_empty() {
-            match get_subnet_optional("SUBNET_MGMT", &mut errors) {
+            match get_subnet_optional("MGMT_SUBNET", &mut errors) {
                 Some(s) => s.to_string(),
                 None => {
                     errors.push(
-                        "SUBNET_MGMT is required when INTERFACE_MGMT is set.".to_string(),
+                        "MGMT_SUBNET is required when MGMT_INTERFACE is set.".to_string(),
                     );
                     String::new()
                 }
@@ -167,7 +184,7 @@ impl RouterTemplate {
             errors.push("At least one of WAN_ENABLE_IPV4 or WAN_ENABLE_IPV6 must be true.".to_string());
         }
 
-        // Parse VLANs (handles backward compat with legacy INTERFACE_LAN/SUBNET_LAN vars)
+        // Parse VLANs (handles backward compat with legacy LAN_INTERFACE/SUBNET_LAN vars)
         let (trunk_name, vlan_aware_switch, vlans) =
             vlan::parse_vlans_from_env(enable_ipv4, &mut errors);
 
@@ -181,13 +198,13 @@ impl RouterTemplate {
 
         // WAN-side ICMP
         let icmp_accept_wan = if enable_ipv4 {
-            IcmpType::vec_to_string(&get_icmp_types("ICMP_ACCEPT_WAN", &mut errors, vec![]))
+            IcmpType::vec_to_string(&get_icmp_types("WAN_ICMP_ACCEPT", &mut errors, vec![]))
         } else {
             String::new()
         };
         let icmpv6_accept_wan = if enable_ipv6 {
             Icmpv6Type::vec_to_string(&get_icmpv6_types(
-                "ICMPV6_ACCEPT_WAN",
+                "WAN_ICMPV6_ACCEPT",
                 &mut errors,
                 vec![
                     Icmpv6Type::NdNeighborSolicit,
@@ -205,18 +222,18 @@ impl RouterTemplate {
 
         // WAN-side port accepts
         let tcp_accept_wan =
-            get_port_accept("TCP_ACCEPT_WAN", &mut errors, PortList::new("").unwrap()).to_string();
+            get_port_accept("WAN_TCP_ACCEPT", &mut errors, PortList::new("").unwrap()).to_string();
         let udp_accept_wan =
-            get_port_accept("UDP_ACCEPT_WAN", &mut errors, PortList::new("").unwrap()).to_string();
+            get_port_accept("WAN_UDP_ACCEPT", &mut errors, PortList::new("").unwrap()).to_string();
 
         // WAN-side forward routes
         let tcp_forward_wan = get_forward_routes(
-            "TCP_FORWARD_WAN",
+            "WAN_TCP_FORWARD",
             &mut errors,
             ForwardRouteList::new("").unwrap(),
         );
         let udp_forward_wan = get_forward_routes(
-            "UDP_FORWARD_WAN",
+            "WAN_UDP_FORWARD",
             &mut errors,
             ForwardRouteList::new("").unwrap(),
         );
@@ -252,6 +269,23 @@ impl RouterTemplate {
             String::new()
         };
 
+        // QoS: check if speeds are configured (determines qos_enabled)
+        let qos_enabled = match QosConfig::from_env() {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(qos_errors) => {
+                errors.extend(qos_errors);
+                false
+            }
+        };
+
+        // QoS overrides (only parse when QoS is enabled)
+        let qos_overrides = if qos_enabled {
+            qos::parse_qos_overrides(&mut errors)
+        } else {
+            Vec::new()
+        };
+
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -274,8 +308,18 @@ impl RouterTemplate {
             iperf_port,
             wan_bogons_ipv4,
             wan_bogons_ipv6,
+            qos_enabled,
+            qos_overrides,
         })
     }
+}
+
+#[derive(Template)]
+#[template(path = "qos.sh.txt")]
+struct QosTemplate {
+    interface_wan: Interface,
+    upload_kbit: u32,
+    download_kbit: u32,
 }
 
 pub fn validate_nftables_config(config: &str) -> Result<(), String> {
@@ -363,6 +407,70 @@ fn app() {
         Commands::PveSetup { pve_host } => pve_setup::run(&pve_host),
         Commands::Version => {
             println!("nifty-filter {} ({})", env!("CARGO_PKG_VERSION"), option_env!("GIT_SHA").unwrap_or("unknown"));
+        }
+        Commands::Qos {
+            env_file,
+            strict_env,
+        } => {
+            // Ignore non-default environment variables if `--strict-env` is set
+            if env_file.is_some() && strict_env {
+                let default_vars: HashSet<&str> = [
+                    "HOME", "USER", "PWD", "OLDPWD", "SHELL", "PATH", "LANG", "TERM", "UID",
+                    "EUID", "LOGNAME", "HOSTNAME", "EDITOR", "VISUAL",
+                ]
+                .iter()
+                .cloned()
+                .collect();
+
+                for (key, _) in env::vars() {
+                    if !default_vars.contains(key.as_str())
+                        && !key.starts_with("RUST")
+                        && !key.starts_with("CARGO")
+                    {
+                        env::remove_var(&key);
+                    }
+                }
+            }
+
+            // Load the specified .env file if provided
+            if let Some(env_file) = env_file {
+                match from_filename(&env_file) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        eprintln!("Error: Failed to load {}: {}", env_file, err);
+                        exit(1);
+                    }
+                }
+            }
+
+            // Parse QoS config; exit silently if not configured
+            match QosConfig::from_env() {
+                Ok(Some(config)) => {
+                    let mut errors = Vec::new();
+                    let interface_wan = get_interface("WAN_INTERFACE", &mut errors);
+                    if !errors.is_empty() {
+                        for err in errors {
+                            eprintln!("Error: {}", err);
+                        }
+                        exit(1);
+                    }
+                    let tmpl = QosTemplate {
+                        interface_wan,
+                        upload_kbit: config.upload_kbit,
+                        download_kbit: config.download_kbit,
+                    };
+                    println!("{}", tmpl.render().unwrap());
+                }
+                Ok(None) => {
+                    eprintln!("QoS not configured (WAN_QOS_UPLOAD_MBPS and WAN_QOS_DOWNLOAD_MBPS not set), skipping.");
+                }
+                Err(errors) => {
+                    for err in errors {
+                        eprintln!("Error: {}", err);
+                    }
+                    exit(1);
+                }
+            }
         }
         Commands::Nftables {
             env_file,
@@ -465,6 +573,9 @@ mod tests {
                     || k.starts_with("WAN_")
                     || k.starts_with("DHCP")
                     || k.starts_with("IPERF")
+                    || k.starts_with("QOS_")
+                    || k.ends_with("_INTERFACE")
+                    || k.ends_with("_SUBNET")
                     || k == "VLANS"
                     || k == "VLAN_AWARE_SWITCH"
             })
@@ -508,8 +619,8 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
 
-        env::set_var("INTERFACE_TRUNK", "trunk");
-        env::set_var("INTERFACE_WAN", "wan");
+        env::set_var("TRUNK_INTERFACE", "trunk");
+        env::set_var("WAN_INTERFACE", "wan");
         env::set_var("VLAN_1_SUBNET_IPV4", "192.168.10.1/24");
         env::set_var("VLAN_1_TCP_ACCEPT", "22");
         env::set_var("VLAN_1_UDP_ACCEPT", "67,68");
@@ -538,8 +649,8 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
 
-        env::set_var("INTERFACE_TRUNK", "trunk");
-        env::set_var("INTERFACE_WAN", "wan");
+        env::set_var("TRUNK_INTERFACE", "trunk");
+        env::set_var("WAN_INTERFACE", "wan");
         env::set_var("VLAN_AWARE_SWITCH", "true");
         env::set_var("VLANS", "10,20");
 
@@ -583,8 +694,8 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
 
-        env::set_var("INTERFACE_TRUNK", "trunk");
-        env::set_var("INTERFACE_WAN", "wan");
+        env::set_var("TRUNK_INTERFACE", "trunk");
+        env::set_var("WAN_INTERFACE", "wan");
         env::set_var("VLAN_AWARE_SWITCH", "true");
         env::set_var("VLANS", "1,10");
         env::set_var("VLAN_1_SUBNET_IPV4", "192.168.1.1/24");
@@ -607,8 +718,8 @@ mod tests {
         clear_env();
 
         // Set legacy flat vars (no VLAN_* vars)
-        env::set_var("INTERFACE_LAN", "lan");
-        env::set_var("INTERFACE_WAN", "wan");
+        env::set_var("LAN_INTERFACE", "lan");
+        env::set_var("WAN_INTERFACE", "wan");
         env::set_var("SUBNET_LAN", "192.168.1.1/24");
         env::set_var("TCP_ACCEPT_LAN", "22,80");
         env::set_var("UDP_ACCEPT_LAN", "67,68");
@@ -617,7 +728,7 @@ mod tests {
         let tmpl = RouterTemplate::from_env().unwrap_or_else(|e| panic!("should parse legacy vars: {:?}", e));
         let rendered = tmpl.render().unwrap();
 
-        // Should use "lan" as trunk name (from INTERFACE_LAN alias)
+        // Should use "lan" as trunk name (from LAN_INTERFACE alias)
         assert!(rendered.contains(r#"iif "lan""#));
         // Should have the legacy subnet
         assert!(rendered.contains("192.168.1.1/24"));
@@ -634,8 +745,8 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
 
-        env::set_var("INTERFACE_TRUNK", "trunk");
-        env::set_var("INTERFACE_WAN", "wan");
+        env::set_var("TRUNK_INTERFACE", "trunk");
+        env::set_var("WAN_INTERFACE", "wan");
         env::set_var("VLAN_AWARE_SWITCH", "true");
         env::set_var("VLANS", "10,20");
 
@@ -669,8 +780,8 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
 
-        env::set_var("INTERFACE_TRUNK", "trunk");
-        env::set_var("INTERFACE_WAN", "wan");
+        env::set_var("TRUNK_INTERFACE", "trunk");
+        env::set_var("WAN_INTERFACE", "wan");
         env::set_var("VLAN_AWARE_SWITCH", "true");
         env::set_var("VLANS", "10,20");
 
@@ -707,8 +818,8 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_env();
 
-        env::set_var("INTERFACE_TRUNK", "trunk");
-        env::set_var("INTERFACE_WAN", "wan");
+        env::set_var("TRUNK_INTERFACE", "trunk");
+        env::set_var("WAN_INTERFACE", "wan");
         env::set_var("VLAN_AWARE_SWITCH", "true");
         env::set_var("VLANS", "10,40");
 
@@ -746,6 +857,127 @@ mod tests {
         // Comments
         assert!(rendered.contains("Allow inter-VLAN TCP from VLAN 10 to VLAN 40"));
         assert!(rendered.contains("Allow inter-VLAN UDP from VLAN 10 to VLAN 40"));
+
+        clear_env();
+    }
+
+    #[test]
+    fn test_qos_disabled_no_mangle_table() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+
+        env::set_var("TRUNK_INTERFACE", "trunk");
+        env::set_var("WAN_INTERFACE", "wan");
+        env::set_var("VLAN_1_SUBNET_IPV4", "192.168.10.1/24");
+
+        let tmpl = RouterTemplate::from_env().unwrap();
+        let rendered = tmpl.render().unwrap();
+
+        assert!(!rendered.contains("table inet mangle"));
+        assert!(!rendered.contains("dscp set"));
+        // Flowtable should never appear (removed)
+        assert!(!rendered.contains("flowtable"));
+
+        clear_env();
+    }
+
+    #[test]
+    fn test_qos_enabled_dscp_marking() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+
+        env::set_var("TRUNK_INTERFACE", "trunk");
+        env::set_var("WAN_INTERFACE", "wan");
+        env::set_var("VLAN_AWARE_SWITCH", "true");
+        env::set_var("VLANS", "10,20");
+        env::set_var("VLAN_10_SUBNET_IPV4", "10.10.0.1/24");
+        env::set_var("VLAN_10_EGRESS_ALLOWED_IPV4", "0.0.0.0/0");
+        env::set_var("VLAN_10_TCP_ACCEPT", "22");
+        env::set_var("VLAN_10_UDP_ACCEPT", "67,68");
+        env::set_var("VLAN_10_QOS_CLASS", "voice");
+        env::set_var("VLAN_20_SUBNET_IPV4", "10.20.0.1/24");
+        env::set_var("VLAN_20_TCP_ACCEPT", "");
+        env::set_var("VLAN_20_UDP_ACCEPT", "67,68");
+        env::set_var("VLAN_20_QOS_CLASS", "bulk");
+        env::set_var("WAN_QOS_UPLOAD_MBPS", "20");
+        env::set_var("WAN_QOS_DOWNLOAD_MBPS", "300");
+
+        let tmpl = RouterTemplate::from_env().unwrap_or_else(|e| panic!("should parse QoS config: {:?}", e));
+        let rendered = tmpl.render().unwrap();
+
+        assert!(rendered.contains("table inet mangle"));
+        // VLAN 10 marked as voice (EF)
+        assert!(rendered.contains(r#"oif "wan" ip saddr 10.10.0.1/24 ip dscp set ef"#));
+        // VLAN 20 marked as bulk (CS1)
+        assert!(rendered.contains(r#"oif "wan" ip saddr 10.20.0.1/24 ip dscp set cs1"#));
+
+        clear_env();
+    }
+
+    #[test]
+    fn test_qos_override_rules() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+
+        env::set_var("TRUNK_INTERFACE", "trunk");
+        env::set_var("WAN_INTERFACE", "wan");
+        env::set_var("VLAN_1_SUBNET_IPV4", "192.168.10.1/24");
+        env::set_var("WAN_QOS_UPLOAD_MBPS", "20");
+        env::set_var("WAN_QOS_DOWNLOAD_MBPS", "300");
+        env::set_var("QOS_OVERRIDE_VOICE", "192.168.10.50,192.168.10.51");
+        env::set_var("QOS_OVERRIDE_BULK", "192.168.10.0/24");
+
+        let tmpl = RouterTemplate::from_env().unwrap_or_else(|e| panic!("should parse QoS overrides: {:?}", e));
+        let rendered = tmpl.render().unwrap();
+
+        // Voice override
+        assert!(rendered.contains("192.168.10.50/32, 192.168.10.51/32"));
+        assert!(rendered.contains("ip dscp set ef"));
+        // Bulk override
+        assert!(rendered.contains("192.168.10.0/24"));
+        assert!(rendered.contains("ip dscp set cs1"));
+
+        clear_env();
+    }
+
+    #[test]
+    fn test_qos_one_speed_error() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+
+        env::set_var("TRUNK_INTERFACE", "trunk");
+        env::set_var("WAN_INTERFACE", "wan");
+        env::set_var("VLAN_1_SUBNET_IPV4", "192.168.10.1/24");
+        env::set_var("WAN_QOS_UPLOAD_MBPS", "20");
+        // Missing WAN_QOS_DOWNLOAD_MBPS
+
+        let result = RouterTemplate::from_env();
+        assert!(result.is_err());
+        let errors = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(errors.iter().any(|e| e.contains("WAN_QOS_DOWNLOAD_MBPS")));
+
+        clear_env();
+    }
+
+    #[test]
+    fn test_qos_no_flowtable() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_env();
+
+        // Even in non-VLAN-aware mode, flowtable should be gone
+        env::set_var("TRUNK_INTERFACE", "trunk");
+        env::set_var("WAN_INTERFACE", "wan");
+        env::set_var("VLAN_AWARE_SWITCH", "false");
+        env::set_var("VLAN_1_SUBNET_IPV4", "192.168.10.1/24");
+
+        let tmpl = RouterTemplate::from_env().unwrap();
+        let rendered = tmpl.render().unwrap();
+
+        assert!(!rendered.contains("flowtable"));
+        assert!(!rendered.contains("flow add @ft"));
 
         clear_env();
     }

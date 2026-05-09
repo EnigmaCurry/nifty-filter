@@ -1,7 +1,8 @@
 use aide::{axum::ApiRouter, openapi::OpenApi};
 use axum::response::IntoResponse;
 use axum::{
-    Extension, error_handling::HandleErrorLayer, http::StatusCode, middleware, routing::get,
+    Extension, error_handling::HandleErrorLayer, http::StatusCode, middleware,
+    routing::get,
 };
 use axum_oidc::{EmptyAdditionalClaims, OidcAuthLayer, error::MiddlewareError};
 use std::sync::Arc;
@@ -22,9 +23,11 @@ use crate::{
 pub mod admin;
 pub mod api;
 pub mod config;
+pub mod events;
 pub mod healthz;
 pub mod hello;
 pub mod login;
+pub mod qos;
 pub mod status;
 pub mod whoami;
 
@@ -89,6 +92,7 @@ pub fn router(
             forwarded_for_cfg,
             trusted_forwarded_for::trusted_forwarded_for,
         ))
+        .route("/api/events", get(events::sse_handler))
         .route("/", get(crate::frontend::spa_handler))
         .route("/{*path}", get(crate::frontend::spa_handler))
         .layer(TraceLayer::new_for_http())

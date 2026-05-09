@@ -5,6 +5,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tokio::process::Command;
 
@@ -177,6 +178,11 @@ struct ConfigEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     comment: Option<String>,
     is_commented_out: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    boot_value: Option<String>,
+    /// True when this entry is not in the config file and shows the built-in default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    is_default: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -188,6 +194,7 @@ struct ConfigSection {
 #[derive(Serialize, JsonSchema)]
 struct ConfigResponse {
     sections: Vec<ConfigSection>,
+    reboot_needed: bool,
 }
 
 const SENSITIVE_PATTERNS: &[&str] = &["PASS", "SECRET", "TOKEN", "KEY"];
@@ -203,6 +210,46 @@ fn config_file_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("/var/nifty-filter/nifty-filter.env"))
 }
 
+/// Parse config text into a flat map of key → (value, is_commented_out).
+/// Used to snapshot boot config and compare against current.
+pub fn parse_config_values(contents: &str) -> HashMap<String, (String, bool)> {
+    let mut map = HashMap::new();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix('#') {
+            let rest = rest.trim();
+            if let Some(eq_pos) = rest.find('=') {
+                let key = rest[..eq_pos].trim();
+                if !key.is_empty()
+                    && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && key.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
+                {
+                    let value = rest[eq_pos + 1..].trim().trim_matches('"').to_string();
+                    let value = if is_sensitive(key) {
+                        "******".to_string()
+                    } else {
+                        value
+                    };
+                    map.insert(key.to_string(), (value, true));
+                }
+            }
+        } else if let Some(eq_pos) = trimmed.find('=') {
+            let key = trimmed[..eq_pos].trim();
+            let value = trimmed[eq_pos + 1..].trim().trim_matches('"').to_string();
+            let value = if is_sensitive(key) {
+                "******".to_string()
+            } else {
+                value
+            };
+            map.insert(key.to_string(), (value, false));
+        }
+    }
+    map
+}
+
 #[api_doc(
     id = "get_config",
     tag = "status",
@@ -212,16 +259,25 @@ fn config_file_path() -> PathBuf {
 /// Configuration
 ///
 /// Returns the nifty-filter configuration with sensitive values redacted.
-async fn get_config(_state: State<AppState>) -> ApiJson<ConfigResponse> {
+async fn get_config(state: State<AppState>) -> ApiJson<ConfigResponse> {
     let path = config_file_path();
     let contents = match tokio::fs::read_to_string(&path).await {
         Ok(c) => c,
         Err(_) => {
             return json_ok(ConfigResponse {
                 sections: vec![],
+                reboot_needed: false,
             });
         }
     };
+
+    let current_sha = {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(contents.as_bytes()))
+    };
+    let reboot_needed =
+        !state.config_boot_sha.is_empty() && current_sha != state.config_boot_sha;
+    let boot_vals = &state.config_boot_values;
 
     let mut sections: Vec<ConfigSection> = Vec::new();
     let mut current_section = ConfigSection {
@@ -265,15 +321,38 @@ async fn get_config(_state: State<AppState>) -> ApiJson<ConfigResponse> {
                     && key.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
                 {
                     let value = rest[eq_pos + 1..].trim().trim_matches('"').to_string();
+                    let display_value = if is_sensitive(key) {
+                        "******".to_string()
+                    } else {
+                        value
+                    };
+                    // Show boot_value if the entry was different at boot
+                    let boot_value = if reboot_needed {
+                        match boot_vals.get(key) {
+                            Some((bv, bc)) => {
+                                if *bc != true || *bv != display_value {
+                                    Some(if *bc {
+                                        format!("#{bv}")
+                                    } else {
+                                        bv.clone()
+                                    })
+                                } else {
+                                    None
+                                }
+                            }
+                            // Key not in boot snapshot = new since boot
+                            None => Some("(new)".to_string()),
+                        }
+                    } else {
+                        None
+                    };
                     current_section.entries.push(ConfigEntry {
                         key: key.to_string(),
-                        value: if is_sensitive(key) {
-                            "******".to_string()
-                        } else {
-                            value
-                        },
+                        value: display_value,
                         comment: pending_comment.take(),
                         is_commented_out: true,
+                        boot_value,
+                        is_default: false,
                     });
                     pending_comment_first_line = None;
                     continue;
@@ -302,15 +381,38 @@ async fn get_config(_state: State<AppState>) -> ApiJson<ConfigResponse> {
         if let Some(eq_pos) = trimmed.find('=') {
             let key = trimmed[..eq_pos].trim();
             let value = trimmed[eq_pos + 1..].trim().trim_matches('"').to_string();
+            let display_value = if is_sensitive(key) {
+                "******".to_string()
+            } else {
+                value
+            };
+            // Show boot_value if the entry was different at boot
+            let boot_value = if reboot_needed {
+                match boot_vals.get(key) {
+                    Some((bv, bc)) => {
+                        if *bc != false || *bv != display_value {
+                            Some(if *bc {
+                                format!("#{bv}")
+                            } else {
+                                bv.clone()
+                            })
+                        } else {
+                            None
+                        }
+                    }
+                    // Key not in boot snapshot = new since boot
+                    None => Some("(new)".to_string()),
+                }
+            } else {
+                None
+            };
             current_section.entries.push(ConfigEntry {
                 key: key.to_string(),
-                value: if is_sensitive(key) {
-                    "******".to_string()
-                } else {
-                    value
-                },
+                value: display_value,
                 comment: pending_comment.take(),
                 is_commented_out: false,
+                boot_value,
+                is_default: false,
             });
             pending_comment_first_line = None;
         }
@@ -320,7 +422,257 @@ async fn get_config(_state: State<AppState>) -> ApiJson<ConfigResponse> {
         sections.push(current_section);
     }
 
-    json_ok(ConfigResponse { sections })
+    // Show vars that existed at boot but were removed from the current config
+    if reboot_needed {
+        let current_keys: HashSet<&str> = sections
+            .iter()
+            .flat_map(|s| s.entries.iter())
+            .map(|e| e.key.as_str())
+            .collect();
+        let mut removed_entries: Vec<ConfigEntry> = boot_vals
+            .iter()
+            .filter(|(k, _)| !current_keys.contains(k.as_str()))
+            .map(|(k, (v, commented))| ConfigEntry {
+                key: k.clone(),
+                value: "(removed)".to_string(),
+                comment: None,
+                is_commented_out: *commented,
+                boot_value: Some(if *commented {
+                    format!("#{v}")
+                } else {
+                    v.clone()
+                }),
+                is_default: false,
+            })
+            .collect();
+        if !removed_entries.is_empty() {
+            removed_entries.sort_by(|a, b| a.key.cmp(&b.key));
+            sections.push(ConfigSection {
+                name: "Removed since boot".to_string(),
+                entries: removed_entries,
+            });
+        }
+    }
+
+    // Inject defaults for known vars not present in the config file
+    inject_defaults(&mut sections);
+
+    json_ok(ConfigResponse {
+        sections,
+        reboot_needed,
+    })
+}
+
+/// Built-in defaults for known nifty-filter environment variables.
+/// Returns (key, default_value) pairs for static vars, plus generates
+/// per-VLAN defaults based on which VLANs are configured.
+fn known_defaults(sections: &[ConfigSection]) -> Vec<(&'static str, String)> {
+    // Collect all current keys for lookups
+    let vals: HashMap<&str, &str> = sections
+        .iter()
+        .flat_map(|s| s.entries.iter())
+        .filter(|e| !e.is_commented_out)
+        .map(|e| (e.key.as_str(), e.value.as_str()))
+        .collect();
+
+    let mut defaults: Vec<(&str, String)> = Vec::new();
+
+    // Static defaults
+    let static_defaults: &[(&str, &str)] = &[
+        ("WAN_ENABLE_IPV4", "true"),
+        ("WAN_ENABLE_IPV6", "false"),
+        ("VLAN_AWARE_SWITCH", "false"),
+        ("IPERF_PORT", "5201"),
+        ("WAN_QOS_SHAVE_PERCENT", "10"),
+        ("WAN_ICMP_ACCEPT", ""),
+        (
+            "WAN_ICMPV6_ACCEPT",
+            "nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,destination-unreachable,packet-too-big,time-exceeded",
+        ),
+        ("WAN_TCP_ACCEPT", ""),
+        ("WAN_UDP_ACCEPT", ""),
+        ("WAN_TCP_FORWARD", ""),
+        ("WAN_UDP_FORWARD", ""),
+        (
+            "WAN_BOGONS_IPV4",
+            "0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4",
+        ),
+        ("WAN_BOGONS_IPV6", "::/128, ::1/128, fc00::/7, ff00::/8"),
+    ];
+
+    for (key, val) in static_defaults {
+        if !vals.contains_key(key) {
+            defaults.push((key, val.to_string()));
+        }
+    }
+
+    // Per-VLAN defaults — only for VLANs already in the config
+    let vlans_str = vals.get("VLANS").copied().unwrap_or("");
+    if !vlans_str.is_empty() {
+        for id_str in vlans_str.split(',') {
+            let id_str = id_str.trim();
+            let vlan_id: u16 = match id_str.parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let is_vlan_1 = vlan_id == 1;
+
+            // We use a macro-like approach with a static list per VLAN
+            let vlan_defaults: Vec<(String, String)> = vec![
+                (format!("VLAN_{}_NAME", vlan_id), String::new()),
+                (format!("VLAN_{}_SUBNET_IPV6", vlan_id), String::new()),
+                (
+                    format!("VLAN_{}_EGRESS_ALLOWED_IPV4", vlan_id),
+                    if is_vlan_1 {
+                        "0.0.0.0/0".to_string()
+                    } else {
+                        String::new()
+                    },
+                ),
+                (
+                    format!("VLAN_{}_EGRESS_ALLOWED_IPV6", vlan_id),
+                    if is_vlan_1 {
+                        "::/0".to_string()
+                    } else {
+                        String::new()
+                    },
+                ),
+                (
+                    format!("VLAN_{}_ICMP_ACCEPT", vlan_id),
+                    if is_vlan_1 {
+                        "echo-request,echo-reply,destination-unreachable,time-exceeded".to_string()
+                    } else {
+                        "destination-unreachable".to_string()
+                    },
+                ),
+                (
+                    format!("VLAN_{}_ICMPV6_ACCEPT", vlan_id),
+                    if is_vlan_1 {
+                        "nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,echo-request,echo-reply".to_string()
+                    } else {
+                        "nd-neighbor-solicit,nd-neighbor-advert,destination-unreachable".to_string()
+                    },
+                ),
+                (
+                    format!("VLAN_{}_TCP_ACCEPT", vlan_id),
+                    if is_vlan_1 { "22".to_string() } else { String::new() },
+                ),
+                (
+                    format!("VLAN_{}_UDP_ACCEPT", vlan_id),
+                    "67,68".to_string(),
+                ),
+                (format!("VLAN_{}_TCP_FORWARD", vlan_id), String::new()),
+                (format!("VLAN_{}_UDP_FORWARD", vlan_id), String::new()),
+                (
+                    format!("VLAN_{}_DHCP_ENABLED", vlan_id),
+                    "true".to_string(),
+                ),
+                (format!("VLAN_{}_DHCP_POOL_START", vlan_id), String::new()),
+                (format!("VLAN_{}_DHCP_POOL_END", vlan_id), String::new()),
+                (format!("VLAN_{}_DHCP_ROUTER", vlan_id), String::new()),
+                (format!("VLAN_{}_DHCP_DNS", vlan_id), String::new()),
+                (
+                    format!("VLAN_{}_DHCPV6_ENABLED", vlan_id),
+                    "false".to_string(),
+                ),
+                (
+                    format!("VLAN_{}_DHCPV6_POOL_START", vlan_id),
+                    String::new(),
+                ),
+                (format!("VLAN_{}_DHCPV6_POOL_END", vlan_id), String::new()),
+                (
+                    format!("VLAN_{}_IPERF_ENABLED", vlan_id),
+                    "false".to_string(),
+                ),
+                (format!("VLAN_{}_QOS_CLASS", vlan_id), String::new()),
+                (format!("VLAN_{}_ALLOW_INBOUND_TCP", vlan_id), String::new()),
+                (format!("VLAN_{}_ALLOW_INBOUND_UDP", vlan_id), String::new()),
+            ];
+
+            for (key, val) in vlan_defaults {
+                if !vals.contains_key(key.as_str()) {
+                    // Leak the string so we can return &'static str — these are few and bounded
+                    defaults.push((Box::leak(key.into_boxed_str()), val));
+                }
+            }
+
+            // Inter-VLAN allow rules: VLAN_N_ALLOW_FROM_M_TCP/UDP for each other VLAN
+            for other_str in vlans_str.split(',') {
+                let other_str = other_str.trim();
+                let other_id: u16 = match other_str.parse() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if other_id == vlan_id {
+                    continue;
+                }
+                for suffix in ["TCP", "UDP"] {
+                    let key = format!("VLAN_{}_ALLOW_FROM_{}_{}", vlan_id, other_id, suffix);
+                    if !vals.contains_key(key.as_str()) {
+                        defaults.push((Box::leak(key.into_boxed_str()), String::new()));
+                    }
+                }
+            }
+        }
+    }
+
+    defaults
+}
+
+/// Inject default-value entries into the appropriate sections for vars not in the config file.
+fn inject_defaults(sections: &mut Vec<ConfigSection>) {
+    let defaults = known_defaults(sections);
+    if defaults.is_empty() {
+        return;
+    }
+
+    // Build a set of existing keys (owned to avoid borrow conflicts)
+    let existing: HashSet<String> = sections
+        .iter()
+        .flat_map(|s| s.entries.iter())
+        .map(|e| e.key.clone())
+        .collect();
+
+    // Collect entries to insert: (prefix, entry)
+    let to_insert: Vec<(String, ConfigEntry)> = defaults
+        .into_iter()
+        .filter(|(key, _)| !existing.contains(*key))
+        .map(|(key, value)| {
+            let parts: Vec<&str> = key.split('_').collect();
+            let prefix = if parts.first() == Some(&"VLAN") && parts.len() >= 2 {
+                format!("{}_{}", parts[0], parts[1])
+            } else {
+                parts[0].to_string()
+            };
+            (
+                prefix,
+                ConfigEntry {
+                    key: key.to_string(),
+                    value,
+                    comment: None,
+                    is_commented_out: false,
+                    boot_value: None,
+                    is_default: true,
+                },
+            )
+        })
+        .collect();
+
+    for (prefix, entry) in to_insert {
+        if let Some(section) = sections.iter_mut().find(|s| s.name == prefix) {
+            section.entries.push(entry);
+        } else if let Some(general) = sections.iter_mut().find(|s| s.name == "General") {
+            general.entries.push(entry);
+        } else {
+            sections.insert(
+                0,
+                ConfigSection {
+                    name: "General".to_string(),
+                    entries: vec![entry],
+                },
+            );
+        }
+    }
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -467,7 +819,7 @@ async fn read_interfaces() -> Vec<NetworkInterface> {
         Err(_) => return vec![],
     };
 
-    const HIDDEN_IFACES: &[&str] = &["ip6tnl0", "sit0", "tunl0", "ip6gre0", "gre0", "erspan0"];
+    const HIDDEN_IFACES: &[&str] = &["ip6tnl0", "sit0", "tunl0", "ip6gre0", "gre0", "erspan0", "ifb0"];
 
     parsed
         .iter()

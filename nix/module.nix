@@ -73,6 +73,9 @@ in
       "net.ipv6.conf.default.forwarding" = 1;
     };
 
+    # Kernel modules for QoS traffic shaping (CAKE qdisc + IFB for download)
+    boot.kernelModules = [ "ifb" "sch_cake" ];
+
     # Make the binary available system-wide
     environment.systemPackages = [ nifty-filter ] ++ optionalPackages;
 
@@ -91,6 +94,27 @@ in
         cp ${./default-nifty-filter.env} ${cfg.configPath}
         chmod 0600 ${cfg.configPath}
         mkdir -p ${configDir}/ssh
+      '';
+    };
+
+    # Snapshot the config file SHA at boot so the dashboard can detect drift
+    systemd.services.nifty-config-sha = {
+      description = "Record config SHA256 at boot";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "nifty-filter-init.service" ];
+      before = [ "nifty-filter.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        RuntimeDirectory = "nifty-filter";
+        RuntimeDirectoryPreserve = "yes";
+      };
+      script = ''
+        ${pkgs.coreutils}/bin/sha256sum ${cfg.configPath} \
+          | ${pkgs.coreutils}/bin/cut -d' ' -f1 \
+          > /run/nifty-filter/config-boot-sha
+        ${pkgs.coreutils}/bin/cp ${cfg.configPath} /run/nifty-filter/config-boot-snapshot
+        ${pkgs.coreutils}/bin/chmod 0444 /run/nifty-filter/config-boot-sha /run/nifty-filter/config-boot-snapshot
       '';
     };
 
@@ -151,6 +175,22 @@ in
       '';
     };
 
+    # QoS traffic shaping (CAKE qdisc) — runs only when WAN_QOS_*_MBPS are set
+    systemd.services.nifty-qos = {
+      description = "Apply QoS traffic shaping (CAKE)";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network.target" "nifty-filter.service" ];
+
+      path = [ pkgs.iproute2 pkgs.kmod pkgs.bash ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.bash}/bin/bash -o pipefail -c '${nifty-filter}/bin/nifty-filter qos --env-file ${cfg.configPath} --strict-env | ${pkgs.bash}/bin/bash'";
+        ExecStop = "${pkgs.bash}/bin/bash -c 'IFACE=$(${pkgs.gnugrep}/bin/grep -oP \"^WAN_INTERFACE=\\K.*\" ${cfg.configPath} | ${pkgs.coreutils}/bin/tr -d \"\\047\\042\"); ${pkgs.iproute2}/bin/tc qdisc del dev \"$IFACE\" root 2>/dev/null; ${pkgs.iproute2}/bin/tc qdisc del dev \"$IFACE\" ingress 2>/dev/null; ${pkgs.iproute2}/bin/tc qdisc del dev ifb0 root 2>/dev/null; ${pkgs.iproute2}/bin/ip link set ifb0 down 2>/dev/null; true'";
+      };
+    };
+
     # iperf3 bandwidth testing server (enabled via packages.iperf.enable)
     systemd.services.nifty-iperf = mkIf cfg.packages.iperf.enable {
       description = "iperf3 bandwidth testing server";
@@ -178,11 +218,12 @@ in
       environment.ROOT_DIR = "/var/lib/nifty-dashboard";
       environment.SODOLA_STATE_FILE = "/run/nifty-filter/sodola-switch.json";
       environment.NIFTY_CONFIG_FILE = envFile;
+      environment.NIFTY_CONFIG_BOOT_SHA_FILE = "/run/nifty-filter/config-boot-sha";
       serviceConfig = {
         Type = "simple";
         EnvironmentFile = cfg.configPath;
         StateDirectory = "nifty-dashboard";
-        ExecStart = "${pkgs.bash}/bin/bash -c '${nifty-dashboard}/bin/nifty-dashboard serve --net-listen-ip $(echo $SUBNET_MGMT | cut -d/ -f1) --net-listen-port \${NIFTY_DASHBOARD_PORT:-3000}'";
+        ExecStart = "${pkgs.bash}/bin/bash -c '${nifty-dashboard}/bin/nifty-dashboard serve --net-listen-ip $(echo $MGMT_SUBNET | cut -d/ -f1) --net-listen-port \${NIFTY_DASHBOARD_PORT:-3000}'";
         Restart = "on-failure";
         RestartSec = "5s";
       };

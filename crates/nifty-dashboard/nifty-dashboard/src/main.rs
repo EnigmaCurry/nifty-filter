@@ -11,6 +11,7 @@ use std::io::Write;
 mod api_docs;
 mod commands;
 mod config;
+mod config_watcher;
 mod errors;
 mod frontend;
 mod logging;

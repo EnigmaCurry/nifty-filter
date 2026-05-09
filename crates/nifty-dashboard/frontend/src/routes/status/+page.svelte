@@ -80,6 +80,8 @@
     value: string;
     comment?: string;
     is_commented_out: boolean;
+    boot_value?: string;
+    is_default?: boolean;
   }
 
   interface ConfigSection {
@@ -87,7 +89,68 @@
     entries: ConfigEntry[];
   }
 
-  type Tab = "config" | "interfaces" | "nftables" | "switch" | "about";
+  interface CakeTin {
+    name: string;
+    threshold: string;
+    target: string;
+    packets: number;
+    bytes: number;
+    drops: number;
+    marks: number;
+    peak_delay: string;
+    avg_delay: string;
+    backlog: string;
+    sp_flows: number;
+    bk_flows: number;
+  }
+
+  interface CakeStats {
+    device: string;
+    bandwidth: string;
+    sent_bytes: number;
+    sent_packets: number;
+    dropped: number;
+    overlimits: number;
+    tins: CakeTin[];
+  }
+
+  interface VlanQosClass {
+    vlan_id: string;
+    name: string;
+    qos_class: string;
+  }
+
+  interface QosOverrideEntry {
+    class: string;
+    cidrs: string;
+  }
+
+  interface QosConfigInfo {
+    upload_mbps: string;
+    download_mbps: string;
+    shave_percent: string;
+    effective_upload_kbit: number;
+    effective_download_kbit: number;
+    wan_interface: string;
+    vlan_classes: VlanQosClass[];
+    overrides: QosOverrideEntry[];
+  }
+
+  interface DscpRule {
+    text: string;
+    description?: string;
+  }
+
+  interface QosData {
+    configured: boolean;
+    active: boolean;
+    config: QosConfigInfo | null;
+    upload: CakeStats | null;
+    download: CakeStats | null;
+    dscp_rules: DscpRule[];
+  }
+
+  type Tab = "config" | "interfaces" | "nftables" | "qos" | "switch" | "about";
 
   interface AboutData {
     version: string;
@@ -99,7 +162,9 @@
 
   let data = $state<StatusData | null>(null);
   let configData = $state<ConfigSection[]>([]);
+  let rebootNeeded = $state(false);
   let aboutData = $state<AboutData | null>(null);
+  let qosData = $state<QosData | null>(null);
   let loading = $state(true);
   let errorMsg = $state("");
   let activeTab = $state<Tab>("config");
@@ -121,7 +186,7 @@
     const hash = window.location.hash.slice(1);
     if (!hash) return null;
     const [tab, sub] = hash.split("/");
-    const validTabs: Tab[] = ["config", "interfaces", "nftables", "switch", "about"];
+    const validTabs: Tab[] = ["config", "interfaces", "nftables", "qos", "switch", "about"];
     if (validTabs.includes(tab as Tab)) {
       return {
         tab: tab as Tab,
@@ -153,6 +218,132 @@
     dhcp: boolean;
     dhcpv6: boolean;
     iperf: boolean;
+  }
+
+  const VALID_STATIC_KEYS = new Set([
+    "ENABLED", "HOSTNAME",
+    "TRUNK_INTERFACE", "LAN_INTERFACE", "WAN_INTERFACE", "MGMT_INTERFACE",
+    "MGMT_SUBNET",
+    "WAN_MAC", "TRUNK_MAC", "MGMT_MAC",
+    "VLAN_AWARE_SWITCH", "VLANS",
+    "WAN_ENABLE_IPV4", "WAN_ENABLE_IPV6",
+    "ENABLE_IPV4", "ENABLE_IPV6",
+    "WAN_ICMP_ACCEPT", "WAN_ICMPV6_ACCEPT",
+    "WAN_TCP_ACCEPT", "WAN_UDP_ACCEPT",
+    "WAN_TCP_FORWARD", "WAN_UDP_FORWARD",
+    "WAN_BOGONS_IPV4", "WAN_BOGONS_IPV6",
+    "WAN_QOS_UPLOAD_MBPS", "WAN_QOS_DOWNLOAD_MBPS", "WAN_QOS_SHAVE_PERCENT",
+    "QOS_OVERRIDE_VOICE", "QOS_OVERRIDE_VIDEO", "QOS_OVERRIDE_BESTEFFORT", "QOS_OVERRIDE_BULK",
+    "IPERF_PORT",
+    "DHCP_UPSTREAM_DNS",
+    // Legacy VLAN 1 aliases
+    "SUBNET_LAN_IPV4", "SUBNET_LAN", "SUBNET_LAN_IPV6",
+    "LAN_EGRESS_ALLOWED_IPV4", "LAN_EGRESS_ALLOWED_IPV6",
+    "ICMP_ACCEPT_LAN", "ICMPV6_ACCEPT_LAN",
+    "TCP_ACCEPT_LAN", "UDP_ACCEPT_LAN",
+    "TCP_FORWARD_LAN", "UDP_FORWARD_LAN",
+    "DHCP_POOL_START", "DHCP_POOL_END", "DHCP_ROUTER", "DHCP_DNS",
+    "DHCPV6_POOL_START", "DHCPV6_POOL_END",
+    "IPERF_ENABLED", "DHCP4_ENABLED", "DHCPV6_ENABLED",
+    // Sodola switch
+    "SODOLA_URL", "SODOLA_USER", "SODOLA_PASS",
+    "SODOLA_MGMT_IFACE", "SODOLA_ROUTER_IP",
+    "SODOLA_SWITCH_CONFIG", "SODOLA_STATE_FILE", "SODOLA_INTERVAL", "SODOLA_CONFIG_DIR",
+  ]);
+
+  const VALID_VLAN_SUFFIXES = new Set([
+    "NAME", "SUBNET_IPV4", "SUBNET_IPV6",
+    "EGRESS_ALLOWED_IPV4", "EGRESS_ALLOWED_IPV6",
+    "TCP_ACCEPT", "UDP_ACCEPT", "ICMP_ACCEPT", "ICMPV6_ACCEPT",
+    "TCP_FORWARD", "UDP_FORWARD",
+    "ALLOW_INBOUND_TCP", "ALLOW_INBOUND_UDP",
+    "DHCP_ENABLED", "DHCP_POOL_START", "DHCP_POOL_END", "DHCP_ROUTER", "DHCP_DNS",
+    "DHCPV6_ENABLED", "DHCPV6_POOL_START", "DHCPV6_POOL_END",
+    "QOS_CLASS", "IPERF_ENABLED",
+  ]);
+
+  const KNOWN_PREFIXES = ["SWITCH_", "NIFTY_DASHBOARD_"];
+
+  function isValidKey(key: string): boolean {
+    if (VALID_STATIC_KEYS.has(key)) return true;
+    const m = key.match(/^VLAN_(\d+)_(.+)$/);
+    if (m) {
+      const suffix = m[2];
+      if (VALID_VLAN_SUFFIXES.has(suffix)) return true;
+      // VLAN_N_ALLOW_FROM_M_TCP / VLAN_N_ALLOW_FROM_M_UDP
+      if (/^ALLOW_FROM_\d+_(TCP|UDP)$/.test(suffix)) return true;
+    }
+    return false;
+  }
+
+  function isKnownKey(key: string): boolean {
+    return KNOWN_PREFIXES.some(p => key.startsWith(p));
+  }
+
+  function groupPrefix(key: string): string {
+    const parts = key.split("_");
+    if (parts[0] === "VLAN" && parts.length >= 2) {
+      return `${parts[0]}_${parts[1]}`;
+    }
+    return parts[0];
+  }
+
+  function groupedEnvEntries(): ConfigSection[] {
+    const all: ConfigEntry[] = [];
+    for (const section of configData) {
+      for (const entry of section.entries) {
+        all.push(entry);
+      }
+    }
+    all.sort((a, b) => a.key.localeCompare(b.key));
+
+    const valid: ConfigEntry[] = [];
+    const known: ConfigEntry[] = [];
+    const invalid: ConfigEntry[] = [];
+    for (const entry of all) {
+      if (isValidKey(entry.key)) {
+        valid.push(entry);
+      } else if (isKnownKey(entry.key)) {
+        known.push(entry);
+      } else {
+        invalid.push(entry);
+      }
+    }
+
+    const groups = new Map<string, ConfigEntry[]>();
+    for (const entry of valid) {
+      const prefix = groupPrefix(entry.key);
+      if (!groups.has(prefix)) groups.set(prefix, []);
+      groups.get(prefix)!.push(entry);
+    }
+    const general: ConfigEntry[] = [];
+    const result: ConfigSection[] = [];
+    for (const [name, entries] of groups) {
+      if (entries.length === 1) {
+        general.push(...entries);
+      } else {
+        result.push({ name, entries });
+      }
+    }
+    if (general.length > 0) {
+      result.unshift({ name: "General", entries: general });
+    }
+
+    // Group known (non-nifty-filter) vars by prefix
+    const knownGroups = new Map<string, ConfigEntry[]>();
+    for (const entry of known) {
+      const prefix = groupPrefix(entry.key);
+      if (!knownGroups.has(prefix)) knownGroups.set(prefix, []);
+      knownGroups.get(prefix)!.push(entry);
+    }
+    for (const [name, entries] of knownGroups) {
+      result.push({ name, entries });
+    }
+
+    if (invalid.length > 0) {
+      result.push({ name: "Invalid", entries: invalid });
+    }
+    return result;
   }
 
   function getVlanOverviews(): VlanOverview[] {
@@ -220,6 +411,7 @@
     { id: "config", label: "Config", condition: () => configData.length > 0 },
     { id: "interfaces", label: "Interfaces", condition: () => (data?.interfaces.length ?? 0) > 0 },
     { id: "nftables", label: "Netfilter", condition: () => (data?.nft_chains.length ?? 0) > 0 },
+    { id: "qos", label: "QoS", condition: () => qosData != null },
     { id: "switch", label: "Switch", condition: () => data?.switch != null },
     { id: "about", label: "About", condition: () => aboutData != null },
   ];
@@ -372,6 +564,39 @@
       if (res.ok) {
         const body = await res.json();
         configData = body.data?.sections ?? [];
+        rebootNeeded = body.data?.reboot_needed ?? false;
+      }
+    } catch {}
+  }
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KiB`;
+    if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MiB`;
+    return `${(bytes / 1073741824).toFixed(2)} GiB`;
+  }
+
+  function formatKbit(kbit: number): string {
+    if (kbit < 1000) return `${kbit} kbit`;
+    return `${(kbit / 1000).toFixed(0)} Mbit`;
+  }
+
+  function tinColor(name: string): string {
+    switch (name) {
+      case "Voice": return "text-purple-400";
+      case "Video": return "text-blue-400";
+      case "Best Effort": return "text-green-400";
+      case "Bulk": return "text-zinc-400";
+      default: return "";
+    }
+  }
+
+  async function fetchQos() {
+    try {
+      const res = await fetch("/api/qos", { credentials: "include" });
+      if (res.ok) {
+        const body = await res.json();
+        qosData = body.data ?? null;
       }
     } catch {}
   }
@@ -389,8 +614,19 @@
   onMount(() => {
     fetchConfig();
     fetchAbout();
+    fetchQos();
     fetchStatus();
-    const interval = setInterval(fetchStatus, 15000);
+    const interval = setInterval(() => { fetchStatus(); fetchQos(); }, 15000);
+
+    // SSE: listen for config file changes and re-fetch config in realtime
+    const eventSource = new EventSource("/api/events", { withCredentials: true });
+    eventSource.addEventListener("config-changed", () => {
+      console.log("SSE: config-changed event received, re-fetching config");
+      fetchConfig();
+    });
+    eventSource.onerror = (e) => {
+      console.warn("SSE connection error", e);
+    };
 
     function onPopState() {
       const saved = readHash();
@@ -406,6 +642,7 @@
 
     return () => {
       clearInterval(interval);
+      eventSource.close();
       window.removeEventListener("popstate", onPopState);
     };
   });
@@ -418,12 +655,21 @@
 <div class="min-h-screen px-4 py-2 md:px-8 md:py-3 max-w-6xl mx-auto space-y-3">
   <!-- Title bar with uptime -->
   <div class="flex items-baseline justify-between">
-    <h1 class="text-3xl font-bold tracking-tight">nifty-filter</h1>
-    {#if data?.uptime}
-      <span class="text-sm text-muted-foreground">
-        up <span class="font-mono text-foreground">{formatUptime(data.uptime.uptime_seconds)}</span>
-      </span>
-    {/if}
+    <h1 class="text-3xl font-bold tracking-tight">nifty-filter
+      {#if cfgVal("HOSTNAME")}
+        <span class="text-lg font-normal text-muted-foreground ml-2">{cfgVal("HOSTNAME")}</span>
+      {/if}
+    </h1>
+    <div class="flex items-baseline gap-3">
+      {#if rebootNeeded}
+        <span class="text-sm font-semibold text-yellow-400">Reboot needed</span>
+      {/if}
+      {#if data?.uptime}
+        <span class="text-sm text-muted-foreground">
+          up <span class="font-mono text-foreground">{formatUptime(data.uptime.uptime_seconds)}</span>
+        </span>
+      {/if}
+    </div>
   </div>
 
   {#if loading}
@@ -474,10 +720,10 @@
 
         {#if configSubTab === "overview"}
           {@const hostname = cfgVal("HOSTNAME") || "nifty-filter"}
-          {@const wanIface = cfgVal("INTERFACE_WAN")}
-          {@const trunkIface = cfgVal("INTERFACE_TRUNK")}
-          {@const mgmtIface = cfgVal("INTERFACE_MGMT")}
-          {@const mgmtSubnet = cfgVal("SUBNET_MGMT")}
+          {@const wanIface = cfgVal("WAN_INTERFACE")}
+          {@const trunkIface = cfgVal("TRUNK_INTERFACE")}
+          {@const mgmtIface = cfgVal("MGMT_INTERFACE")}
+          {@const mgmtSubnet = cfgVal("MGMT_SUBNET")}
           {@const ipv4 = cfgVal("WAN_ENABLE_IPV4") === "true"}
           {@const ipv6 = cfgVal("WAN_ENABLE_IPV6") === "true"}
           {@const vlanSwitch = cfgVal("VLAN_AWARE_SWITCH") === "true"}
@@ -576,6 +822,8 @@
           </div>
         {:else}
           <!-- Environment sub-tab -->
+          {@const envGroups = groupedEnvEntries()}
+          <p class="text-sm text-muted-foreground mb-4">This page shows the comprehensive set of environment variables that nifty-filter accepts as its configuration. These variables represent your desired state, not necessarily the actual router state. Edit <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.env</code> and your changes will appear here immediately, but will not be applied until you reboot (or restart services). Any changes made since boot will be shown in <span class="text-orange-400">orange</span> and a <span class="font-semibold text-yellow-400">Reboot needed</span> notice will appear at the top.</p>
           <Card.Root>
             <Card.Content class="pt-2">
               <table class="w-full text-sm" style="table-layout:fixed">
@@ -584,14 +832,26 @@
                   <col />
                 </colgroup>
                 <tbody class="font-mono">
-                  {#each configData as section, sIdx}
+                  {#each envGroups as section, sIdx}
+                    {@const isInvalid = section.name === "Invalid"}
                     <tr class="bg-muted/30">
-                      <td colspan="2" class="py-2 px-2 font-sans font-semibold text-sm {sIdx > 0 ? 'pt-4' : ''}">{section.name}</td>
+                      <td colspan="2" class="py-2 px-2 font-sans font-semibold text-sm {sIdx > 0 ? 'pt-4' : ''} {isInvalid ? 'text-red-400' : ''}">{section.name}</td>
                     </tr>
                     {#each section.entries as entry}
-                      <tr class="{entry.is_commented_out ? 'opacity-30' : ''}" title={entry.comment ?? ""}>
-                        <td class="py-0.5 pr-2 text-purple-400 whitespace-nowrap overflow-hidden text-ellipsis">{entry.key}</td>
-                        <td class="py-0.5 {entry.value === '******' ? 'text-yellow-400' : 'text-green-400'} break-all">{entry.value || '""'}</td>
+                      <tr class="{entry.is_default ? 'opacity-30' : (entry.is_commented_out && !entry.boot_value) || (!entry.value && !entry.boot_value && !entry.is_commented_out) ? 'opacity-30' : ''}" title={entry.is_default ? 'Default (not set in config file)' : entry.comment ?? ""}>
+                        <td class="py-0.5 pr-2 {isInvalid ? 'text-red-400' : 'text-purple-400'} whitespace-nowrap overflow-hidden text-ellipsis">{entry.key}</td>
+                        <td class="py-0.5 break-all">
+                          {#if entry.is_default}
+                            <span class="text-muted-foreground italic">{entry.value || '""'}</span>
+                          {:else if entry.boot_value != null}
+                            <span class="line-through text-muted-foreground mr-2">{entry.boot_value || '""'}</span>
+                            <span class="text-orange-400">{entry.is_commented_out ? "#" : ""}{entry.value || '""'}</span>
+                          {:else if !entry.value}
+                            <span class="text-muted-foreground">""</span>
+                          {:else}
+                            <span class="{entry.value === '******' ? 'text-yellow-400' : 'text-green-400'}">{entry.value}</span>
+                          {/if}
+                        </td>
                       </tr>
                     {/each}
                   {/each}
@@ -619,7 +879,11 @@
                     <tr class="border-b border-border/50">
                       <td class="py-2 pr-4 font-semibold">{iface.name}</td>
                       <td class="py-2 pr-4">
-                        <span class={stateColor(iface.state)}>{iface.state}</span>
+                        {#if iface.name === "lo"}
+                          <span class="text-muted-foreground">-</span>
+                        {:else}
+                          <span class={stateColor(iface.state)}>{iface.state}</span>
+                        {/if}
                       </td>
                       <td class="py-2 pr-4 text-xs">{iface.mac ?? "-"}</td>
                       <td class="py-2">
@@ -724,6 +988,289 @@
               </div>
             </Card.Content>
           </Card.Root>
+        {/if}
+
+      {:else if activeTab === "qos" && qosData}
+        {#if !qosData.configured && !qosData.active}
+          <Card.Root>
+            <Card.Header>
+              <Card.Title>QoS Not Configured</Card.Title>
+              <Card.Description>CAKE traffic shaping eliminates bufferbloat and lets you prioritize traffic by VLAN.</Card.Description>
+            </Card.Header>
+            <Card.Content>
+              <div class="space-y-5 text-sm">
+                <p class="text-muted-foreground">Before applying QoS, you should run a speedtest of your native ISP performance to determine your peak upload and download speeds. You can use a site like <a href="https://www.speedtest.net" target="_blank" rel="noopener" class="text-blue-400 underline decoration-blue-400/30 hover:decoration-blue-400">speedtest.net</a> or <a href="https://fast.com" target="_blank" rel="noopener" class="text-blue-400 underline decoration-blue-400/30 hover:decoration-blue-400">fast.com</a>. Run the test a few times and use the highest results you see.</p>
+
+                <p class="text-muted-foreground">Next, add these variables to your <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.env</code> and reboot:</p>
+
+                <pre class="bg-muted/50 border border-border rounded-md p-4 font-mono text-xs overflow-x-auto"><span class="text-muted-foreground"># Your raw speedtest results (both required to enable QoS)</span>
+<span class="text-purple-400">WAN_QOS_UPLOAD_MBPS</span>=<span class="text-green-400">20</span>
+<span class="text-purple-400">WAN_QOS_DOWNLOAD_MBPS</span>=<span class="text-green-400">300</span>
+<span class="text-purple-400">WAN_QOS_SHAVE_PERCENT</span>=<span class="text-green-400">10</span>          <span class="text-muted-foreground"># default 10%, applied automatically</span>
+
+<span class="text-muted-foreground"># Per-VLAN upload priority (optional)</span>
+<span class="text-muted-foreground"># Values: voice, video, besteffort, bulk</span>
+<span class="text-purple-400">VLAN_10_QOS_CLASS</span>=<span class="text-green-400">besteffort</span>
+<span class="text-purple-400">VLAN_20_QOS_CLASS</span>=<span class="text-green-400">bulk</span></pre>
+
+                <div class="space-y-4">
+                  <div>
+                    <h4 class="font-semibold mb-2">How it works</h4>
+                    <div class="text-muted-foreground space-y-2 text-xs">
+                      <p>Bufferbloat happens when your ISP's modem has large internal buffers that fill up during heavy traffic. Once those buffers are full, every packet — including time-sensitive things like video calls and gaming — has to wait in line behind bulk downloads. This causes latency to spike from a few milliseconds to hundreds or even thousands of milliseconds.</p>
+                      <p>CAKE (Common Applications Kept Enhanced) is a queue discipline that solves this by rate-limiting your traffic slightly below your actual link speed. This keeps the bottleneck on your router instead of your ISP's modem. Since CAKE controls the queue, it can use smart scheduling to keep latency low even when the link is fully loaded.</p>
+                      <p>The shave factor (default 10%) is how much below your raw speed CAKE will target. For example, if your upload is 20 Mbps, CAKE will shape to 18 Mbps. This small reduction is what prevents your ISP's buffers from ever filling up. If your connection speed is very stable (like fiber), you can reduce the shave to 5%. If it fluctuates (like cable or DSL), keep it at 10% or higher.</p>
+                      <p>You can optionally assign each VLAN a traffic class. CAKE sorts traffic into four priority tins based on DSCP markings. Higher-priority tins get preferential scheduling during congestion, so a VoIP call on a "voice" VLAN won't be disrupted by a large download on a "bulk" VLAN. Traffic without an explicit class defaults to best effort.</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 class="font-semibold mb-2">CAKE priority tins</h4>
+                    <table class="w-full font-mono text-xs">
+                      <tbody>
+                        <tr><td class="py-0.5 pr-3 text-purple-400">voice</td><td class="text-muted-foreground">Highest priority. VoIP, real-time audio. (DSCP EF)</td></tr>
+                        <tr><td class="py-0.5 pr-3 text-blue-400">video</td><td class="text-muted-foreground">Video calls, streaming, cameras. (DSCP AF41)</td></tr>
+                        <tr><td class="py-0.5 pr-3 text-green-400">besteffort</td><td class="text-muted-foreground">General web traffic. This is the default. (DSCP CS0)</td></tr>
+                        <tr><td class="py-0.5 pr-3 text-zinc-400">bulk</td><td class="text-muted-foreground">Lowest priority. IoT, backups, large downloads. (DSCP CS1)</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </Card.Content>
+          </Card.Root>
+        {:else if qosData.configured && !qosData.active}
+          <Card.Root>
+            <Card.Header>
+              <Card.Title>QoS Configured — Reboot Required</Card.Title>
+              <Card.Description>QoS settings have been added to the configuration but CAKE is not yet active.</Card.Description>
+            </Card.Header>
+            <Card.Content>
+              <div class="space-y-3 text-sm">
+                {#if qosData.config}
+                  <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <div>
+                      <span class="text-muted-foreground">Upload</span>
+                      <p class="font-mono">{qosData.config.upload_mbps} Mbps</p>
+                    </div>
+                    <div>
+                      <span class="text-muted-foreground">Download</span>
+                      <p class="font-mono">{qosData.config.download_mbps} Mbps</p>
+                    </div>
+                    <div>
+                      <span class="text-muted-foreground">Shave</span>
+                      <p class="font-mono">{qosData.config.shave_percent}%</p>
+                    </div>
+                  </div>
+                {/if}
+                <p class="text-muted-foreground">Reboot the router to apply QoS traffic shaping. The CAKE qdisc will be configured on the WAN interface at startup.</p>
+              </div>
+            </Card.Content>
+          </Card.Root>
+        {:else}
+        {@const cfg = qosData.config}
+        <div class="space-y-4">
+          <!-- QoS Configuration -->
+          {#if cfg}
+            <Card.Root>
+              <Card.Header class="pb-2">
+                <Card.Title>Configuration</Card.Title>
+              </Card.Header>
+              <Card.Content>
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <span class="text-muted-foreground">WAN Interface</span>
+                    <p class="font-mono font-semibold">{cfg.wan_interface}</p>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground">Raw Upload</span>
+                    <p class="font-mono">{cfg.upload_mbps} Mbps</p>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground">Raw Download</span>
+                    <p class="font-mono">{cfg.download_mbps} Mbps</p>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground">Shave</span>
+                    <p class="font-mono">{cfg.shave_percent}%</p>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground">Effective Upload</span>
+                    <p class="font-mono text-green-400">{formatKbit(cfg.effective_upload_kbit)}</p>
+                  </div>
+                  <div>
+                    <span class="text-muted-foreground">Effective Download</span>
+                    <p class="font-mono text-green-400">{formatKbit(cfg.effective_download_kbit)}</p>
+                  </div>
+                </div>
+
+                {#if cfg.vlan_classes.length > 0}
+                  <div class="pt-3 border-t border-border/50">
+                    <h4 class="text-xs text-muted-foreground font-semibold mb-2">Per-VLAN Upload Priority</h4>
+                    <div class="overflow-x-auto">
+                      <table class="w-full text-sm">
+                        <thead>
+                          <tr class="border-b border-border text-left text-muted-foreground">
+                            <th class="py-1 pr-4">VLAN</th>
+                            <th class="py-1 pr-4">Name</th>
+                            <th class="py-1">Class</th>
+                          </tr>
+                        </thead>
+                        <tbody class="font-mono">
+                          {#each cfg.vlan_classes as vc}
+                            <tr class="border-b border-border/50">
+                              <td class="py-1 pr-4 font-semibold">{vc.vlan_id}</td>
+                              <td class="py-1 pr-4 text-purple-400">{vc.name}</td>
+                              <td class="py-1 {tinColor(vc.qos_class === 'besteffort' ? 'Best Effort' : vc.qos_class.charAt(0).toUpperCase() + vc.qos_class.slice(1))}">{vc.qos_class}</td>
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                {/if}
+
+                {#if cfg.overrides.length > 0}
+                  <div class="pt-3 border-t border-border/50">
+                    <h4 class="text-xs text-muted-foreground font-semibold mb-2">Per-CIDR Overrides</h4>
+                    <div class="overflow-x-auto">
+                      <table class="w-full text-sm">
+                        <thead>
+                          <tr class="border-b border-border text-left text-muted-foreground">
+                            <th class="py-1 pr-4">Class</th>
+                            <th class="py-1">CIDRs</th>
+                          </tr>
+                        </thead>
+                        <tbody class="font-mono">
+                          {#each cfg.overrides as ovr}
+                            <tr class="border-b border-border/50">
+                              <td class="py-1 pr-4 {tinColor(ovr.class === 'besteffort' ? 'Best Effort' : ovr.class.charAt(0).toUpperCase() + ovr.class.slice(1))}">{ovr.class}</td>
+                              <td class="py-1 text-cyan-400">{ovr.cidrs}</td>
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                {/if}
+              </Card.Content>
+            </Card.Root>
+          {/if}
+
+          <!-- CAKE Stats -->
+          {#each [{ label: "Upload", stats: qosData.upload, direction: "egress" }, { label: "Download", stats: qosData.download, direction: "ingress" }] as side}
+            {#if side.stats}
+              <Card.Root>
+                <Card.Header class="pb-2">
+                  <Card.Title>{side.label} — {side.stats.device}</Card.Title>
+                  <Card.Description>
+                    CAKE {side.stats.bandwidth} &middot;
+                    {side.stats.sent_packets.toLocaleString()} pkts ({formatBytes(side.stats.sent_bytes)}) &middot;
+                    {side.stats.dropped} dropped &middot;
+                    {side.stats.overlimits} overlimits
+                  </Card.Description>
+                </Card.Header>
+                <Card.Content>
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="border-b border-border text-left text-muted-foreground">
+                          <th class="py-2 pr-4">Tin</th>
+                          <th class="py-2 pr-4">Threshold</th>
+                          <th class="py-2 pr-4">Packets</th>
+                          <th class="py-2 pr-4">Bytes</th>
+                          <th class="py-2 pr-4">Drops</th>
+                          <th class="py-2 pr-4">Marks</th>
+                          <th class="py-2 pr-4">Peak Delay</th>
+                          <th class="py-2 pr-4">Avg Delay</th>
+                          <th class="py-2">Flows</th>
+                        </tr>
+                      </thead>
+                      <tbody class="font-mono">
+                        {#each side.stats.tins as tin}
+                          <tr class="border-b border-border/50">
+                            <td class="py-2 pr-4 font-semibold {tinColor(tin.name)}">{tin.name}</td>
+                            <td class="py-2 pr-4">{tin.threshold}</td>
+                            <td class="py-2 pr-4">{tin.packets.toLocaleString()}</td>
+                            <td class="py-2 pr-4">{formatBytes(tin.bytes)}</td>
+                            <td class="py-2 pr-4 {tin.drops > 0 ? 'text-red-400' : ''}">{tin.drops}</td>
+                            <td class="py-2 pr-4 {tin.marks > 0 ? 'text-yellow-400' : ''}">{tin.marks}</td>
+                            <td class="py-2 pr-4">{tin.peak_delay}</td>
+                            <td class="py-2 pr-4">{tin.avg_delay}</td>
+                            <td class="py-2">{tin.sp_flows + tin.bk_flows}</td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card.Content>
+              </Card.Root>
+            {/if}
+          {/each}
+
+          <!-- DSCP Rules -->
+          {#if qosData.dscp_rules.length > 0}
+            <Card.Root>
+              <Card.Header class="pb-2">
+                <Card.Title>DSCP Marking Rules</Card.Title>
+                <Card.Description>Active nftables mangle rules for upload traffic prioritization</Card.Description>
+              </Card.Header>
+              <Card.Content>
+                <div class="overflow-x-auto">
+                  <table class="w-full text-sm" style="table-layout:fixed">
+                    <colgroup>
+                      <col />
+                      <col style="width: 16rem;" />
+                    </colgroup>
+                    <thead>
+                      <tr class="border-b border-border text-left text-muted-foreground">
+                        <th class="py-2">Rule</th>
+                        <th class="py-2 pl-4">Description</th>
+                      </tr>
+                    </thead>
+                    <tbody class="font-mono">
+                      {#each qosData.dscp_rules as rule}
+                        <tr class="border-b border-border/50">
+                          <td class="py-2 whitespace-pre-wrap">{@html highlightRule(rule.text)}</td>
+                          <td class="py-2 pl-4 text-muted-foreground text-xs font-sans">{rule.description ?? ""}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              </Card.Content>
+            </Card.Root>
+          {/if}
+
+          <!-- How it works -->
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>How it works</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="space-y-4">
+                <div class="text-muted-foreground space-y-2 text-xs">
+                  <p>Bufferbloat happens when your ISP's modem has large internal buffers that fill up during heavy traffic. Once those buffers are full, every packet — including time-sensitive things like video calls and gaming — has to wait in line behind bulk downloads. This causes latency to spike from a few milliseconds to hundreds or even thousands of milliseconds.</p>
+                  <p>CAKE (Common Applications Kept Enhanced) is a queue discipline that solves this by rate-limiting your traffic slightly below your actual link speed. This keeps the bottleneck on your router instead of your ISP's modem. Since CAKE controls the queue, it can use smart scheduling to keep latency low even when the link is fully loaded.</p>
+                  <p>The shave factor (default 10%) is how much below your raw speed CAKE will target. For example, if your upload is 20 Mbps, CAKE will shape to 18 Mbps. This small reduction is what prevents your ISP's buffers from ever filling up. If your connection speed is very stable (like fiber), you can reduce the shave to 5%. If it fluctuates (like cable or DSL), keep it at 10% or higher.</p>
+                  <p>You can optionally assign each VLAN a traffic class. CAKE sorts traffic into four priority tins based on DSCP markings. Higher-priority tins get preferential scheduling during congestion, so a VoIP call on a "voice" VLAN won't be disrupted by a large download on a "bulk" VLAN. Traffic without an explicit class defaults to best effort.</p>
+                </div>
+
+                <div>
+                  <h4 class="text-xs font-semibold mb-2">CAKE priority tins</h4>
+                  <table class="w-full font-mono text-xs">
+                    <tbody>
+                      <tr><td class="py-0.5 pr-3 text-purple-400">voice</td><td class="text-muted-foreground">Highest priority. VoIP, real-time audio. (DSCP EF)</td></tr>
+                      <tr><td class="py-0.5 pr-3 text-blue-400">video</td><td class="text-muted-foreground">Video calls, streaming, cameras. (DSCP AF41)</td></tr>
+                      <tr><td class="py-0.5 pr-3 text-green-400">besteffort</td><td class="text-muted-foreground">General web traffic. This is the default. (DSCP CS0)</td></tr>
+                      <tr><td class="py-0.5 pr-3 text-zinc-400">bulk</td><td class="text-muted-foreground">Lowest priority. IoT, backups, large downloads. (DSCP CS1)</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </Card.Content>
+          </Card.Root>
+        </div>
         {/if}
 
       {:else if activeTab === "switch" && data.switch}
@@ -864,6 +1411,7 @@
               <p>
                 <a href={aboutData.repository} target="_blank" rel="noopener" class="text-blue-400 underline decoration-blue-400/30 hover:decoration-blue-400 font-mono text-xs">{aboutData.repository}</a>
               </p>
+              <p class="text-muted-foreground">nifty-dashboard is the read-only dashboard you are currently viewing. It presents both the configured state (desired) and the live system state (actual) of your nifty-filter router, so you can see at a glance whether reality matches intent.</p>
               <div>
                 <h3 class="text-xs text-muted-foreground mb-1">License (MIT)</h3>
                 <textarea readonly class="w-full h-96 bg-muted/30 border border-border rounded-md p-3 font-mono text-xs text-muted-foreground resize-none focus:outline-none">{aboutData.license}</textarea>

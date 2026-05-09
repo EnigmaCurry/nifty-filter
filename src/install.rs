@@ -970,9 +970,9 @@ ENABLED=true
 HOSTNAME={hostname}
 
 # Network interfaces (MAC addresses for rename rules)
-INTERFACE_WAN=wan
+WAN_INTERFACE=wan
 WAN_MAC={wan_mac}
-INTERFACE_TRUNK=trunk
+TRUNK_INTERFACE=trunk
 TRUNK_MAC={trunk_mac}
 {mgmt_config}{extra_ifaces_config}
 # WAN protocol enablement
@@ -980,17 +980,17 @@ WAN_ENABLE_IPV4=true
 WAN_ENABLE_IPV6={wan_ipv6}
 
 # ICMP types accepted on WAN
-ICMP_ACCEPT_WAN=
-ICMPV6_ACCEPT_WAN=nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,destination-unreachable,packet-too-big,time-exceeded
+WAN_ICMP_ACCEPT=
+WAN_ICMPV6_ACCEPT=nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,destination-unreachable,packet-too-big,time-exceeded
 
 # TCP/UDP ports the router accepts from WAN
-TCP_ACCEPT_WAN=22
-UDP_ACCEPT_WAN=
+WAN_TCP_ACCEPT=22
+WAN_UDP_ACCEPT=
 
 # Port forwarding rules from WAN
 # Format: incoming_port:destination_ip:destination_port
-TCP_FORWARD_WAN=
-UDP_FORWARD_WAN=
+WAN_TCP_FORWARD=
+WAN_UDP_FORWARD=
 
 # VLAN configuration
 {vlan_config}
@@ -1002,7 +1002,7 @@ DHCP_UPSTREAM_DNS="{dns}"
         trunk_mac = cfg.trunk_mac,
         mgmt_config = match (&cfg.mgmt_iface, &cfg.mgmt_mac, &cfg.subnet_mgmt) {
             (Some(_), Some(mac), Some(subnet)) => format!(
-                "INTERFACE_MGMT=mgmt\nMGMT_MAC={mac}\nSUBNET_MGMT={subnet}\n"
+                "MGMT_INTERFACE=mgmt\nMGMT_MAC={mac}\nMGMT_SUBNET={subnet}\n"
             ),
             _ => String::new(),
         },
@@ -1198,9 +1198,9 @@ ENABLED=true
 HOSTNAME={hostname}
 
 # Network interfaces (MAC addresses for rename rules)
-INTERFACE_WAN=wan
+WAN_INTERFACE=wan
 WAN_MAC={wan_mac}
-INTERFACE_TRUNK=trunk
+TRUNK_INTERFACE=trunk
 TRUNK_MAC={trunk_mac}
 {mgmt_config}{extra_ifaces_config}
 # WAN protocol enablement
@@ -1208,17 +1208,17 @@ WAN_ENABLE_IPV4=true
 WAN_ENABLE_IPV6={wan_ipv6}
 
 # ICMP types accepted on WAN
-ICMP_ACCEPT_WAN=
-ICMPV6_ACCEPT_WAN=nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,destination-unreachable,packet-too-big,time-exceeded
+WAN_ICMP_ACCEPT=
+WAN_ICMPV6_ACCEPT=nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,destination-unreachable,packet-too-big,time-exceeded
 
 # TCP/UDP ports the router accepts from WAN
-TCP_ACCEPT_WAN=22
-UDP_ACCEPT_WAN=
+WAN_TCP_ACCEPT=22
+WAN_UDP_ACCEPT=
 
 # Port forwarding rules from WAN
 # Format: incoming_port:destination_ip:destination_port
-TCP_FORWARD_WAN=
-UDP_FORWARD_WAN=
+WAN_TCP_FORWARD=
+WAN_UDP_FORWARD=
 
 # VLAN configuration
 {vlan_config}
@@ -1230,7 +1230,7 @@ DHCP_UPSTREAM_DNS="{dns}"
         trunk_mac = cfg.trunk_mac,
         mgmt_config = match (&cfg.mgmt_iface, &cfg.mgmt_mac, &cfg.subnet_mgmt) {
             (Some(_), Some(mac), Some(subnet)) => format!(
-                "INTERFACE_MGMT=mgmt\nMGMT_MAC={mac}\nSUBNET_MGMT={subnet}\n"
+                "MGMT_INTERFACE=mgmt\nMGMT_MAC={mac}\nMGMT_SUBNET={subnet}\n"
             ),
             _ => String::new(),
         },

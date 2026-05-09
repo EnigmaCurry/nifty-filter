@@ -181,6 +181,8 @@
               rustfmt
               nftables
               just
+              pkg-config
+              openssl
             ];
           };
         }

@@ -165,17 +165,17 @@ in
 
       # Core interfaces
       WAN_MAC=${d}(envget WAN_MAC "${d}ENV_FILE")
-      INTERFACE_WAN=${d}(envget INTERFACE_WAN "${d}ENV_FILE")
-      make_link "${d}WAN_MAC" "${d}{INTERFACE_WAN:-wan}"
+      WAN_INTERFACE=${d}(envget WAN_INTERFACE "${d}ENV_FILE")
+      make_link "${d}WAN_MAC" "${d}{WAN_INTERFACE:-wan}"
 
       TRUNK_MAC=${d}(envget TRUNK_MAC "${d}ENV_FILE")
-      INTERFACE_TRUNK=${d}(envget INTERFACE_TRUNK "${d}ENV_FILE")
-      make_link "${d}TRUNK_MAC" "${d}{INTERFACE_TRUNK:-trunk}"
+      TRUNK_INTERFACE=${d}(envget TRUNK_INTERFACE "${d}ENV_FILE")
+      make_link "${d}TRUNK_MAC" "${d}{TRUNK_INTERFACE:-trunk}"
 
       MGMT_MAC=${d}(envget MGMT_MAC "${d}ENV_FILE")
-      INTERFACE_MGMT=${d}(envget INTERFACE_MGMT "${d}ENV_FILE")
-      if [ -n "${d}INTERFACE_MGMT" ]; then
-        make_link "${d}MGMT_MAC" "${d}INTERFACE_MGMT"
+      MGMT_INTERFACE=${d}(envget MGMT_INTERFACE "${d}ENV_FILE")
+      if [ -n "${d}MGMT_INTERFACE" ]; then
+        make_link "${d}MGMT_MAC" "${d}MGMT_INTERFACE"
       fi
 
       # Extra interfaces (comma-separated MAC=name pairs)
@@ -220,10 +220,10 @@ in
         exit 0
       fi
 
-      INTERFACE_WAN=${d}(envget INTERFACE_WAN "${d}ENV_FILE")
-      # Trunk: prefer INTERFACE_TRUNK, fall back to INTERFACE_LAN
-      INTERFACE_TRUNK=${d}(envget INTERFACE_TRUNK "${d}ENV_FILE")
-      [ -z "${d}INTERFACE_TRUNK" ] && INTERFACE_TRUNK=${d}(envget INTERFACE_LAN "${d}ENV_FILE")
+      WAN_INTERFACE=${d}(envget WAN_INTERFACE "${d}ENV_FILE")
+      # Trunk: prefer TRUNK_INTERFACE, fall back to LAN_INTERFACE
+      TRUNK_INTERFACE=${d}(envget TRUNK_INTERFACE "${d}ENV_FILE")
+      [ -z "${d}TRUNK_INTERFACE" ] && TRUNK_INTERFACE=${d}(envget LAN_INTERFACE "${d}ENV_FILE")
       # WAN protocol enablement (prefer WAN_ENABLE_*, fall back to legacy ENABLE_*)
       ENABLE_IPV4=${d}(envget WAN_ENABLE_IPV4 "${d}ENV_FILE")
       [ -z "${d}ENABLE_IPV4" ] && ENABLE_IPV4=${d}(envget ENABLE_IPV4 "${d}ENV_FILE")
@@ -247,7 +247,7 @@ in
       mkdir -p /run/systemd/network
 
       # --- WAN (DHCP client) ---
-      ip link set "${d}INTERFACE_WAN" up
+      ip link set "${d}WAN_INTERFACE" up
 
       WAN_NETWORK="[Network]"
       if [ "${d}ENABLE_IPV4" = "true" ]; then
@@ -262,7 +262,7 @@ in
 
       cat > /run/systemd/network/10-wan.network <<NETEOF
       [Match]
-      Name=${d}INTERFACE_WAN
+      Name=${d}WAN_INTERFACE
 
       ${d}WAN_NETWORK
 
@@ -283,13 +283,13 @@ in
         mkdir -p /etc/systemd/system/systemd-networkd.service.d
         cat > /etc/systemd/system/systemd-networkd.service.d/accept-ra.conf <<RAEOF
       [Service]
-      ExecStartPost=/bin/sh -c 'sleep 1 && /run/current-system/sw/bin/sysctl -w net.ipv6.conf.${d}INTERFACE_WAN.accept_ra=2 net.ipv6.conf.${d}INTERFACE_WAN.forwarding=0'
+      ExecStartPost=/bin/sh -c 'sleep 1 && /run/current-system/sw/bin/sysctl -w net.ipv6.conf.${d}WAN_INTERFACE.accept_ra=2 net.ipv6.conf.${d}WAN_INTERFACE.forwarding=0'
       RAEOF
         systemctl daemon-reload
       fi
 
       # --- Trunk + VLANs ---
-      ip link set "${d}INTERFACE_TRUNK" up
+      ip link set "${d}TRUNK_INTERFACE" up
 
       if [ "${d}VLAN_AWARE_SWITCH" = "true" ]; then
         # VLAN-aware mode: trunk carries no IP, VLAN subinterfaces get addresses
@@ -301,7 +301,7 @@ in
           if [ -n "${d}VLAN_NAME" ]; then
             VLAN_IFACE="${d}VLAN_NAME"
           else
-            VLAN_IFACE="${d}INTERFACE_TRUNK.${d}VID"
+            VLAN_IFACE="${d}TRUNK_INTERFACE.${d}VID"
           fi
           TRUNK_VLAN_LINES="${d}{TRUNK_VLAN_LINES}
       VLAN=${d}VLAN_IFACE"
@@ -366,7 +366,7 @@ in
         # Trunk .network: no address, just VLAN membership
         cat > /run/systemd/network/10-trunk.network <<NETEOF
       [Match]
-      Name=${d}INTERFACE_TRUNK
+      Name=${d}TRUNK_INTERFACE
 
       [Link]
       RequiredForOnline=no
@@ -397,7 +397,7 @@ in
 
         cat > /run/systemd/network/10-trunk.network <<NETEOF
       [Match]
-      Name=${d}INTERFACE_TRUNK
+      Name=${d}TRUNK_INTERFACE
 
       ${d}TRUNK_NETWORK
       NETEOF
@@ -429,20 +429,20 @@ in
       fi
 
       # Optional management interface (static IP, no DHCP server)
-      INTERFACE_MGMT=${d}(envget INTERFACE_MGMT "${d}ENV_FILE")
-      SUBNET_MGMT=${d}(envget SUBNET_MGMT "${d}ENV_FILE")
-      if [ -n "${d}INTERFACE_MGMT" ] && [ -n "${d}SUBNET_MGMT" ]; then
-        ip link set "${d}INTERFACE_MGMT" up
+      MGMT_INTERFACE=${d}(envget MGMT_INTERFACE "${d}ENV_FILE")
+      MGMT_SUBNET=${d}(envget MGMT_SUBNET "${d}ENV_FILE")
+      if [ -n "${d}MGMT_INTERFACE" ] && [ -n "${d}MGMT_SUBNET" ]; then
+        ip link set "${d}MGMT_INTERFACE" up
         cat > /run/systemd/network/10-mgmt.network <<NETEOF
       [Match]
-      Name=${d}INTERFACE_MGMT
+      Name=${d}MGMT_INTERFACE
 
       [Network]
-      Address=${d}SUBNET_MGMT
+      Address=${d}MGMT_SUBNET
       LinkLocalAddressing=no
       IPv6AcceptRA=no
       NETEOF
-      sysctl -w net.ipv6.conf.${d}INTERFACE_MGMT.disable_ipv6=1
+      sysctl -w net.ipv6.conf.${d}MGMT_INTERFACE.disable_ipv6=1
       fi
 
       # Restart networkd to pick up the new configs
@@ -492,9 +492,9 @@ in
         exit 0
       fi
 
-      # Trunk: prefer INTERFACE_TRUNK, fall back to INTERFACE_LAN
-      INTERFACE_TRUNK=${d}(envget INTERFACE_TRUNK "${d}ENV_FILE")
-      [ -z "${d}INTERFACE_TRUNK" ] && INTERFACE_TRUNK=${d}(envget INTERFACE_LAN "${d}ENV_FILE")
+      # Trunk: prefer TRUNK_INTERFACE, fall back to LAN_INTERFACE
+      TRUNK_INTERFACE=${d}(envget TRUNK_INTERFACE "${d}ENV_FILE")
+      [ -z "${d}TRUNK_INTERFACE" ] && TRUNK_INTERFACE=${d}(envget LAN_INTERFACE "${d}ENV_FILE")
 
       VLAN_AWARE_SWITCH=${d}(envget VLAN_AWARE_SWITCH "${d}ENV_FILE")
       VLAN_AWARE_SWITCH=${d}{VLAN_AWARE_SWITCH:-false}
@@ -551,9 +551,9 @@ in
         if [ -n "${d}VLAN_NAME" ]; then
           VLAN_IFACE="${d}VLAN_NAME"
         elif [ "${d}VID" = "1" ]; then
-          VLAN_IFACE="${d}INTERFACE_TRUNK"
+          VLAN_IFACE="${d}TRUNK_INTERFACE"
         else
-          VLAN_IFACE="${d}INTERFACE_TRUNK.${d}VID"
+          VLAN_IFACE="${d}TRUNK_INTERFACE.${d}VID"
         fi
 
         # Read per-VLAN config (with legacy fallback for VLAN 1)

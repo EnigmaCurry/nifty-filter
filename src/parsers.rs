@@ -8,6 +8,7 @@ pub mod inbound_rule;
 pub mod inter_vlan_rule;
 pub mod interface;
 pub mod port;
+pub mod qos_class;
 pub mod subnet;
 
 use self::port::PortList;

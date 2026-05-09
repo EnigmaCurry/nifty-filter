@@ -337,6 +337,61 @@ pve-upgrade pve_host vmid vm_name target_ip="10.99.0.1":
     echo ""
     echo "Upgrade applied. {{vm_name}} ({{vmid}}) is rebooting..."
 
+# Fast deploy: build nifty-dashboard with cargo and hot-swap binary on remote VM (no reboot)
+pve-deploy-dashboard pve_host target_ip="10.99.0.1":
+    #!/usr/bin/env bash
+    set -eo pipefail
+    REMOTE="admin@{{target_ip}}"
+    PROXY="-J root@{{pve_host}}"
+    SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/nifty-deploy-dashboard-%C -o ControlPersist=60 -o ServerAliveInterval=15"
+    DASHBOARD_DIR="{{current_dir}}/crates/nifty-dashboard"
+    BINARY="${DASHBOARD_DIR}/target/release/nifty-dashboard"
+
+    # Rebuild frontend if source is newer than build
+    FRONTEND_DIR="${DASHBOARD_DIR}/frontend"
+    NEEDS_BUILD=false
+    if [ ! -d "${FRONTEND_DIR}/build" ]; then
+        NEEDS_BUILD=true
+    else
+        NEWEST_SRC=$(find "${FRONTEND_DIR}/src" "${FRONTEND_DIR}/static" -type f -newer "${FRONTEND_DIR}/build" 2>/dev/null | head -1)
+        if [ -n "${NEWEST_SRC}" ]; then
+            NEEDS_BUILD=true
+        fi
+    fi
+    if [ "${NEEDS_BUILD}" = true ]; then
+        echo "Building frontend..."
+        (cd "${FRONTEND_DIR}" && pnpm install --frozen-lockfile && pnpm build)
+    fi
+
+    # Build inside nix develop so the binary links against nix store glibc (matches pve-upgrade builds)
+    echo "Building nifty-dashboard (cargo release via nix develop)..."
+    nix develop --command cargo build --release --manifest-path "${DASHBOARD_DIR}/Cargo.toml" -p nifty-dashboard
+
+    # Find where the current binary lives on the remote
+    echo "Connecting to {{target_ip}} via {{pve_host}}..."
+    ssh ${SSH_OPTS} ${PROXY} -fN ${REMOTE}
+    trap 'ssh ${SSH_OPTS} ${PROXY} -O exit ${REMOTE} 2>/dev/null || true' EXIT
+
+    REMOTE_BIN=$(ssh ${SSH_OPTS} ${PROXY} ${REMOTE} 'readlink -f $(which nifty-dashboard)')
+    echo "Remote binary: ${REMOTE_BIN}"
+
+    # Remount read-write, copy binary, restart service
+    echo "Deploying binary..."
+    ssh ${SSH_OPTS} ${PROXY} ${REMOTE} 'sudo mount -o remount,rw / && sudo mount -o remount,rw /nix/store'
+    scp ${SSH_OPTS} -o "ProxyJump=root@{{pve_host}}" "${BINARY}" "${REMOTE}:/tmp/nifty-dashboard"
+    ssh ${SSH_OPTS} ${PROXY} ${REMOTE} bash -s -- "${REMOTE_BIN}" <<'DEPLOY_SCRIPT'
+    set -eo pipefail
+    REMOTE_BIN="$1"
+    sudo systemctl stop nifty-dashboard
+    sudo cp /tmp/nifty-dashboard "${REMOTE_BIN}"
+    rm /tmp/nifty-dashboard
+    sudo mount -o remount,ro /nix/store
+    sudo mount -o remount,ro /
+    sudo systemctl start nifty-dashboard
+    DEPLOY_SCRIPT
+    echo ""
+    echo "Dashboard deployed and restarted on {{target_ip}}."
+
 # Create a NixOS router VM on Proxmox VE (interactive)
 # A dedicated 'mgmt' bridge is always created for out-of-band management.
 # Builds a pre-partitioned disk image (no ISO installer needed).
@@ -729,7 +784,7 @@ pve-manage-dashboard pve_host target_ip="10.99.0.1" dashboard_port="3000" local_
 
     discover_ip() {
         DASHBOARD_IP=$(ssh ${SSH_OPTS} ${PROXY} ${REMOTE} \
-            "grep '^SUBNET_MGMT=' /var/nifty-filter/nifty-filter.env | cut -d= -f2 | cut -d/ -f1" 2>/dev/null)
+            "grep '^MGMT_SUBNET=' /var/nifty-filter/nifty-filter.env | cut -d= -f2 | cut -d/ -f1" 2>/dev/null)
     }
 
     connect() {
