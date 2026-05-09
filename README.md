@@ -63,7 +63,7 @@ vlan "trusted" {
   }
   firewall {
     tcp_accept = [22]
-    udp_accept = [67, 68]
+    udp_accept = [53, 67, 68]
   }
   dhcp {
     pool_start = "10.99.10.100"
