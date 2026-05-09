@@ -18,11 +18,13 @@ askama = "0.12.1"
 clap = { version = "4.5.20", features = ["derive", "env"] }
 dotenvy = "0.15.7"
 env_logger = "0.11.5"
+hcl-rs = "0.19"
 inquire = "0.9"
 ipnetwork = "0.20.0"
 libc = "0.2"
 log = "0.4.22"
 regex = "1.11.1"
+serde = { version = "1", features = ["derive"] }
 strum = { version = "0.26.3", features = ["derive"] }
 strum_macros = "0.26.4"
 

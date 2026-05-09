@@ -10,6 +10,7 @@ use std::process::exit;
 #[cfg(feature = "nixos")]
 mod config;
 mod format;
+pub mod hcl_config;
 #[cfg(feature = "nixos")]
 mod install;
 mod parsers;
