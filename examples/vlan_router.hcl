@@ -176,46 +176,46 @@ switch {
   port "1" {
     pvid   = 10
     accept = "untag-only"
-    vlans  = { vlan_10 = "U" }
+    vlans  = { "10" = "U" }
   }
   port "2" {
     pvid   = 20
     accept = "untag-only"
-    vlans  = { vlan_20 = "U" }
+    vlans  = { "20" = "U" }
   }
   port "3" {
     pvid   = 30
     accept = "untag-only"
-    vlans  = { vlan_30 = "U" }
+    vlans  = { "30" = "U" }
   }
   port "4" {
     pvid   = 30
     accept = "untag-only"
-    vlans  = { vlan_30 = "U" }
+    vlans  = { "30" = "U" }
   }
   port "5" {
     pvid   = 40
     accept = "untag-only"
-    vlans  = { vlan_40 = "U" }
+    vlans  = { "40" = "U" }
   }
   port "6" {
     pvid   = 40
     accept = "untag-only"
-    vlans  = { vlan_40 = "U" }
+    vlans  = { "40" = "U" }
   }
   port "7" {
     pvid   = 40
     accept = "untag-only"
-    vlans  = { vlan_40 = "U" }
+    vlans  = { "40" = "U" }
   }
   port "8" {
     pvid   = 1
     accept = "all"
-    vlans  = { vlan_1 = "U" }
+    vlans  = { "1" = "U" }
   }
   port "9" {
     pvid   = 1
     accept = "all"
-    vlans  = { vlan_1 = "U", vlan_10 = "T", vlan_20 = "T", vlan_30 = "T", vlan_40 = "T" }
+    vlans  = { "1" = "U", "10" = "T", "20" = "T", "30" = "T", "40" = "T" }
   }
 }
