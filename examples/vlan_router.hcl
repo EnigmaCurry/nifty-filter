@@ -205,8 +205,11 @@ switch {
   }
   port "7" {
     pvid   = 40
-    accept = "untagged-only"
-    vlans { untagged = [40] }
+    accept = "all"
+    label  = "secondary switch"
+    vlans {
+      tagged = [20, 40]
+    }
   }
   port "8" {
     pvid   = 1
