@@ -171,57 +171,51 @@ switch {
   mgmt_iface = "trunk"
   router_ip  = "192.168.2.2/24"
 
-  # Port membership per VLAN (U=untagged, T=tagged, X=not-member)
-  # Ports: 1-8 RJ45, 9 SFP+
-  #   Port 1: trusted     (VLAN 10, untagged)
-  #   Port 2: iot          (VLAN 20, untagged)
-  #   Port 3-4: guest      (VLAN 30, untagged)
-  #   Port 5-7: lab        (VLAN 40, untagged)
-  #   Port 8: management   (VLAN 1, untagged)
-  #   Port 9: trunk/uplink (all VLANs, tagged)
-  membership {
-    vlan_1  = ["X", "X", "X", "X", "X", "X", "X", "U", "U"]
-    vlan_10 = ["U", "X", "X", "X", "X", "X", "X", "X", "T"]
-    vlan_20 = ["X", "U", "X", "X", "X", "X", "X", "X", "T"]
-    vlan_30 = ["X", "X", "U", "U", "X", "X", "X", "X", "T"]
-    vlan_40 = ["X", "X", "X", "X", "U", "U", "U", "X", "T"]
-  }
-
-  # Per-port PVID and accepted frame type
+  # Per-port configuration (Sodola SL-SWTGW218AS: ports 1-8 RJ45, port 9 SFP+)
+  # VLAN membership: U=untagged, T=tagged (unlisted VLANs = not-member)
   port "1" {
     pvid   = 10
     accept = "untag-only"
+    vlans  = { vlan_10 = "U" }
   }
   port "2" {
     pvid   = 20
     accept = "untag-only"
+    vlans  = { vlan_20 = "U" }
   }
   port "3" {
     pvid   = 30
     accept = "untag-only"
+    vlans  = { vlan_30 = "U" }
   }
   port "4" {
     pvid   = 30
     accept = "untag-only"
+    vlans  = { vlan_30 = "U" }
   }
   port "5" {
     pvid   = 40
     accept = "untag-only"
+    vlans  = { vlan_40 = "U" }
   }
   port "6" {
     pvid   = 40
     accept = "untag-only"
+    vlans  = { vlan_40 = "U" }
   }
   port "7" {
     pvid   = 40
     accept = "untag-only"
+    vlans  = { vlan_40 = "U" }
   }
   port "8" {
     pvid   = 1
     accept = "all"
+    vlans  = { vlan_1 = "U" }
   }
   port "9" {
     pvid   = 1
     accept = "all"
+    vlans  = { vlan_1 = "U", vlan_10 = "T", vlan_20 = "T", vlan_30 = "T", vlan_40 = "T" }
   }
 }

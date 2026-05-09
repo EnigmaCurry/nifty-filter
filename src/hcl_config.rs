@@ -186,10 +186,7 @@ pub struct SwitchConfig {
     pub mgmt_iface: Option<String>,
     #[serde(default)]
     pub router_ip: Option<String>,
-    /// Per-VLAN port membership: vlan_N = ["U", "X", "T", ...]
-    #[serde(default)]
-    pub membership: HashMap<String, Vec<String>>,
-    /// Per-port settings (PVID and accepted frame type)
+    /// Per-port settings (PVID, accepted frame type, VLAN membership)
     #[serde(default)]
     pub port: HashMap<String, SwitchPortConfig>,
 }
@@ -198,6 +195,10 @@ pub struct SwitchConfig {
 pub struct SwitchPortConfig {
     pub pvid: u16,
     pub accept: String,
+    /// VLAN membership for this port: vlan_N = "U"|"T"
+    /// VLANs not listed are implicitly "X" (not-member).
+    #[serde(default)]
+    pub vlans: HashMap<String, String>,
 }
 
 /// Parse an HCL configuration string into an HclConfig.
@@ -508,13 +509,14 @@ wan {}
         assert_eq!(sw.url, "http://192.168.2.1");
         assert_eq!(sw.user.as_deref(), Some("admin"));
         assert_eq!(sw.router_ip.as_deref(), Some("192.168.2.2/24"));
-        assert_eq!(sw.membership.len(), 5);
-        assert_eq!(sw.membership.get("vlan_10").unwrap(), &vec!["U", "X", "X", "X", "X", "X", "X", "X", "T"]);
         assert_eq!(sw.port.len(), 9);
         assert_eq!(sw.port["1"].pvid, 10);
         assert_eq!(sw.port["1"].accept, "untag-only");
+        assert_eq!(sw.port["1"].vlans.get("vlan_10").unwrap(), "U");
         assert_eq!(sw.port["9"].pvid, 1);
         assert_eq!(sw.port["9"].accept, "all");
+        assert_eq!(sw.port["9"].vlans.len(), 5);
+        assert_eq!(sw.port["9"].vlans.get("vlan_10").unwrap(), "T");
     }
 
     #[test]
@@ -526,32 +528,31 @@ switch {
   pass       = "secret"
   mgmt_iface = "trunk"
   router_ip  = "10.0.0.2/24"
-  membership {
-    vlan_10 = ["U", "X", "T"]
-    vlan_20 = ["X", "U", "T"]
-  }
   port "1" {
     pvid   = 10
     accept = "untag-only"
+    vlans  = { vlan_10 = "U" }
   }
   port "2" {
     pvid   = 20
     accept = "untag-only"
+    vlans  = { vlan_20 = "U" }
   }
   port "3" {
     pvid   = 1
     accept = "all"
+    vlans  = { vlan_10 = "T", vlan_20 = "T" }
   }
 }
 "#);
         let sw = config.switch.unwrap();
         assert_eq!(sw.url, "http://10.0.0.1");
         assert_eq!(sw.pass.as_deref(), Some("secret"));
-        assert_eq!(sw.membership.len(), 2);
-        assert_eq!(sw.membership["vlan_10"], vec!["U", "X", "T"]);
         assert_eq!(sw.port.len(), 3);
         assert_eq!(sw.port["1"].pvid, 10);
+        assert_eq!(sw.port["1"].vlans.get("vlan_10").unwrap(), "U");
         assert_eq!(sw.port["3"].accept, "all");
+        assert_eq!(sw.port["3"].vlans.len(), 2);
     }
 
     #[test]
