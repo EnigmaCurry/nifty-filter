@@ -150,7 +150,17 @@
     dscp_rules: DscpRule[];
   }
 
-  type Tab = "config" | "interfaces" | "nftables" | "qos" | "switch" | "about";
+  interface UpdatesData {
+    nixos_version: string | null;
+    nixpkgs_date: string | null;
+    nixpkgs_age_seconds: number | null;
+    built_at: string | null;
+    built_age_seconds: number | null;
+    nifty_filter_version: string | null;
+    kernel_version: string | null;
+  }
+
+  type Tab = "config" | "interfaces" | "nftables" | "qos" | "switch" | "updates" | "about";
 
   interface AboutData {
     version: string;
@@ -165,6 +175,7 @@
   let rebootNeeded = $state(false);
   let aboutData = $state<AboutData | null>(null);
   let qosData = $state<QosData | null>(null);
+  let updatesData = $state<UpdatesData | null>(null);
   let loading = $state(true);
   let errorMsg = $state("");
   let activeTab = $state<Tab>("config");
@@ -186,7 +197,7 @@
     const hash = window.location.hash.slice(1);
     if (!hash) return null;
     const [tab, sub] = hash.split("/");
-    const validTabs: Tab[] = ["config", "interfaces", "nftables", "qos", "switch", "about"];
+    const validTabs: Tab[] = ["config", "interfaces", "nftables", "qos", "switch", "updates", "about"];
     if (validTabs.includes(tab as Tab)) {
       return {
         tab: tab as Tab,
@@ -413,6 +424,7 @@
     { id: "nftables", label: "Netfilter", condition: () => (data?.nft_chains.length ?? 0) > 0 },
     { id: "qos", label: "QoS", condition: () => qosData != null },
     { id: "switch", label: "Switch", condition: () => data?.switch != null },
+    { id: "updates", label: "Updates", condition: () => updatesData != null },
     { id: "about", label: "About", condition: () => aboutData != null },
   ];
 
@@ -601,6 +613,16 @@
     } catch {}
   }
 
+  async function fetchUpdates() {
+    try {
+      const res = await fetch("/api/updates", { credentials: "include" });
+      if (res.ok) {
+        const body = await res.json();
+        updatesData = body.data ?? null;
+      }
+    } catch {}
+  }
+
   async function fetchAbout() {
     try {
       const res = await fetch("/api/status/about", { credentials: "include" });
@@ -615,6 +637,7 @@
     fetchConfig();
     fetchAbout();
     fetchQos();
+    fetchUpdates();
     fetchStatus();
     const interval = setInterval(() => { fetchStatus(); fetchQos(); }, 15000);
 
@@ -1399,6 +1422,96 @@
             </div>
           </Card.Content>
         </Card.Root>
+
+      {:else if activeTab === "updates" && updatesData}
+        {@const nixpkgsAgeDays = updatesData.nixpkgs_age_seconds != null ? Math.floor(updatesData.nixpkgs_age_seconds / 86400) : null}
+        {@const builtAgeDays = updatesData.built_age_seconds != null ? Math.floor(updatesData.built_age_seconds / 86400) : null}
+        <div class="space-y-4">
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>System Version</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                {#if updatesData.nixos_version}
+                  <div>
+                    <span class="text-muted-foreground">NixOS Version</span>
+                    <p class="font-mono font-semibold">{updatesData.nixos_version}</p>
+                  </div>
+                {/if}
+                {#if updatesData.kernel_version}
+                  <div>
+                    <span class="text-muted-foreground">Kernel</span>
+                    <p class="font-mono">{updatesData.kernel_version}</p>
+                  </div>
+                {/if}
+                {#if updatesData.nifty_filter_version}
+                  <div>
+                    <span class="text-muted-foreground">nifty-filter</span>
+                    <p class="font-mono">{updatesData.nifty_filter_version}</p>
+                  </div>
+                {/if}
+                {#if updatesData.nixpkgs_date}
+                  <div>
+                    <span class="text-muted-foreground">Nixpkgs Date</span>
+                    <p class="font-mono">
+                      {updatesData.nixpkgs_date}
+                      {#if nixpkgsAgeDays != null}
+                        <span class="text-muted-foreground ml-1">({#if nixpkgsAgeDays === 0}today{:else if nixpkgsAgeDays === 1}1 day ago{:else}{nixpkgsAgeDays} days ago{/if})</span>
+                      {/if}
+                    </p>
+                  </div>
+                {/if}
+                {#if updatesData.built_at}
+                  <div>
+                    <span class="text-muted-foreground">Last Built</span>
+                    <p class="font-mono">
+                      {updatesData.built_at}
+                      {#if builtAgeDays != null}
+                        <span class="text-muted-foreground ml-1">({#if builtAgeDays === 0}today{:else if builtAgeDays === 1}1 day ago{:else}{builtAgeDays} days ago{/if})</span>
+                      {/if}
+                    </p>
+                  </div>
+                {/if}
+              </div>
+            </Card.Content>
+          </Card.Root>
+
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>How to Update</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="space-y-4 text-sm">
+                <p class="text-muted-foreground">nifty-filter is built from a Nix flake. To update nixpkgs and rebuild the system, run these commands from your workstation in the nifty-filter source directory:</p>
+
+                <div>
+                  <h4 class="font-semibold mb-2">1. Update flake inputs</h4>
+                  <pre class="bg-muted/50 border border-border rounded-md p-3 font-mono text-xs overflow-x-auto">nix flake update</pre>
+                  <p class="text-muted-foreground text-xs mt-1">This updates <code class="font-mono text-foreground bg-muted px-1 rounded">flake.lock</code> to the latest nixpkgs, pulling in new package versions, kernel updates, and security patches.</p>
+                </div>
+
+                <div>
+                  <h4 class="font-semibold mb-2">2. Commit the lockfile</h4>
+                  <pre class="bg-muted/50 border border-border rounded-md p-3 font-mono text-xs overflow-x-auto">git add flake.lock && git commit -m "nix flake update"</pre>
+                  <p class="text-muted-foreground text-xs mt-1">The updated lockfile must be committed before building, since Nix flakes require a clean git tree.</p>
+                </div>
+
+                <div>
+                  <h4 class="font-semibold mb-2">3. Build and deploy</h4>
+                  <pre class="bg-muted/50 border border-border rounded-md p-3 font-mono text-xs overflow-x-auto">just pve-upgrade &lt;pve-host&gt; &lt;vmid&gt; &lt;vm-name&gt;</pre>
+                  <p class="text-muted-foreground text-xs mt-1">Builds the system closure on your workstation and deploys it to the router via the Proxmox host. The router will reboot into the new system.</p>
+                </div>
+
+                <div>
+                  <h4 class="font-semibold mb-2">Alternative: build on the router</h4>
+                  <pre class="bg-muted/50 border border-border rounded-md p-3 font-mono text-xs overflow-x-auto">sudo nifty-upgrade</pre>
+                  <p class="text-muted-foreground text-xs mt-1">Pulls the latest source and builds directly on the router. Requires sufficient RAM and disk space.</p>
+                </div>
+              </div>
+            </Card.Content>
+          </Card.Root>
+        </div>
 
       {:else if activeTab === "about" && aboutData}
         <Card.Root>

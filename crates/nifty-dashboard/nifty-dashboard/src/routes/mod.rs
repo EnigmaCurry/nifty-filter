@@ -29,6 +29,7 @@ pub mod hello;
 pub mod login;
 pub mod qos;
 pub mod status;
+pub mod updates;
 pub mod whoami;
 
 pub fn router(

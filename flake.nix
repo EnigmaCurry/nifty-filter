@@ -136,6 +136,7 @@
                 };
               };
               cargoBuildFlags = [ "-p" "nifty-dashboard" ];
+              GIT_SHA = version;
               nativeBuildInputs = [ pkgs.pkg-config ];
               buildInputs = [ pkgs.openssl ];
               preBuild = ''
