@@ -591,6 +591,19 @@ in
       DNSEOF
         fi
 
+        # Static DHCP leases
+        DHCP_HOSTS=${d}(envget VLAN_${d}{VID}_DHCP_HOSTS "${d}ENV_FILE")
+        if [ -z "${d}DHCP_HOSTS" ] && [ "${d}VID" = "1" ]; then
+          DHCP_HOSTS=${d}(envget DHCP_HOSTS "${d}ENV_FILE")
+        fi
+        if [ -n "${d}DHCP_HOSTS" ]; then
+          IFS=';' read -ra HOST_ARRAY <<< "${d}DHCP_HOSTS"
+          for entry in "${d}{HOST_ARRAY[@]}"; do
+            entry=${d}(echo "${d}entry" | tr -d ' ')
+            [ -n "${d}entry" ] && echo "dhcp-host=${d}entry" >> /run/dnsmasq.conf
+          done
+        fi
+
         # DHCPv6
         DHCPV6_EN=${d}(envget VLAN_${d}{VID}_DHCPV6_ENABLED "${d}ENV_FILE")
         if [ -z "${d}DHCPV6_EN" ] && [ "${d}VID" = "1" ]; then

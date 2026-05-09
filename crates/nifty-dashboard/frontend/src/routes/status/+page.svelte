@@ -150,6 +150,42 @@
     dscp_rules: DscpRule[];
   }
 
+  interface DnsmasqInterface {
+    name: string;
+    listen_address: string | null;
+    pool_start: string | null;
+    pool_end: string | null;
+    lease_time: string | null;
+    dhcp_router: string | null;
+    dhcp_dns: string | null;
+    pool_start_v6: string | null;
+    pool_end_v6: string | null;
+    dhcpv6_dns: string | null;
+    ra_enabled: boolean;
+  }
+
+  interface DhcpHost {
+    mac: string;
+    ip: string;
+    hostname: string | null;
+  }
+
+  interface DhcpLease {
+    expires: string;
+    mac: string;
+    ip: string;
+    hostname: string;
+    client_id: string;
+  }
+
+  interface DnsmasqData {
+    config_found: boolean;
+    upstream_dns: string[];
+    interfaces: DnsmasqInterface[];
+    static_hosts: DhcpHost[];
+    leases: DhcpLease[];
+  }
+
   interface UpdatesData {
     nixos_version: string | null;
     nixpkgs_date: string | null;
@@ -160,7 +196,8 @@
     kernel_version: string | null;
   }
 
-  type Tab = "config" | "interfaces" | "nftables" | "qos" | "switch" | "updates" | "about";
+  type Tab = "config" | "state" | "updates" | "about";
+  type StateSubTab = "interfaces" | "nftables" | "qos" | "switch" | "dnsmasq";
 
   interface AboutData {
     version: string;
@@ -175,34 +212,43 @@
   let rebootNeeded = $state(false);
   let aboutData = $state<AboutData | null>(null);
   let qosData = $state<QosData | null>(null);
+  let dnsmasqData = $state<DnsmasqData | null>(null);
   let updatesData = $state<UpdatesData | null>(null);
   let loading = $state(true);
   let errorMsg = $state("");
   let activeTab = $state<Tab>("config");
   let configSubTab = $state<ConfigSubTab>("overview");
+  let stateSubTab = $state<StateSubTab>("interfaces");
 
   function updateHash() {
     let hash: string;
-    if (activeTab === "nftables") {
-      hash = `#nftables/${activeHook}`;
-    } else if (activeTab === "config") {
+    if (activeTab === "config") {
       hash = `#config/${configSubTab}`;
+    } else if (activeTab === "state") {
+      if (stateSubTab === "nftables") {
+        hash = `#state/nftables/${activeHook}`;
+      } else {
+        hash = `#state/${stateSubTab}`;
+      }
     } else {
       hash = `#${activeTab}`;
     }
     history.pushState(null, "", hash);
   }
 
-  function readHash(): { tab: Tab; hook: string; configSub: ConfigSubTab } | null {
+  function readHash(): { tab: Tab; hook: string; configSub: ConfigSubTab; stateSub: StateSubTab } | null {
     const hash = window.location.hash.slice(1);
     if (!hash) return null;
-    const [tab, sub] = hash.split("/");
-    const validTabs: Tab[] = ["config", "interfaces", "nftables", "qos", "switch", "updates", "about"];
+    const parts = hash.split("/");
+    const tab = parts[0];
+    const validTabs: Tab[] = ["config", "state", "updates", "about"];
     if (validTabs.includes(tab as Tab)) {
+      const validStateSubs: StateSubTab[] = ["interfaces", "nftables", "dnsmasq", "qos", "switch"];
       return {
         tab: tab as Tab,
-        hook: tab === "nftables" ? (sub ?? "input") : "input",
-        configSub: tab === "config" && sub === "environment" ? "environment" : "overview",
+        hook: tab === "state" && parts[1] === "nftables" ? (parts[2] ?? "input") : "input",
+        configSub: tab === "config" && parts[1] === "environment" ? "environment" : "overview",
+        stateSub: tab === "state" && validStateSubs.includes(parts[1] as StateSubTab) ? parts[1] as StateSubTab : "interfaces",
       };
     }
     return null;
@@ -420,12 +466,17 @@
 
   const tabs: { id: Tab; label: string; condition: () => boolean }[] = [
     { id: "config", label: "Config", condition: () => configData.length > 0 },
-    { id: "interfaces", label: "Interfaces", condition: () => (data?.interfaces.length ?? 0) > 0 },
-    { id: "nftables", label: "Netfilter", condition: () => (data?.nft_chains.length ?? 0) > 0 },
-    { id: "qos", label: "QoS", condition: () => qosData != null },
-    { id: "switch", label: "Switch", condition: () => data?.switch != null },
+    { id: "state", label: "State", condition: () => (data?.interfaces.length ?? 0) > 0 || (data?.nft_chains.length ?? 0) > 0 || dnsmasqData != null || qosData != null || data?.switch != null },
     { id: "updates", label: "Updates", condition: () => updatesData != null },
     { id: "about", label: "About", condition: () => aboutData != null },
+  ];
+
+  const stateSubTabs: { id: StateSubTab; label: string; condition: () => boolean }[] = [
+    { id: "interfaces", label: "Interfaces", condition: () => (data?.interfaces.length ?? 0) > 0 },
+    { id: "nftables", label: "Netfilter", condition: () => (data?.nft_chains.length ?? 0) > 0 },
+    { id: "dnsmasq", label: "Dnsmasq", condition: () => dnsmasqData != null },
+    { id: "qos", label: "QoS", condition: () => qosData != null },
+    { id: "switch", label: "Switch", condition: () => data?.switch != null },
   ];
 
   function formatUptime(seconds: number): string {
@@ -553,7 +604,8 @@
         if (saved) {
           activeTab = saved.tab;
           configSubTab = saved.configSub;
-          if (saved.tab === "nftables") {
+          stateSubTab = saved.stateSub;
+          if (saved.tab === "state" && saved.stateSub === "nftables") {
             selectHook(saved.hook);
           } else {
             selectHook("input");
@@ -613,6 +665,16 @@
     } catch {}
   }
 
+  async function fetchDnsmasq() {
+    try {
+      const res = await fetch("/api/dnsmasq", { credentials: "include" });
+      if (res.ok) {
+        const body = await res.json();
+        dnsmasqData = body.data ?? null;
+      }
+    } catch {}
+  }
+
   async function fetchUpdates() {
     try {
       const res = await fetch("/api/updates", { credentials: "include" });
@@ -637,9 +699,10 @@
     fetchConfig();
     fetchAbout();
     fetchQos();
+    fetchDnsmasq();
     fetchUpdates();
     fetchStatus();
-    const interval = setInterval(() => { fetchStatus(); fetchQos(); }, 15000);
+    const interval = setInterval(() => { fetchStatus(); fetchQos(); fetchDnsmasq(); }, 15000);
 
     // SSE: listen for config file changes and re-fetch config in realtime
     const eventSource = new EventSource("/api/events", { withCredentials: true });
@@ -656,7 +719,8 @@
       if (saved) {
         activeTab = saved.tab;
         configSubTab = saved.configSub;
-        if (saved.tab === "nftables") {
+        stateSubTab = saved.stateSub;
+        if (saved.tab === "state" && saved.stateSub === "nftables") {
           selectHook(saved.hook);
         }
       }
@@ -884,7 +948,22 @@
           </Card.Root>
         {/if}
 
-      {:else if activeTab === "interfaces" && data.interfaces.length > 0}
+      {:else if activeTab === "state"}
+        <div class="flex gap-1 border-b border-border/50 mb-4">
+          {#each stateSubTabs as sub}
+            {#if sub.condition()}
+              <button
+                class="px-3 py-1.5 text-sm font-medium transition-colors {stateSubTab === sub.id
+                  ? 'border-b-2 border-primary text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'}"
+                onclick={() => { stateSubTab = sub.id; updateHash(); }}
+              >
+                {sub.label}
+              </button>
+            {/if}
+          {/each}
+        </div>
+        {#if stateSubTab === "interfaces" && data.interfaces.length > 0}
         <Card.Root>
           <Card.Content class="pt-2">
             <div class="overflow-x-auto">
@@ -922,7 +1001,7 @@
           </Card.Content>
         </Card.Root>
 
-      {:else if activeTab === "nftables" && data.nft_chains.length > 0}
+        {:else if stateSubTab === "nftables" && data.nft_chains.length > 0}
         <!-- Hook sub-tabs -->
         <div class="flex gap-1 border-b border-border/50 mb-4">
           {#each availableHooks() as hook}
@@ -1013,7 +1092,145 @@
           </Card.Root>
         {/if}
 
-      {:else if activeTab === "qos" && qosData}
+        {:else if stateSubTab === "dnsmasq" && dnsmasqData}
+        <div class="space-y-4">
+          <!-- Upstream DNS -->
+          {#if dnsmasqData.upstream_dns.length > 0}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>Upstream DNS</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="flex flex-wrap gap-2">
+                {#each dnsmasqData.upstream_dns as server}
+                  <span class="font-mono text-sm bg-muted px-2 py-1 rounded">{server}</span>
+                {/each}
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+
+          <!-- Per-interface DHCP config -->
+          {#if dnsmasqData.interfaces.length > 0}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>DHCP Interfaces</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="py-2 pr-4">Interface</th>
+                      <th class="py-2 pr-4">Router</th>
+                      <th class="py-2 pr-4">Pool</th>
+                      <th class="py-2 pr-4">DNS</th>
+                      <th class="py-2 pr-4">Lease</th>
+                      <th class="py-2">IPv6</th>
+                    </tr>
+                  </thead>
+                  <tbody class="font-mono">
+                    {#each dnsmasqData.interfaces as iface}
+                      <tr class="border-b border-border/50">
+                        <td class="py-2 pr-4 font-semibold">{iface.name}</td>
+                        <td class="py-2 pr-4">{iface.dhcp_router ?? "-"}</td>
+                        <td class="py-2 pr-4">{iface.pool_start && iface.pool_end ? `${iface.pool_start} – ${iface.pool_end}` : "-"}</td>
+                        <td class="py-2 pr-4">{iface.dhcp_dns ?? "-"}</td>
+                        <td class="py-2 pr-4">{iface.lease_time ?? "-"}</td>
+                        <td class="py-2">
+                          {#if iface.pool_start_v6}
+                            <span class="text-green-400" title="{iface.pool_start_v6} – {iface.pool_end_v6}">DHCPv6{iface.ra_enabled ? " + RA" : ""}</span>
+                          {:else}
+                            -
+                          {/if}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+
+          <!-- Static hosts -->
+          {#if dnsmasqData.static_hosts.length > 0}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>Static Leases</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="py-2 pr-4">MAC</th>
+                      <th class="py-2 pr-4">IP</th>
+                      <th class="py-2">Hostname</th>
+                    </tr>
+                  </thead>
+                  <tbody class="font-mono">
+                    {#each dnsmasqData.static_hosts as host}
+                      <tr class="border-b border-border/50">
+                        <td class="py-2 pr-4">{host.mac}</td>
+                        <td class="py-2 pr-4">{host.ip}</td>
+                        <td class="py-2">{host.hostname ?? "-"}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+
+          <!-- Active leases per VLAN -->
+          {#each dnsmasqData.interfaces as iface}
+            {@const subnet = iface.dhcp_router ? iface.dhcp_router.split('.').slice(0, 3).join('.') + '.' : null}
+            {@const ifaceLeases = subnet ? dnsmasqData.leases.filter(l => l.ip.startsWith(subnet)) : []}
+            {#if ifaceLeases.length > 0}
+            <Card.Root>
+              <Card.Header class="pb-2">
+                <Card.Title>Active Leases — {iface.name}</Card.Title>
+              </Card.Header>
+              <Card.Content>
+                <div class="overflow-x-auto">
+                  <table class="w-full text-sm">
+                    <thead>
+                      <tr class="border-b border-border text-left text-muted-foreground">
+                        <th class="py-2 pr-4">IP</th>
+                        <th class="py-2 pr-4">MAC</th>
+                        <th class="py-2 pr-4">Hostname</th>
+                        <th class="py-2">Expires</th>
+                      </tr>
+                    </thead>
+                    <tbody class="font-mono">
+                      {#each ifaceLeases as lease}
+                        <tr class="border-b border-border/50">
+                          <td class="py-2 pr-4">{lease.ip}</td>
+                          <td class="py-2 pr-4">{lease.mac}</td>
+                          <td class="py-2 pr-4">{lease.hostname === "*" ? "-" : lease.hostname}</td>
+                          <td class="py-2">{lease.expires === "0" ? "static" : new Date(parseInt(lease.expires) * 1000).toLocaleString()}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              </Card.Content>
+            </Card.Root>
+            {/if}
+          {/each}
+
+          {#if !dnsmasqData.config_found}
+          <Card.Root>
+            <Card.Content class="py-4">
+              <p class="text-muted-foreground text-sm">dnsmasq configuration not found at /run/dnsmasq.conf</p>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+        </div>
+
+        {:else if stateSubTab === "qos" && qosData}
         {#if !qosData.configured && !qosData.active}
           <Card.Root>
             <Card.Header>
@@ -1296,7 +1513,7 @@
         </div>
         {/if}
 
-      {:else if activeTab === "switch" && data.switch}
+        {:else if stateSubTab === "switch" && data.switch}
         <Card.Root>
           <Card.Header>
             <Card.Title>{data.switch.info.device_type}</Card.Title>
@@ -1422,6 +1639,7 @@
             </div>
           </Card.Content>
         </Card.Root>
+        {/if}
 
       {:else if activeTab === "updates" && updatesData}
         {@const nixpkgsAgeDays = updatesData.nixpkgs_age_seconds != null ? Math.floor(updatesData.nixpkgs_age_seconds / 86400) : null}
@@ -1524,10 +1742,9 @@
               <p>
                 <a href={aboutData.repository} target="_blank" rel="noopener" class="text-blue-400 underline decoration-blue-400/30 hover:decoration-blue-400 font-mono text-xs">{aboutData.repository}</a>
               </p>
-              <p class="text-muted-foreground">nifty-dashboard is the read-only dashboard you are currently viewing. It presents both the configured state (desired) and the live system state (actual) of your nifty-filter router, so you can see at a glance whether reality matches intent.</p>
               <div>
                 <h3 class="text-xs text-muted-foreground mb-1">License (MIT)</h3>
-                <textarea readonly class="w-full h-96 bg-muted/30 border border-border rounded-md p-3 font-mono text-xs text-muted-foreground resize-none focus:outline-none">{aboutData.license}</textarea>
+                <div class="w-full bg-muted/30 border border-border rounded-md p-3 font-mono text-xs text-muted-foreground whitespace-pre-wrap">{aboutData.license}</div>
               </div>
             </div>
           </Card.Content>

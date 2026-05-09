@@ -353,7 +353,7 @@ pve-deploy-dashboard pve_host target_ip="10.99.0.1":
     if [ ! -d "${FRONTEND_DIR}/build" ]; then
         NEEDS_BUILD=true
     else
-        NEWEST_SRC=$(find "${FRONTEND_DIR}/src" "${FRONTEND_DIR}/static" -type f -newer "${FRONTEND_DIR}/build" 2>/dev/null | head -1)
+        NEWEST_SRC=$(find "${FRONTEND_DIR}/src" "${FRONTEND_DIR}/static" -type f -newer "${FRONTEND_DIR}/build" 2>/dev/null -print -quit)
         if [ -n "${NEWEST_SRC}" ]; then
             NEEDS_BUILD=true
         fi
