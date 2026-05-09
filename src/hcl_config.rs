@@ -194,12 +194,20 @@ pub struct SwitchConfig {
 #[derive(Debug, Deserialize)]
 pub struct SwitchPortConfig {
     pub pvid: u16,
+    /// Accepted frame type: "all", "tagged-only", or "untagged-only"
     pub accept: String,
-    /// VLAN membership for this port: "10" = "U"|"T"
-    /// VLANs not listed are implicitly "X" (not-member).
-    /// Keys are VLAN IDs as strings (HCL map keys are always strings).
+    /// VLAN membership for this port.
+    /// VLANs not listed are not members of this port.
     #[serde(default)]
-    pub vlans: HashMap<String, String>,
+    pub vlans: Option<PortVlans>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PortVlans {
+    #[serde(default)]
+    pub untagged: Vec<u16>,
+    #[serde(default)]
+    pub tagged: Vec<u16>,
 }
 
 /// Parse an HCL configuration string into an HclConfig.
@@ -512,12 +520,15 @@ wan {}
         assert_eq!(sw.router_ip.as_deref(), Some("192.168.2.2/24"));
         assert_eq!(sw.port.len(), 9);
         assert_eq!(sw.port["1"].pvid, 10);
-        assert_eq!(sw.port["1"].accept, "untag-only");
-        assert_eq!(sw.port["1"].vlans.get("10").unwrap(), "U");
+        assert_eq!(sw.port["1"].accept, "untagged-only");
+        let p1_vlans = sw.port["1"].vlans.as_ref().unwrap();
+        assert_eq!(p1_vlans.untagged, vec![10]);
+        assert!(p1_vlans.tagged.is_empty());
         assert_eq!(sw.port["9"].pvid, 1);
         assert_eq!(sw.port["9"].accept, "all");
-        assert_eq!(sw.port["9"].vlans.len(), 5);
-        assert_eq!(sw.port["9"].vlans.get("10").unwrap(), "T");
+        let p9_vlans = sw.port["9"].vlans.as_ref().unwrap();
+        assert_eq!(p9_vlans.untagged, vec![1]);
+        assert_eq!(p9_vlans.tagged, vec![10, 20, 30, 40]);
     }
 
     #[test]
@@ -531,18 +542,21 @@ switch {
   router_ip  = "10.0.0.2/24"
   port "1" {
     pvid   = 10
-    accept = "untag-only"
-    vlans  = { "10" = "U" }
+    accept = "untagged-only"
+    vlans { untagged = [10] }
   }
   port "2" {
     pvid   = 20
-    accept = "untag-only"
-    vlans  = { "20" = "U" }
+    accept = "untagged-only"
+    vlans { untagged = [20] }
   }
   port "3" {
     pvid   = 1
     accept = "all"
-    vlans  = { "10" = "T", "20" = "T" }
+    vlans {
+      untagged = [1]
+      tagged   = [10, 20]
+    }
   }
 }
 "#);
@@ -551,9 +565,9 @@ switch {
         assert_eq!(sw.pass.as_deref(), Some("secret"));
         assert_eq!(sw.port.len(), 3);
         assert_eq!(sw.port["1"].pvid, 10);
-        assert_eq!(sw.port["1"].vlans.get("10").unwrap(), "U");
+        assert_eq!(sw.port["1"].vlans.as_ref().unwrap().untagged, vec![10]);
         assert_eq!(sw.port["3"].accept, "all");
-        assert_eq!(sw.port["3"].vlans.len(), 2);
+        assert_eq!(sw.port["3"].vlans.as_ref().unwrap().tagged, vec![10, 20]);
     }
 
     #[test]

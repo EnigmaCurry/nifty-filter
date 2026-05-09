@@ -172,50 +172,53 @@ switch {
   router_ip  = "192.168.2.2/24"
 
   # Per-port configuration (Sodola SL-SWTGW218AS: ports 1-8 RJ45, port 9 SFP+)
-  # VLAN membership: U=untagged, T=tagged (unlisted VLANs = not-member)
+  # VLANs not listed on a port are not members of that port.
   port "1" {
     pvid   = 10
-    accept = "untag-only"
-    vlans  = { "10" = "U" }
+    accept = "untagged-only"
+    vlans { untagged = [10] }
   }
   port "2" {
     pvid   = 20
-    accept = "untag-only"
-    vlans  = { "20" = "U" }
+    accept = "untagged-only"
+    vlans { untagged = [20] }
   }
   port "3" {
     pvid   = 30
-    accept = "untag-only"
-    vlans  = { "30" = "U" }
+    accept = "untagged-only"
+    vlans { untagged = [30] }
   }
   port "4" {
     pvid   = 30
-    accept = "untag-only"
-    vlans  = { "30" = "U" }
+    accept = "untagged-only"
+    vlans { untagged = [30] }
   }
   port "5" {
     pvid   = 40
-    accept = "untag-only"
-    vlans  = { "40" = "U" }
+    accept = "untagged-only"
+    vlans { untagged = [40] }
   }
   port "6" {
     pvid   = 40
-    accept = "untag-only"
-    vlans  = { "40" = "U" }
+    accept = "untagged-only"
+    vlans { untagged = [40] }
   }
   port "7" {
     pvid   = 40
-    accept = "untag-only"
-    vlans  = { "40" = "U" }
+    accept = "untagged-only"
+    vlans { untagged = [40] }
   }
   port "8" {
     pvid   = 1
     accept = "all"
-    vlans  = { "1" = "U" }
+    vlans { untagged = [1] }
   }
   port "9" {
     pvid   = 1
     accept = "all"
-    vlans  = { "1" = "U", "10" = "T", "20" = "T", "30" = "T", "40" = "T" }
+    vlans {
+      untagged = [1]
+      tagged   = [10, 20, 30, 40]
+    }
   }
 }
