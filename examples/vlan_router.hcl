@@ -187,7 +187,41 @@ switch {
     vlan_40 = ["X", "X", "X", "X", "U", "U", "U", "X", "T"]
   }
 
-  # Per-port PVID and accepted frame type (port:value pairs)
-  pvid   = "1:10,2:20,3:30,4:30,5:40,6:40,7:40,8:1,9:1"
-  accept = "1:untag-only,2:untag-only,3:untag-only,4:untag-only,5:untag-only,6:untag-only,7:untag-only,8:all,9:all"
+  # Per-port PVID and accepted frame type
+  port "1" {
+    pvid   = 10
+    accept = "untag-only"
+  }
+  port "2" {
+    pvid   = 20
+    accept = "untag-only"
+  }
+  port "3" {
+    pvid   = 30
+    accept = "untag-only"
+  }
+  port "4" {
+    pvid   = 30
+    accept = "untag-only"
+  }
+  port "5" {
+    pvid   = 40
+    accept = "untag-only"
+  }
+  port "6" {
+    pvid   = 40
+    accept = "untag-only"
+  }
+  port "7" {
+    pvid   = 40
+    accept = "untag-only"
+  }
+  port "8" {
+    pvid   = 1
+    accept = "all"
+  }
+  port "9" {
+    pvid   = 1
+    accept = "all"
+  }
 }

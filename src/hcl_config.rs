@@ -189,12 +189,15 @@ pub struct SwitchConfig {
     /// Per-VLAN port membership: vlan_N = ["U", "X", "T", ...]
     #[serde(default)]
     pub membership: HashMap<String, Vec<String>>,
-    /// Per-port PVID as packed string: "1:10,2:20,..."
+    /// Per-port settings (PVID and accepted frame type)
     #[serde(default)]
-    pub pvid: Option<String>,
-    /// Per-port accepted frame type as packed string: "1:untag-only,2:all,..."
-    #[serde(default)]
-    pub accept: Option<String>,
+    pub port: HashMap<String, SwitchPortConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SwitchPortConfig {
+    pub pvid: u16,
+    pub accept: String,
 }
 
 /// Parse an HCL configuration string into an HclConfig.
@@ -507,8 +510,11 @@ wan {}
         assert_eq!(sw.router_ip.as_deref(), Some("192.168.2.2/24"));
         assert_eq!(sw.membership.len(), 5);
         assert_eq!(sw.membership.get("vlan_10").unwrap(), &vec!["U", "X", "X", "X", "X", "X", "X", "X", "T"]);
-        assert!(sw.pvid.as_ref().unwrap().contains("1:10"));
-        assert!(sw.accept.as_ref().unwrap().contains("untag-only"));
+        assert_eq!(sw.port.len(), 9);
+        assert_eq!(sw.port["1"].pvid, 10);
+        assert_eq!(sw.port["1"].accept, "untag-only");
+        assert_eq!(sw.port["9"].pvid, 1);
+        assert_eq!(sw.port["9"].accept, "all");
     }
 
     #[test]
@@ -524,8 +530,18 @@ switch {
     vlan_10 = ["U", "X", "T"]
     vlan_20 = ["X", "U", "T"]
   }
-  pvid   = "1:10,2:20,3:1"
-  accept = "1:untag-only,2:untag-only,3:all"
+  port "1" {
+    pvid   = 10
+    accept = "untag-only"
+  }
+  port "2" {
+    pvid   = 20
+    accept = "untag-only"
+  }
+  port "3" {
+    pvid   = 1
+    accept = "all"
+  }
 }
 "#);
         let sw = config.switch.unwrap();
@@ -533,7 +549,9 @@ switch {
         assert_eq!(sw.pass.as_deref(), Some("secret"));
         assert_eq!(sw.membership.len(), 2);
         assert_eq!(sw.membership["vlan_10"], vec!["U", "X", "T"]);
-        assert_eq!(sw.pvid.as_deref(), Some("1:10,2:20,3:1"));
+        assert_eq!(sw.port.len(), 3);
+        assert_eq!(sw.port["1"].pvid, 10);
+        assert_eq!(sw.port["3"].accept, "all");
     }
 
     #[test]
