@@ -15,6 +15,8 @@ pub struct HclConfig {
     #[serde(default)]
     pub qos: Option<QosHclConfig>,
     #[serde(default)]
+    pub switch: Option<SwitchConfig>,
+    #[serde(default)]
     pub vlan: HashMap<String, VlanHclConfig>,
 }
 
@@ -169,6 +171,30 @@ pub struct QosOverridesConfig {
     pub besteffort: Vec<String>,
     #[serde(default)]
     pub bulk: Vec<String>,
+}
+
+/// Managed switch configuration (sodola-switch).
+/// The HCL is the central config; the NixOS module extracts env vars for sodola-switch.
+#[derive(Debug, Deserialize)]
+pub struct SwitchConfig {
+    pub url: String,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub pass: Option<String>,
+    #[serde(default)]
+    pub mgmt_iface: Option<String>,
+    #[serde(default)]
+    pub router_ip: Option<String>,
+    /// Per-VLAN port membership: vlan_N = ["U", "X", "T", ...]
+    #[serde(default)]
+    pub membership: HashMap<String, Vec<String>>,
+    /// Per-port PVID as packed string: "1:10,2:20,..."
+    #[serde(default)]
+    pub pvid: Option<String>,
+    /// Per-port accepted frame type as packed string: "1:untag-only,2:all,..."
+    #[serde(default)]
+    pub accept: Option<String>,
 }
 
 /// Parse an HCL configuration string into an HclConfig.
@@ -473,6 +499,47 @@ wan {}
         assert_eq!(config.vlan.len(), 4);
         assert_eq!(config.wan.tcp_forward.len(), 2);
         assert!(config.qos.is_none());
+
+        // Switch config
+        let sw = config.switch.as_ref().expect("missing switch block");
+        assert_eq!(sw.url, "http://192.168.2.1");
+        assert_eq!(sw.user.as_deref(), Some("admin"));
+        assert_eq!(sw.router_ip.as_deref(), Some("192.168.2.2/24"));
+        assert_eq!(sw.membership.len(), 5);
+        assert_eq!(sw.membership.get("vlan_10").unwrap(), &vec!["U", "X", "X", "X", "X", "X", "X", "X", "T"]);
+        assert!(sw.pvid.as_ref().unwrap().contains("1:10"));
+        assert!(sw.accept.as_ref().unwrap().contains("untag-only"));
+    }
+
+    #[test]
+    fn test_parse_switch_config() {
+        let config = parse_with_prefix(r#"
+switch {
+  url        = "http://10.0.0.1"
+  user       = "admin"
+  pass       = "secret"
+  mgmt_iface = "trunk"
+  router_ip  = "10.0.0.2/24"
+  membership {
+    vlan_10 = ["U", "X", "T"]
+    vlan_20 = ["X", "U", "T"]
+  }
+  pvid   = "1:10,2:20,3:1"
+  accept = "1:untag-only,2:untag-only,3:all"
+}
+"#);
+        let sw = config.switch.unwrap();
+        assert_eq!(sw.url, "http://10.0.0.1");
+        assert_eq!(sw.pass.as_deref(), Some("secret"));
+        assert_eq!(sw.membership.len(), 2);
+        assert_eq!(sw.membership["vlan_10"], vec!["U", "X", "T"]);
+        assert_eq!(sw.pvid.as_deref(), Some("1:10,2:20,3:1"));
+    }
+
+    #[test]
+    fn test_no_switch_is_ok() {
+        let config = parse_with_prefix("");
+        assert!(config.switch.is_none());
     }
 
     #[test]

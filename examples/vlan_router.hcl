@@ -160,3 +160,34 @@ vlan "lab" {
 #     bulk  = ["10.99.20.0/24"]
 #   }
 # }
+
+# --- Managed switch (Sodola) ---
+# Supervise the managed switch: enforce VLAN port assignments.
+# The NixOS module extracts these settings as env vars for sodola-switch.
+switch {
+  url        = "http://192.168.2.1"
+  user       = "admin"
+  pass       = "admin"
+  mgmt_iface = "trunk"
+  router_ip  = "192.168.2.2/24"
+
+  # Port membership per VLAN (U=untagged, T=tagged, X=not-member)
+  # Ports: 1-8 RJ45, 9 SFP+
+  #   Port 1: trusted     (VLAN 10, untagged)
+  #   Port 2: iot          (VLAN 20, untagged)
+  #   Port 3-4: guest      (VLAN 30, untagged)
+  #   Port 5-7: lab        (VLAN 40, untagged)
+  #   Port 8: management   (VLAN 1, untagged)
+  #   Port 9: trunk/uplink (all VLANs, tagged)
+  membership {
+    vlan_1  = ["X", "X", "X", "X", "X", "X", "X", "U", "U"]
+    vlan_10 = ["U", "X", "X", "X", "X", "X", "X", "X", "T"]
+    vlan_20 = ["X", "U", "X", "X", "X", "X", "X", "X", "T"]
+    vlan_30 = ["X", "X", "U", "U", "X", "X", "X", "X", "T"]
+    vlan_40 = ["X", "X", "X", "X", "U", "U", "U", "X", "T"]
+  }
+
+  # Per-port PVID and accepted frame type (port:value pairs)
+  pvid   = "1:10,2:20,3:30,4:30,5:40,6:40,7:40,8:1,9:1"
+  accept = "1:untag-only,2:untag-only,3:untag-only,4:untag-only,5:untag-only,6:untag-only,7:untag-only,8:all,9:all"
+}
