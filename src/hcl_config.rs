@@ -212,7 +212,20 @@ pub struct PortVlans {
 
 /// Parse an HCL configuration string into an HclConfig.
 pub fn parse_hcl(input: &str) -> Result<HclConfig, String> {
-    hcl::from_str(input).map_err(|e| format!("HCL parse error: {}", e))
+    let config: HclConfig = hcl::from_str(input).map_err(|e| format!("HCL parse error: {}", e))?;
+    if let Some(sw) = &config.switch {
+        for (port_id, port) in &sw.port {
+            if let Some(vlans) = &port.vlans {
+                if vlans.untagged.len() > 1 {
+                    return Err(format!(
+                        "switch port \"{}\": at most one untagged VLAN allowed, got {}",
+                        port_id, vlans.untagged.len()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(config)
 }
 
 #[cfg(test)]
@@ -574,6 +587,25 @@ switch {
     fn test_no_switch_is_ok() {
         let config = parse_with_prefix("");
         assert!(config.switch.is_none());
+    }
+
+    #[test]
+    fn test_switch_rejects_multiple_untagged() {
+        let input = format!("{}{}",  hcl_prefix(), r#"
+switch {
+  url = "http://10.0.0.1"
+  port "1" {
+    pvid   = 10
+    accept = "untagged-only"
+    vlans {
+      untagged = [10, 20]
+    }
+  }
+}
+"#);
+        let result = parse_hcl(&input);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("at most one untagged VLAN"));
     }
 
     #[test]
