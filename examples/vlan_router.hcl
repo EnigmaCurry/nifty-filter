@@ -211,11 +211,13 @@ switch {
   port "8" {
     pvid   = 1
     accept = "all"
+    label  = "management"
     vlans { untagged = [1] }
   }
   port "9" {
     pvid   = 1
     accept = "all"
+    label  = "trunk/uplink"
     vlans {
       untagged = [1]
       tagged   = [10, 20, 30, 40]

@@ -196,6 +196,10 @@ pub struct SwitchPortConfig {
     pub pvid: u16,
     /// Accepted frame type: "all", "tagged-only", or "untagged-only"
     pub accept: String,
+    /// Human-readable label for this port. Defaults to the name of the VLAN
+    /// matching the PVID (looked up from the top-level vlan blocks).
+    #[serde(default)]
+    pub label: Option<String>,
     /// VLAN membership for this port.
     /// VLANs not listed are not members of this port.
     #[serde(default)]
@@ -208,6 +212,36 @@ pub struct PortVlans {
     pub untagged: Vec<u16>,
     #[serde(default)]
     pub tagged: Vec<u16>,
+}
+
+impl SwitchPortConfig {
+    /// Resolve the port label: explicit label if set, otherwise the name of
+    /// the VLAN whose ID matches this port's PVID, otherwise the PVID as a string.
+    pub fn resolve_label(&self, vlans: &HashMap<String, super::vlan::Vlan>) -> String {
+        if let Some(ref label) = self.label {
+            return label.clone();
+        }
+        // Find the VLAN name whose ID matches this port's PVID
+        for (name, vlan) in vlans {
+            if vlan.id == self.pvid {
+                return name.clone();
+            }
+        }
+        format!("VLAN {}", self.pvid)
+    }
+
+    /// Resolve the port label from HCL config VLAN blocks (before conversion to Vlan structs).
+    pub fn resolve_label_from_hcl(&self, vlans: &HashMap<String, VlanHclConfig>) -> String {
+        if let Some(ref label) = self.label {
+            return label.clone();
+        }
+        for (name, vhcl) in vlans {
+            if vhcl.id == self.pvid {
+                return name.clone();
+            }
+        }
+        format!("VLAN {}", self.pvid)
+    }
 }
 
 /// Parse an HCL configuration string into an HclConfig.
@@ -587,6 +621,54 @@ switch {
     fn test_no_switch_is_ok() {
         let config = parse_with_prefix("");
         assert!(config.switch.is_none());
+    }
+
+    #[test]
+    fn test_switch_port_label_explicit() {
+        let config = parse_with_prefix(r#"
+vlan "trusted" { id = 10 }
+switch {
+  url = "http://10.0.0.1"
+  port "1" {
+    pvid   = 10
+    accept = "untagged-only"
+    label  = "server rack"
+  }
+}
+"#);
+        let sw = config.switch.unwrap();
+        assert_eq!(sw.port["1"].label.as_deref(), Some("server rack"));
+        assert_eq!(sw.port["1"].resolve_label_from_hcl(&config.vlan), "server rack");
+    }
+
+    #[test]
+    fn test_switch_port_label_default_from_vlan() {
+        let config = parse_with_prefix(r#"
+vlan "trusted" { id = 10 }
+vlan "iot" { id = 20 }
+switch {
+  url = "http://10.0.0.1"
+  port "1" {
+    pvid   = 10
+    accept = "untagged-only"
+  }
+  port "2" {
+    pvid   = 20
+    accept = "untagged-only"
+  }
+  port "3" {
+    pvid   = 99
+    accept = "all"
+  }
+}
+"#);
+        let sw = config.switch.unwrap();
+        // No label set → falls back to VLAN name
+        assert!(sw.port["1"].label.is_none());
+        assert_eq!(sw.port["1"].resolve_label_from_hcl(&config.vlan), "trusted");
+        assert_eq!(sw.port["2"].resolve_label_from_hcl(&config.vlan), "iot");
+        // No matching VLAN → falls back to "VLAN {pvid}"
+        assert_eq!(sw.port["3"].resolve_label_from_hcl(&config.vlan), "VLAN 99");
     }
 
     #[test]
