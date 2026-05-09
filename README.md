@@ -3,8 +3,8 @@
 nifty-filter is a declarative config to deploy network routers and firewalls. It is two things that share the same name:
 
 1. **A standalone nftables rule generator** — a Rust library and CLI tool that reads
-   env vars (or a `.env` file) and emits a complete nftables ruleset.
-   Install it with `cargo install nifty-filter` and use it as a standalone peice in your own adhoc router.
+   an HCL config file and emits a complete nftables ruleset.
+   Install it with `cargo install nifty-filter` and use it as a standalone piece in your own adhoc router.
    
 2. **A declarative NixOS router distribution** — a complete router operating system, built around that same binary, with DHCP,
    DNS, VLANs, an interactive installer, and more. Deploy a fully featured router on Proxmox VE, or bare metal.
@@ -21,15 +21,14 @@ cargo install nifty-filter
 Or [download a release](https://github.com/EnigmaCurry/nifty-filter/releases).
 
 ```bash
-# Generate rules from an env file:
-nifty-filter nftables --env-file router.env --strict-env
+# Generate rules from an HCL config file:
+nifty-filter nftables --config router.hcl
 
 # Generate and validate (requires nft on the host):
-nifty-filter nftables --env-file router.env --strict-env --validate
+nifty-filter nftables --config router.hcl --validate
 
-# From environment variables:
-LAN_INTERFACE=lan WAN_INTERFACE=wan SUBNET_LAN=10.99.0.1/24 \
-  nifty-filter nftables
+# Generate QoS (CAKE) traffic shaping commands:
+nifty-filter qos --config router.hcl
 ```
 
 The ruleset is generated from a compile-time validated
@@ -37,12 +36,56 @@ The ruleset is generated from a compile-time validated
 [examples/](examples/) for complete configurations covering a basic
 home router, dual-stack IPv6, and multi-VLAN setups.
 
+### HCL configuration
+
+nifty-filter uses [HCL](https://github.com/hashicorp/hcl) (HashiCorp
+Configuration Language) for its config format. HCL provides labeled
+blocks, real lists, typed values, and comments — making network config
+readable and structured.
+
+```hcl
+interfaces {
+  trunk = "trunk"
+  wan   = "wan"
+}
+
+wan {
+  enable_ipv4 = true
+  enable_ipv6 = true
+  tcp_forward = ["443:10.99.40.50:443"]
+}
+
+vlan "trusted" {
+  id = 10
+  ipv4 {
+    subnet = "10.99.10.1/24"
+    egress = ["0.0.0.0/0"]
+  }
+  firewall {
+    tcp_accept = [22]
+    udp_accept = [67, 68]
+  }
+  dhcp {
+    pool_start = "10.99.10.100"
+    pool_end   = "10.99.10.250"
+    router     = "10.99.10.1"
+    dns        = "10.99.10.1"
+  }
+}
+```
+
+See [examples/home_router.hcl](examples/home_router.hcl) for a simple
+setup, [examples/dual_stack_router.hcl](examples/dual_stack_router.hcl)
+for IPv4+IPv6, and
+[examples/vlan_router.hcl](examples/vlan_router.hcl) for a full
+multi-VLAN configuration with managed switch.
+
 ---
 
 # NixOS Router Distribution
 
 nifty-filter as a NixOS distribution provides DHCP, DNS, VLANs,
-firewall, and an interactive configuration TUI — all driven by env
+firewall, and an interactive configuration TUI — all driven by config
 files on the writable `/var` partition. The root filesystem is
 read-only.
 
@@ -183,16 +226,10 @@ Run `nifty-install`, then remove the media and power on.
 
 ## Configuring the router
 
-SSH into the installed system and use the interactive menu:
+SSH into the installed system and edit the HCL config:
 
 ```bash
-nifty-config
-```
-
-Or edit the env file directly:
-
-```bash
-nano /var/nifty-filter/nifty-filter.env
+nano /var/nifty-filter/nifty-filter.hcl
 ```
 
 Apply changes without rebooting:
@@ -247,12 +284,12 @@ prompt. Reboot again to return to normal read-only mode.
 
 | Service | Purpose | Config source |
 |---------|---------|---------------|
-| `nifty-link` | Renames interfaces by MAC address | `nifty-filter.env` |
-| `nifty-hostname` | Sets hostname | `nifty-filter.env` |
-| `nifty-network` | Configures WAN (DHCP) and LAN (static IP) | `nifty-filter.env` |
+| `nifty-link` | Renames interfaces by MAC address | `nifty-filter.hcl` |
+| `nifty-hostname` | Sets hostname | `nifty-filter.hcl` |
+| `nifty-network` | Configures WAN (DHCP) and LAN (static IP) | `nifty-filter.hcl` |
 | `nifty-filter-init` | Seeds default config on first boot | -- |
-| `nifty-filter` | Generates and applies nftables rules | `nifty-filter.env` |
-| `nifty-dnsmasq` | DHCP and DNS server | `nifty-filter.env` |
+| `nifty-filter` | Generates and applies nftables rules | `nifty-filter.hcl` |
+| `nifty-dnsmasq` | DHCP and DNS server | `nifty-filter.hcl` |
 
 ### Configuration files
 
@@ -260,9 +297,7 @@ All config lives in `/var/nifty-filter/`:
 
 ```
 /var/nifty-filter/
-  nifty-filter.env        # All router config (firewall, interfaces, DHCP, DNS)
+  nifty-filter.hcl        # All router config (firewall, interfaces, DHCP, DNS)
   ssh/
     ssh_host_*            # Persistent SSH host keys
 ```
-
-
