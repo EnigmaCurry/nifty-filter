@@ -16,7 +16,6 @@ authors = ["EnigmaCurry <ryan@enigmacurry.com>"]
 [dependencies]
 askama = "0.12.1"
 clap = { version = "4.5.20", features = ["derive", "env"] }
-dotenvy = "0.15.7"
 env_logger = "0.11.5"
 hcl-rs = "0.19"
 inquire = "0.9"

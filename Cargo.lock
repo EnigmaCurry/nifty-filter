@@ -722,7 +722,6 @@ version = "0.2.1"
 dependencies = [
  "askama",
  "clap",
- "dotenvy",
  "env_logger",
  "hcl-rs",
  "inquire",
