@@ -10,7 +10,7 @@ const DEBOUNCE: Duration = Duration::from_millis(500);
 pub fn config_file_path() -> PathBuf {
     std::env::var("NIFTY_CONFIG_FILE")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/var/nifty-filter/nifty-filter.env"))
+        .unwrap_or_else(|_| PathBuf::from("/var/nifty-filter/nifty-filter.hcl"))
 }
 
 pub async fn read_boot_sha() -> String {

@@ -75,19 +75,7 @@
     switch: SwitchState | null;
   }
 
-  interface ConfigEntry {
-    key: string;
-    value: string;
-    comment?: string;
-    is_commented_out: boolean;
-    boot_value?: string;
-    is_default?: boolean;
-  }
-
-  interface ConfigSection {
-    name: string;
-    entries: ConfigEntry[];
-  }
+  // Config is now a generic JSON tree from HCL parsing
 
   interface CakeTin {
     name: string;
@@ -205,10 +193,11 @@
     license: string;
   }
 
-  type ConfigSubTab = "overview" | "environment";
+  type ConfigSubTab = "overview" | "spec";
 
   let data = $state<StatusData | null>(null);
-  let configData = $state<ConfigSection[]>([]);
+  let configJson = $state<Record<string, any> | null>(null);
+  let bootConfigJson = $state<Record<string, any> | null>(null);
   let rebootNeeded = $state(false);
   let aboutData = $state<AboutData | null>(null);
   let qosData = $state<QosData | null>(null);
@@ -247,20 +236,11 @@
       return {
         tab: tab as Tab,
         hook: tab === "state" && parts[1] === "nftables" ? (parts[2] ?? "input") : "input",
-        configSub: tab === "config" && parts[1] === "environment" ? "environment" : "overview",
+        configSub: tab === "config" && parts[1] === "spec" ? "spec" : "overview",
         stateSub: tab === "state" && validStateSubs.includes(parts[1] as StateSubTab) ? parts[1] as StateSubTab : "interfaces",
       };
     }
     return null;
-  }
-
-  function cfgVal(key: string): string {
-    for (const section of configData) {
-      for (const entry of section.entries) {
-        if (entry.key === key && !entry.is_commented_out) return entry.value;
-      }
-    }
-    return "";
   }
 
   interface VlanOverview {
@@ -277,151 +257,23 @@
     iperf: boolean;
   }
 
-  const VALID_STATIC_KEYS = new Set([
-    "ENABLED", "HOSTNAME",
-    "TRUNK_INTERFACE", "LAN_INTERFACE", "WAN_INTERFACE", "MGMT_INTERFACE",
-    "MGMT_SUBNET",
-    "WAN_MAC", "TRUNK_MAC", "MGMT_MAC",
-    "VLAN_AWARE_SWITCH", "VLANS",
-    "WAN_ENABLE_IPV4", "WAN_ENABLE_IPV6",
-    "ENABLE_IPV4", "ENABLE_IPV6",
-    "WAN_ICMP_ACCEPT", "WAN_ICMPV6_ACCEPT",
-    "WAN_TCP_ACCEPT", "WAN_UDP_ACCEPT",
-    "WAN_TCP_FORWARD", "WAN_UDP_FORWARD",
-    "WAN_BOGONS_IPV4", "WAN_BOGONS_IPV6",
-    "WAN_QOS_UPLOAD_MBPS", "WAN_QOS_DOWNLOAD_MBPS", "WAN_QOS_SHAVE_PERCENT",
-    "QOS_OVERRIDE_VOICE", "QOS_OVERRIDE_VIDEO", "QOS_OVERRIDE_BESTEFFORT", "QOS_OVERRIDE_BULK",
-    "IPERF_PORT",
-    "DHCP_UPSTREAM_DNS",
-    // Legacy VLAN 1 aliases
-    "SUBNET_LAN_IPV4", "SUBNET_LAN", "SUBNET_LAN_IPV6",
-    "LAN_EGRESS_ALLOWED_IPV4", "LAN_EGRESS_ALLOWED_IPV6",
-    "ICMP_ACCEPT_LAN", "ICMPV6_ACCEPT_LAN",
-    "TCP_ACCEPT_LAN", "UDP_ACCEPT_LAN",
-    "TCP_FORWARD_LAN", "UDP_FORWARD_LAN",
-    "DHCP_POOL_START", "DHCP_POOL_END", "DHCP_ROUTER", "DHCP_DNS",
-    "DHCPV6_POOL_START", "DHCPV6_POOL_END",
-    "IPERF_ENABLED", "DHCP4_ENABLED", "DHCPV6_ENABLED",
-    // Sodola switch
-    "SODOLA_URL", "SODOLA_USER", "SODOLA_PASS",
-    "SODOLA_MGMT_IFACE", "SODOLA_ROUTER_IP",
-    "SODOLA_SWITCH_CONFIG", "SODOLA_STATE_FILE", "SODOLA_INTERVAL", "SODOLA_CONFIG_DIR",
-  ]);
-
-  const VALID_VLAN_SUFFIXES = new Set([
-    "NAME", "SUBNET_IPV4", "SUBNET_IPV6",
-    "EGRESS_ALLOWED_IPV4", "EGRESS_ALLOWED_IPV6",
-    "TCP_ACCEPT", "UDP_ACCEPT", "ICMP_ACCEPT", "ICMPV6_ACCEPT",
-    "TCP_FORWARD", "UDP_FORWARD",
-    "ALLOW_INBOUND_TCP", "ALLOW_INBOUND_UDP",
-    "DHCP_ENABLED", "DHCP_POOL_START", "DHCP_POOL_END", "DHCP_ROUTER", "DHCP_DNS",
-    "DHCPV6_ENABLED", "DHCPV6_POOL_START", "DHCPV6_POOL_END",
-    "QOS_CLASS", "IPERF_ENABLED",
-  ]);
-
-  const KNOWN_PREFIXES = ["SWITCH_", "NIFTY_DASHBOARD_"];
-
-  function isValidKey(key: string): boolean {
-    if (VALID_STATIC_KEYS.has(key)) return true;
-    const m = key.match(/^VLAN_(\d+)_(.+)$/);
-    if (m) {
-      const suffix = m[2];
-      if (VALID_VLAN_SUFFIXES.has(suffix)) return true;
-      // VLAN_N_ALLOW_FROM_M_TCP / VLAN_N_ALLOW_FROM_M_UDP
-      if (/^ALLOW_FROM_\d+_(TCP|UDP)$/.test(suffix)) return true;
-    }
-    return false;
-  }
-
-  function isKnownKey(key: string): boolean {
-    return KNOWN_PREFIXES.some(p => key.startsWith(p));
-  }
-
-  function groupPrefix(key: string): string {
-    const parts = key.split("_");
-    if (parts[0] === "VLAN" && parts.length >= 2) {
-      return `${parts[0]}_${parts[1]}`;
-    }
-    return parts[0];
-  }
-
-  function groupedEnvEntries(): ConfigSection[] {
-    const all: ConfigEntry[] = [];
-    for (const section of configData) {
-      for (const entry of section.entries) {
-        all.push(entry);
-      }
-    }
-    all.sort((a, b) => a.key.localeCompare(b.key));
-
-    const valid: ConfigEntry[] = [];
-    const known: ConfigEntry[] = [];
-    const invalid: ConfigEntry[] = [];
-    for (const entry of all) {
-      if (isValidKey(entry.key)) {
-        valid.push(entry);
-      } else if (isKnownKey(entry.key)) {
-        known.push(entry);
-      } else {
-        invalid.push(entry);
-      }
-    }
-
-    const groups = new Map<string, ConfigEntry[]>();
-    for (const entry of valid) {
-      const prefix = groupPrefix(entry.key);
-      if (!groups.has(prefix)) groups.set(prefix, []);
-      groups.get(prefix)!.push(entry);
-    }
-    const general: ConfigEntry[] = [];
-    const result: ConfigSection[] = [];
-    for (const [name, entries] of groups) {
-      if (entries.length === 1) {
-        general.push(...entries);
-      } else {
-        result.push({ name, entries });
-      }
-    }
-    if (general.length > 0) {
-      result.unshift({ name: "General", entries: general });
-    }
-
-    // Group known (non-nifty-filter) vars by prefix
-    const knownGroups = new Map<string, ConfigEntry[]>();
-    for (const entry of known) {
-      const prefix = groupPrefix(entry.key);
-      if (!knownGroups.has(prefix)) knownGroups.set(prefix, []);
-      knownGroups.get(prefix)!.push(entry);
-    }
-    for (const [name, entries] of knownGroups) {
-      result.push({ name, entries });
-    }
-
-    if (invalid.length > 0) {
-      result.push({ name: "Invalid", entries: invalid });
-    }
-    return result;
-  }
-
   function getVlanOverviews(): VlanOverview[] {
-    const vlansStr = cfgVal("VLANS");
-    if (!vlansStr) return [];
-    return vlansStr.split(",").map((id) => {
-      const v = id.trim();
-      return {
-        id: v,
-        name: cfgVal(`VLAN_${v}_NAME`) || `VLAN ${v}`,
-        subnet_ipv4: cfgVal(`VLAN_${v}_SUBNET_IPV4`),
-        subnet_ipv6: cfgVal(`VLAN_${v}_SUBNET_IPV6`),
-        egress_ipv4: cfgVal(`VLAN_${v}_EGRESS_ALLOWED_IPV4`),
-        egress_ipv6: cfgVal(`VLAN_${v}_EGRESS_ALLOWED_IPV6`),
-        tcp_accept: cfgVal(`VLAN_${v}_TCP_ACCEPT`),
-        udp_accept: cfgVal(`VLAN_${v}_UDP_ACCEPT`),
-        dhcp: cfgVal(`VLAN_${v}_DHCP_ENABLED`) === "true",
-        dhcpv6: cfgVal(`VLAN_${v}_DHCPV6_ENABLED`) === "true",
-        iperf: cfgVal(`VLAN_${v}_IPERF_ENABLED`) === "true",
-      };
-    });
+    if (!configJson?.vlan) return [];
+    return Object.entries(configJson.vlan as Record<string, any>)
+      .sort(([, a], [, b]) => (a.id ?? 0) - (b.id ?? 0))
+      .map(([name, v]: [string, any]) => ({
+        id: String(v.id ?? ""),
+        name,
+        subnet_ipv4: v.ipv4?.subnet ?? "",
+        subnet_ipv6: v.ipv6?.subnet ?? "",
+        egress_ipv4: (v.ipv4?.egress ?? []).join(", "),
+        egress_ipv6: (v.ipv6?.egress ?? []).join(", "),
+        tcp_accept: (v.firewall?.tcp_accept ?? []).join(", "),
+        udp_accept: (v.firewall?.udp_accept ?? []).join(", "),
+        dhcp: v.dhcp != null,
+        dhcpv6: v.dhcpv6 != null,
+        iperf: v.iperf_enabled === true,
+      }));
   }
 
   interface NftRule {
@@ -465,7 +317,7 @@
   }
 
   const tabs: { id: Tab; label: string; condition: () => boolean }[] = [
-    { id: "config", label: "Config", condition: () => configData.length > 0 },
+    { id: "config", label: "Config", condition: () => configJson != null },
     { id: "state", label: "State", condition: () => (data?.interfaces.length ?? 0) > 0 || (data?.nft_chains.length ?? 0) > 0 || dnsmasqData != null || qosData != null || data?.switch != null },
     { id: "updates", label: "Updates", condition: () => updatesData != null },
     { id: "about", label: "About", condition: () => aboutData != null },
@@ -627,7 +479,8 @@
       const res = await fetch("/api/status/config", { credentials: "include" });
       if (res.ok) {
         const body = await res.json();
-        configData = body.data?.sections ?? [];
+        configJson = body.data?.config ?? null;
+        bootConfigJson = body.data?.boot_config ?? null;
         rebootNeeded = body.data?.reboot_needed ?? false;
       }
     } catch {}
@@ -735,6 +588,53 @@
   });
 </script>
 
+{#snippet specNode(key: string, val: any, bootVal: any, depth: number)}
+  {#if val != null && typeof val === "object" && !Array.isArray(val)}
+    <!-- Object block: section header + children -->
+    <div class="{'ml-' + (depth > 0 ? '4' : '0')} {depth > 0 ? 'border-l border-border/30 pl-3' : ''}">
+      <div class="py-1.5 font-sans font-semibold text-sm {depth === 0 ? 'text-foreground border-b border-border/30 mb-1' : 'text-muted-foreground'}">{key}</div>
+      {#each Object.entries(val) as [k, v]}
+        {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
+      {/each}
+    </div>
+  {:else if Array.isArray(val)}
+    <!-- Array value -->
+    {@const bootArr = Array.isArray(bootVal) ? bootVal : undefined}
+    {@const changed = bootArr !== undefined && JSON.stringify(val) !== JSON.stringify(bootArr)}
+    <div class="flex py-0.5 {'ml-' + (depth > 0 ? '4' : '0')}">
+      <span class="text-purple-400 w-48 shrink-0 truncate" title={key}>{key}</span>
+      <span class="break-all">
+        {#if changed}
+          <span class="line-through text-muted-foreground mr-2">[{bootArr?.join(", ")}]</span>
+          <span class="text-orange-400">[{val.join(", ")}]</span>
+        {:else}
+          <span class="text-green-400">{val.length > 0 ? val.join(", ") : "[]"}</span>
+        {/if}
+      </span>
+    </div>
+  {:else}
+    <!-- Primitive value -->
+    {@const changed = bootVal !== undefined && bootVal !== val}
+    <div class="flex py-0.5 {'ml-' + (depth > 0 ? '4' : '0')}">
+      <span class="text-purple-400 w-48 shrink-0 truncate" title={key}>{key}</span>
+      <span class="break-all">
+        {#if changed}
+          <span class="line-through text-muted-foreground mr-2">{String(bootVal)}</span>
+          <span class="text-orange-400">{String(val)}</span>
+        {:else if String(val) === "******"}
+          <span class="text-yellow-400">{val}</span>
+        {:else if typeof val === "boolean"}
+          <span class="{val ? 'text-green-400' : 'text-zinc-500'}">{String(val)}</span>
+        {:else if typeof val === "number"}
+          <span class="text-cyan-400">{val}</span>
+        {:else}
+          <span class="text-green-400">{String(val)}</span>
+        {/if}
+      </span>
+    </div>
+  {/if}
+{/snippet}
+
 <svelte:head>
   <title>Status</title>
 </svelte:head>
@@ -743,8 +643,8 @@
   <!-- Title bar with uptime -->
   <div class="flex items-baseline justify-between">
     <h1 class="text-3xl font-bold tracking-tight">nifty-filter
-      {#if cfgVal("HOSTNAME")}
-        <span class="text-lg font-normal text-muted-foreground ml-2">{cfgVal("HOSTNAME")}</span>
+      {#if configJson?.hostname}
+        <span class="text-lg font-normal text-muted-foreground ml-2">{configJson.hostname}</span>
       {/if}
     </h1>
     <div class="flex items-baseline gap-3">
@@ -798,22 +698,22 @@
             onclick={() => { configSubTab = "overview"; updateHash(); }}
           >Overview</button>
           <button
-            class="px-3 py-1.5 text-sm font-medium transition-colors {configSubTab === 'environment'
+            class="px-3 py-1.5 text-sm font-medium transition-colors {configSubTab === 'spec'
               ? 'border-b-2 border-primary text-foreground'
               : 'text-muted-foreground hover:text-foreground'}"
-            onclick={() => { configSubTab = "environment"; updateHash(); }}
-          >Environment</button>
+            onclick={() => { configSubTab = "spec"; updateHash(); }}
+          >Spec</button>
         </div>
 
         {#if configSubTab === "overview"}
-          {@const hostname = cfgVal("HOSTNAME") || "nifty-filter"}
-          {@const wanIface = cfgVal("WAN_INTERFACE")}
-          {@const trunkIface = cfgVal("TRUNK_INTERFACE")}
-          {@const mgmtIface = cfgVal("MGMT_INTERFACE")}
-          {@const mgmtSubnet = cfgVal("MGMT_SUBNET")}
-          {@const ipv4 = cfgVal("WAN_ENABLE_IPV4") === "true"}
-          {@const ipv6 = cfgVal("WAN_ENABLE_IPV6") === "true"}
-          {@const vlanSwitch = cfgVal("VLAN_AWARE_SWITCH") === "true"}
+          {@const hostname = configJson?.hostname ?? "nifty-filter"}
+          {@const wanIface = configJson?.interfaces?.wan ?? ""}
+          {@const trunkIface = configJson?.interfaces?.trunk ?? ""}
+          {@const mgmtIface = configJson?.interfaces?.mgmt ?? ""}
+          {@const mgmtSubnet = configJson?.interfaces?.mgmt_subnet ?? ""}
+          {@const ipv4 = configJson?.wan?.enable_ipv4 === true}
+          {@const ipv6 = configJson?.wan?.enable_ipv6 === true}
+          {@const vlanSwitch = configJson?.vlan_aware_switch === true}
           {@const vlans = getVlanOverviews()}
 
           <div class="space-y-4">
@@ -908,42 +808,19 @@
             {/if}
           </div>
         {:else}
-          <!-- Environment sub-tab -->
-          {@const envGroups = groupedEnvEntries()}
-          <p class="text-sm text-muted-foreground mb-4">This page shows the comprehensive set of environment variables that nifty-filter accepts as its configuration. These variables represent your desired state, not necessarily the actual router state. Edit <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.env</code> and your changes will appear here immediately, but will not be applied until you reboot (or restart services). Any changes made since boot will be shown in <span class="text-orange-400">orange</span> and a <span class="font-semibold text-yellow-400">Reboot needed</span> notice will appear at the top.</p>
+          <!-- Spec sub-tab: hierarchical HCL config view -->
+          <p class="text-sm text-muted-foreground mb-4">This page shows the HCL configuration spec for nifty-filter. Edit <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.hcl</code> and your changes will appear here immediately, but will not be applied until you reboot. Changes since boot are shown in <span class="text-orange-400">orange</span>.</p>
           <Card.Root>
             <Card.Content class="pt-2">
-              <table class="w-full text-sm" style="table-layout:fixed">
-                <colgroup>
-                  <col style="width: 18rem;" />
-                  <col />
-                </colgroup>
-                <tbody class="font-mono">
-                  {#each envGroups as section, sIdx}
-                    {@const isInvalid = section.name === "Invalid"}
-                    <tr class="bg-muted/30">
-                      <td colspan="2" class="py-2 px-2 font-sans font-semibold text-sm {sIdx > 0 ? 'pt-4' : ''} {isInvalid ? 'text-red-400' : ''}">{section.name}</td>
-                    </tr>
-                    {#each section.entries as entry}
-                      <tr class="{entry.is_default ? 'opacity-30' : (entry.is_commented_out && !entry.boot_value) || (!entry.value && !entry.boot_value && !entry.is_commented_out) ? 'opacity-30' : ''}" title={entry.is_default ? 'Default (not set in config file)' : entry.comment ?? ""}>
-                        <td class="py-0.5 pr-2 {isInvalid ? 'text-red-400' : 'text-purple-400'} whitespace-nowrap overflow-hidden text-ellipsis">{entry.key}</td>
-                        <td class="py-0.5 break-all">
-                          {#if entry.is_default}
-                            <span class="text-muted-foreground italic">{entry.value || '""'}</span>
-                          {:else if entry.boot_value != null}
-                            <span class="line-through text-muted-foreground mr-2">{entry.boot_value || '""'}</span>
-                            <span class="text-orange-400">{entry.is_commented_out ? "#" : ""}{entry.value || '""'}</span>
-                          {:else if !entry.value}
-                            <span class="text-muted-foreground">""</span>
-                          {:else}
-                            <span class="{entry.value === '******' ? 'text-yellow-400' : 'text-green-400'}">{entry.value}</span>
-                          {/if}
-                        </td>
-                      </tr>
-                    {/each}
+              {#if configJson}
+                <div class="font-mono text-sm space-y-0">
+                  {#each Object.entries(configJson) as [key, val]}
+                    {@render specNode(key, val, bootConfigJson?.[key], 0)}
                   {/each}
-                </tbody>
-              </table>
+                </div>
+              {:else}
+                <p class="text-muted-foreground text-sm">No configuration loaded.</p>
+              {/if}
             </Card.Content>
           </Card.Root>
         {/if}

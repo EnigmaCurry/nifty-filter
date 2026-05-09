@@ -37,7 +37,7 @@ pub struct AppState {
     pub auth_config: AuthConfig,
     pub config_changed_tx: tokio::sync::broadcast::Sender<()>,
     pub config_boot_sha: String,
-    pub config_boot_values: std::collections::HashMap<String, (String, bool)>,
+    pub config_boot_values: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug)]
@@ -137,7 +137,7 @@ pub async fn run(
                 tokio::fs::read_to_string(&path).await.unwrap_or_default()
             }
         };
-        crate::routes::status::parse_config_values(&contents)
+        crate::routes::status::parse_hcl_to_json(&contents).ok()
     };
     crate::config_watcher::spawn_config_watcher(config_changed_tx.clone());
 
