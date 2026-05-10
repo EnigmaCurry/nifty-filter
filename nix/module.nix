@@ -217,7 +217,7 @@ in
       path = [ pkgs.iproute2 pkgs.nftables ];
       environment.ROOT_DIR = "/var/lib/nifty-dashboard";
       environment.SODOLA_STATE_FILE = "/run/nifty-filter/sodola-switch.json";
-      environment.NIFTY_CONFIG_FILE = envFile;
+      environment.NIFTY_CONFIG_FILE = "${configDir}/nifty-filter.hcl";
       environment.NIFTY_CONFIG_BOOT_SHA_FILE = "/run/nifty-filter/config-boot-sha";
       serviceConfig = {
         Type = "simple";
