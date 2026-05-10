@@ -8,6 +8,7 @@ use std::process::exit;
 #[cfg(feature = "nixos")]
 mod config;
 mod format;
+pub mod generate;
 pub mod hcl_config;
 #[cfg(feature = "nixos")]
 mod install;
@@ -88,6 +89,56 @@ enum Commands {
         /// Enable verbose output
         #[arg(short, long)]
         verbose: bool,
+    },
+
+    /// Print hostname from config (or "nifty-filter" if not set)
+    Hostname {
+        /// Path to the HCL config file
+        #[arg(long, short)]
+        config: String,
+    },
+
+    /// Generate system configuration files from HCL config
+    Generate {
+        #[command(subcommand)]
+        what: GenerateCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum GenerateCommands {
+    /// Generate systemd .link files for interface renaming by MAC address
+    Linkfiles {
+        /// Path to the HCL config file
+        #[arg(long, short)]
+        config: String,
+        /// Output directory for .link files
+        #[arg(long, short)]
+        output_dir: String,
+    },
+    /// Generate systemd-networkd .network and .netdev files
+    Networkd {
+        /// Path to the HCL config file
+        #[arg(long, short)]
+        config: String,
+        /// Output directory for network files
+        #[arg(long, short)]
+        output_dir: String,
+    },
+    /// Generate dnsmasq.conf
+    Dnsmasq {
+        /// Path to the HCL config file
+        #[arg(long, short)]
+        config: String,
+        /// Output file path
+        #[arg(long, short = 'O')]
+        output: String,
+    },
+    /// Generate minimal DNS-only dnsmasq.conf (no HCL config needed)
+    DnsmasqMinimal {
+        /// Output file path
+        #[arg(long, short = 'O')]
+        output: String,
     },
 }
 
@@ -658,6 +709,42 @@ fn app() {
                 }
             }
         }
+        Commands::Hostname { config } => {
+            let hcl_config = load_hcl_config(&config);
+            println!(
+                "{}",
+                hcl_config.hostname.as_deref().unwrap_or("nifty-filter")
+            );
+        }
+        Commands::Generate { what } => match what {
+            GenerateCommands::Linkfiles { config, output_dir } => {
+                let hcl_config = load_hcl_config(&config);
+                if let Err(e) = generate::generate_linkfiles(&hcl_config, &output_dir) {
+                    eprintln!("Error: {}", e);
+                    exit(1);
+                }
+            }
+            GenerateCommands::Networkd { config, output_dir } => {
+                let hcl_config = load_hcl_config(&config);
+                if let Err(e) = generate::generate_networkd(&hcl_config, &output_dir) {
+                    eprintln!("Error: {}", e);
+                    exit(1);
+                }
+            }
+            GenerateCommands::Dnsmasq { config, output } => {
+                let hcl_config = load_hcl_config(&config);
+                if let Err(e) = generate::generate_dnsmasq(&hcl_config, &output) {
+                    eprintln!("Error: {}", e);
+                    exit(1);
+                }
+            }
+            GenerateCommands::DnsmasqMinimal { output } => {
+                if let Err(e) = generate::generate_dnsmasq_minimal(&output) {
+                    eprintln!("Error: {}", e);
+                    exit(1);
+                }
+            }
+        },
     }
 }
 

@@ -4,7 +4,13 @@ use std::collections::HashMap;
 /// Top-level HCL configuration.
 #[derive(Debug, Deserialize)]
 pub struct HclConfig {
+    #[serde(default)]
+    pub hostname: Option<String>,
+    #[serde(default)]
+    pub dashboard_port: Option<u16>,
     pub interfaces: InterfacesConfig,
+    #[serde(default)]
+    pub links: Option<LinksConfig>,
     pub wan: WanConfig,
     #[serde(default)]
     pub vlan_aware_switch: bool,
@@ -18,6 +24,17 @@ pub struct HclConfig {
     pub switch: Option<SwitchConfig>,
     #[serde(default)]
     pub vlan: HashMap<String, VlanHclConfig>,
+}
+
+/// MAC address to interface name mapping for systemd .link file generation.
+#[derive(Debug, Deserialize)]
+pub struct LinksConfig {
+    pub wan: String,
+    pub trunk: String,
+    #[serde(default)]
+    pub mgmt: Option<String>,
+    #[serde(default)]
+    pub extra: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
