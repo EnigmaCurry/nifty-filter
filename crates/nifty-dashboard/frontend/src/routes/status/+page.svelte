@@ -317,7 +317,7 @@
   }
 
   const tabs: { id: Tab; label: string; condition: () => boolean }[] = [
-    { id: "config", label: "Config", condition: () => configJson != null },
+    { id: "config", label: "Config", condition: () => true },
     { id: "state", label: "State", condition: () => (data?.interfaces.length ?? 0) > 0 || (data?.nft_chains.length ?? 0) > 0 || dnsmasqData != null || qosData != null || data?.switch != null },
     { id: "updates", label: "Updates", condition: () => updatesData != null },
     { id: "about", label: "About", condition: () => aboutData != null },
@@ -690,6 +690,13 @@
     <!-- Tab content -->
     <div class="pt-2">
       {#if activeTab === "config"}
+        {#if configJson == null}
+          <Card.Root>
+            <Card.Content class="pt-4">
+              <p class="text-muted-foreground text-sm">No configuration file found. Create <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.hcl</code> to get started.</p>
+            </Card.Content>
+          </Card.Root>
+        {:else}
         <div class="flex gap-1 border-b border-border/50 mb-4">
           <button
             class="px-3 py-1.5 text-sm font-medium transition-colors {configSubTab === 'overview'
@@ -823,6 +830,7 @@
               {/if}
             </Card.Content>
           </Card.Root>
+        {/if}
         {/if}
 
       {:else if activeTab === "state"}
