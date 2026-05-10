@@ -212,6 +212,37 @@ pub fn parse_hcl_to_json(contents: &str) -> Result<Value, String> {
     hcl::from_str(contents).map_err(|e| format!("HCL parse error: {e}"))
 }
 
+/// Check that configured interfaces exist on the system, or that a links block
+/// is present to create them. Returns Some(error_message) if invalid.
+fn validate_interfaces(config: &Value) -> Option<String> {
+    let has_links = config.get("links").is_some_and(|v| !v.is_null());
+    if has_links {
+        return None;
+    }
+
+    let interfaces = config.get("interfaces")?;
+    let mut missing = Vec::new();
+
+    for key in &["wan", "trunk", "mgmt"] {
+        if let Some(Value::String(name)) = interfaces.get(key) {
+            let sys_path = format!("/sys/class/net/{}", name);
+            if !std::path::Path::new(&sys_path).exists() {
+                missing.push(name.as_str());
+            }
+        }
+    }
+
+    if missing.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "Interface(s) {} not found and no links block to create them. \
+             Add a links {{ wan = \"MAC\" trunk = \"MAC\" }} block to your config.",
+            missing.join(", ")
+        ))
+    }
+}
+
 #[api_doc(
     id = "get_config",
     tag = "status",
@@ -243,7 +274,11 @@ async fn get_config(state: State<AppState>) -> ApiJson<ConfigResponse> {
         !state.config_boot_sha.is_empty() && current_sha != state.config_boot_sha;
 
     let (config, config_error) = match parse_hcl_to_json(&contents) {
-        Ok(v) => (v, None),
+        Ok(v) => {
+            // Validate that configured interfaces exist or a links block is present
+            let validation_error = validate_interfaces(&v);
+            (v, validation_error)
+        }
         Err(e) => (Value::Null, Some(e)),
     };
     let mut config = config;
