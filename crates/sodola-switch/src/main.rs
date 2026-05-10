@@ -365,13 +365,23 @@ fn dump_state(client: &SodolaClient, state_file: &std::path::Path) {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let dump = match (client.info(), client.port_stats(), client.vlans(), client.pvid()) {
-        (Ok(info), Ok(stats), Ok(vlans), Ok(pvid)) => SwitchDump { timestamp, info, stats, vlans, pvid },
-        _ => {
-            eprintln!("supervise: warning: failed to dump switch state");
-            return;
-        }
+    let info = match client.info() {
+        Ok(v) => v,
+        Err(e) => { eprintln!("supervise: warning: failed to dump switch state: info: {}", e); return; }
     };
+    let stats = match client.port_stats() {
+        Ok(v) => v,
+        Err(e) => { eprintln!("supervise: warning: failed to dump switch state: stats: {}", e); return; }
+    };
+    let vlans = match client.vlans() {
+        Ok(v) => v,
+        Err(e) => { eprintln!("supervise: warning: failed to dump switch state: vlans: {}", e); return; }
+    };
+    let pvid = match client.pvid() {
+        Ok(v) => v,
+        Err(e) => { eprintln!("supervise: warning: failed to dump switch state: pvid: {}", e); return; }
+    };
+    let dump = SwitchDump { timestamp, info, stats, vlans, pvid };
     let json = serde_json::to_string_pretty(&dump).unwrap();
     let tmp = state_file.with_extension("json.tmp");
     if let Err(e) = fs::write(&tmp, &json).and_then(|_| fs::rename(&tmp, state_file)) {

@@ -321,7 +321,7 @@ impl SwitchInfo {
             Ok(content[..end].trim().to_string())
         };
         Ok(SwitchInfo {
-            device_type: field("Device Type")?,
+            device_type: field("Device Model")?,
             mac_address: field("MAC Address")?,
             ip_address: field("IP Address")?,
             netmask: field("Netmask")?,
@@ -335,7 +335,7 @@ impl SwitchInfo {
 
 impl fmt::Display for SwitchInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Device Type:      {}", self.device_type)?;
+        writeln!(f, "Device Model:     {}", self.device_type)?;
         writeln!(f, "MAC Address:      {}", self.mac_address)?;
         writeln!(f, "IP Address:       {}", self.ip_address)?;
         writeln!(f, "Netmask:          {}", self.netmask)?;
@@ -564,21 +564,21 @@ mod tests {
     fn test_parse_info() {
         let html = r#"<html><head><title>System Information</title></head><body><center>
 <fieldset><legend>System Info</legend><br>
-<table border="1">
-  <tr><th width="150">Device Type</th><td align="left" style="width:250px;">SL-SWTGW218AS</td></tr>
-  <tr><th>MAC Address</th><td align="left" style="width:250px;">1C:2A:A3:1A:47:42</td></tr>
-  <tr><th>IP Address</th><td align="left" style="width:250px;">192.168.2.1</td></tr>
-  <tr><th>Netmask</th><td align="left" style="width:250px;">255.255.255.0</td></tr>
-  <tr><th>Gateway</th><td align="left" style="width:250px;">192.168.2.254</td></tr>
-  <tr><th>Firmware Version</th><td align="left" style="width:250px;">V0.6</td></tr>
-  <tr><th>Firmware Date</th><td align="left" style="width:250px;">Jul 18 2023</td></tr>
-  <tr><th>Hardware Version</th><td align="left" style="width:250px;">V1.1</td></tr>
+<table>
+  <tr><th style="width:150px;">Device Model</th><td style="width:250px;">SL-SWTGW218AS</td></tr>
+  <tr><th>MAC Address</th><td>1C:2A:A3:1A:47:42</td></tr>
+  <tr><th>IP Address</th><td>192.168.2.1</td></tr>
+  <tr><th>Netmask</th><td>255.255.255.0</td></tr>
+  <tr><th>Gateway</th><td>192.168.2.254</td></tr>
+  <tr><th>Firmware Version</th><td>V1.9</td></tr>
+  <tr><th>Firmware Date</th><td>Jan 03 2024</td></tr>
+  <tr><th>Hardware Version</th><td>V1.1</td></tr>
 </table></fieldset></center></body></html>"#;
         let info = SwitchInfo::parse(html).unwrap();
         assert_eq!(info.device_type, "SL-SWTGW218AS");
         assert_eq!(info.mac_address, "1C:2A:A3:1A:47:42");
         assert_eq!(info.ip_address, "192.168.2.1");
-        assert_eq!(info.firmware_version, "V0.6");
+        assert_eq!(info.firmware_version, "V1.9");
         assert_eq!(info.hardware_version, "V1.1");
     }
 
