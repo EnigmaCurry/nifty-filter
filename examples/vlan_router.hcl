@@ -16,11 +16,11 @@ wan {
   tcp_accept  = []
   udp_accept  = []
 
-  tcp_forward = [
-    "443:10.99.40.50:443",
-    "22:10.99.40.10:22",
-  ]
-  udp_forward = []
+  #tcp_forward = [
+  #  "443:10.99.40.50:443",
+  #  "22:10.99.40.10:22",
+  #]
+  #udp_forward = []
 }
 
 dns {
