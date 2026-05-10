@@ -16,8 +16,8 @@ wan {
   enable_ipv4 = true
   enable_ipv6 = true
 
-  icmp_accept = []
-  tcp_accept  = []
+  icmp_accept = []  # e.g. ["echo-request"] to allow ping
+  tcp_accept  = []  # e.g. [22] to allow SSH
   udp_accept  = []
 
   #tcp_forward = [
