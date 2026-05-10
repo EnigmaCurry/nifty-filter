@@ -5,9 +5,6 @@
 # To reconfigure: edit the HCL file and reboot
 { config, pkgs, lib, ... }:
 
-let
-  hclFile = "/var/nifty-filter/nifty-filter.hcl";
-in
 {
   system.stateVersion = "25.05";
   networking.hostName = "nifty-filter";
@@ -45,31 +42,9 @@ in
   services.nifty-filter.packages.nifty-dashboard.enable = true;
   services.nifty-filter.packages.iperf.enable = true;
 
-  # Set hostname from HCL config at boot
-  systemd.services.nifty-hostname = {
-    description = "Set hostname from nifty-filter HCL config";
-    wantedBy = [ "sysinit.target" ];
-    before = [ "network-pre.target" ];
-    unitConfig.DefaultDependencies = false;
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-    };
-    path = [ pkgs.hostname ];
-    script = ''
-      if [ -f ${hclFile} ]; then
-        NAME=$(nifty-filter hostname --config ${hclFile} 2>/dev/null)
-        if [ -n "$NAME" ]; then
-          hostname "$NAME"
-        fi
-      fi
-    '';
-  };
-
   # --- Networking ---
-  # Interfaces are configured dynamically at boot from /var/nifty-filter/nifty-filter.env
+  # Interfaces are configured dynamically at boot from /var/nifty-filter/nifty-filter.hcl
   # No hardcoded interface names.
-  # Interface rename rules (.link files) are in /var/nifty-filter/network/
   networking.useDHCP = false;
 
   # Reverse-path filtering (BCP 38 / RFC 3704)
@@ -114,80 +89,6 @@ in
     };
   };
 
-  # Generate interface rename rules (.link files) from HCL config at boot
-  systemd.services.nifty-link = {
-    description = "Generate interface rename rules from HCL config";
-    wantedBy = [ "sysinit.target" ];
-    before = [ "systemd-udevd.service" "systemd-networkd.service" ];
-    unitConfig.DefaultDependencies = false;
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-    };
-    script = ''
-      if [ ! -f ${hclFile} ]; then
-        echo "No HCL config found, skipping link generation"
-        exit 0
-      fi
-      mkdir -p /run/systemd/network
-      nifty-filter generate linkfiles --config ${hclFile} --output-dir /run/systemd/network
-    '';
-  };
-
-  # Configure WAN, trunk/VLANs, and optional mgmt from HCL config at boot
-  # nifty-network is the sole owner of runtime .network and .netdev files.
-  systemd.services.nifty-network = {
-    description = "Configure network interfaces from HCL config";
-    wantedBy = [ "multi-user.target" ];
-    before = [ "network.target" "nifty-filter.service" ];
-    after = [ "network-pre.target" "nifty-filter-init.service" ];
-    wants = [ "network-pre.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-    };
-    path = [ pkgs.iproute2 pkgs.systemd pkgs.procps pkgs.gnugrep ];
-    script = ''
-      if [ ! -f ${hclFile} ]; then
-        echo "No HCL config found, skipping network config"
-        exit 0
-      fi
-
-      # Read interface names from HCL
-      WAN_INTERFACE=$(grep -oP 'wan\s*=\s*"\K[^"]+' ${hclFile} | head -1)
-      TRUNK_INTERFACE=$(grep -oP 'trunk\s*=\s*"\K[^"]+' ${hclFile} | head -1)
-      MGMT_INTERFACE=$(grep -oP 'mgmt\s*=\s*"\K[^"]+' ${hclFile} | head -1)
-      ENABLE_IPV6=$(grep -oP 'enable_ipv6\s*=\s*\K\w+' ${hclFile} | head -1)
-
-      # Bring up interfaces
-      [ -n "$WAN_INTERFACE" ] && ip link set "$WAN_INTERFACE" up
-      [ -n "$TRUNK_INTERFACE" ] && ip link set "$TRUNK_INTERFACE" up
-      [ -n "$MGMT_INTERFACE" ] && ip link set "$MGMT_INTERFACE" up
-
-      # Generate networkd config files
-      mkdir -p /run/systemd/network
-      nifty-filter generate networkd --config ${hclFile} --output-dir /run/systemd/network
-
-      # Ensure WAN accepts RAs despite forwarding (must override after networkd)
-      if [ "$ENABLE_IPV6" = "true" ] && [ -n "$WAN_INTERFACE" ]; then
-        mkdir -p /etc/systemd/system/systemd-networkd.service.d
-        cat > /etc/systemd/system/systemd-networkd.service.d/accept-ra.conf <<RAEOF
-      [Service]
-      ExecStartPost=/bin/sh -c 'sleep 1 && /run/current-system/sw/bin/sysctl -w net.ipv6.conf.$WAN_INTERFACE.accept_ra=2 net.ipv6.conf.$WAN_INTERFACE.forwarding=0'
-      RAEOF
-        systemctl daemon-reload
-      fi
-
-      # Disable IPv6 on management interface
-      if [ -n "$MGMT_INTERFACE" ]; then
-        sysctl -w net.ipv6.conf.$MGMT_INTERFACE.disable_ipv6=1
-      fi
-
-      # Restart networkd to pick up the new configs
-      networkctl reload || systemctl restart systemd-networkd
-    '';
-  };
-
   # Use systemd-networkd for runtime network config
   networking.useNetworkd = true;
 
@@ -197,31 +98,8 @@ in
     nameserver 127.0.0.1
   '';
 
-  # --- dnsmasq: DHCP + DNS for LAN ---
-  # Config is generated at boot from /var/nifty-filter/nifty-filter.hcl
-  # Forwards DNS to upstream (Cloudflare by default).
+  # Disable systemd-resolved (dnsmasq handles DNS)
   services.resolved.enable = false;
-
-  systemd.services.nifty-dnsmasq = {
-    description = "dnsmasq DHCP and DNS server";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "nifty-network.service" ];
-    serviceConfig = {
-      Type = "forking";
-      PIDFile = "/run/dnsmasq.pid";
-      ExecStart = "${pkgs.dnsmasq}/bin/dnsmasq -C /run/dnsmasq.conf";
-      ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
-      Restart = "on-failure";
-    };
-    preStart = ''
-      mkdir -p /var/lib/dnsmasq
-      if [ -f ${hclFile} ]; then
-        nifty-filter generate dnsmasq --config ${hclFile} --output /run/dnsmasq.conf
-      else
-        nifty-filter generate dnsmasq-minimal --output /run/dnsmasq.conf
-      fi
-    '';
-  };
 
   # --- SSH ---
   services.openssh = {
