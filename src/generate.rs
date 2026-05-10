@@ -3,14 +3,46 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-/// Generate systemd .link files for interface renaming by MAC address.
-pub fn generate_linkfiles(config: &HclConfig, output_dir: &str) -> Result<(), String> {
-    let links = config
-        .links
-        .as_ref()
-        .ok_or("No links block in config; cannot generate .link files")?;
+/// Check whether a network interface exists on this system.
+fn interface_exists(name: &str) -> bool {
+    Path::new(&format!("/sys/class/net/{}", name)).exists()
+}
 
+/// Generate systemd .link files for interface renaming by MAC address.
+///
+/// If no `links` block is present, checks that all configured interfaces
+/// already exist. Returns an error if an interface is missing and there's
+/// no link rule to create it.
+pub fn generate_linkfiles(config: &HclConfig, output_dir: &str) -> Result<(), String> {
     let dir = Path::new(output_dir);
+
+    let links = match &config.links {
+        Some(l) => l,
+        None => {
+            // No links block — verify all required interfaces already exist
+            let mut missing = Vec::new();
+            if !interface_exists(&config.interfaces.wan) {
+                missing.push(config.interfaces.wan.as_str());
+            }
+            if !interface_exists(&config.interfaces.trunk) {
+                missing.push(config.interfaces.trunk.as_str());
+            }
+            if let Some(mgmt) = &config.interfaces.mgmt {
+                if !interface_exists(mgmt) {
+                    missing.push(mgmt.as_str());
+                }
+            }
+            if missing.is_empty() {
+                return Ok(()); // all interfaces exist, nothing to generate
+            }
+            return Err(format!(
+                "Interface(s) {} not found and no links block to create them. \
+                 Add a links {{ wan = \"MAC\" trunk = \"MAC\" }} block to your config.",
+                missing.join(", ")
+            ));
+        }
+    };
+
     fs::create_dir_all(dir).map_err(|e| format!("Cannot create {}: {}", output_dir, e))?;
 
     let wan_name = &config.interfaces.wan;
@@ -397,7 +429,8 @@ wan {}
     }
 
     #[test]
-    fn test_generate_linkfiles_no_links_block() {
+    fn test_generate_linkfiles_no_links_block_missing_interfaces() {
+        // Interfaces "trunk" and "wan" won't exist on a dev machine
         let config = parse_test_config(r#"
 interfaces {
   trunk = "trunk"
@@ -408,6 +441,22 @@ wan {}
         let dir = TempDir::new().unwrap();
         let result = generate_linkfiles(&config, dir.path().to_str().unwrap());
         assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found and no links block"));
+    }
+
+    #[test]
+    fn test_generate_linkfiles_no_links_block_existing_interface() {
+        // "lo" always exists on Linux
+        let config = parse_test_config(r#"
+interfaces {
+  trunk = "lo"
+  wan   = "lo"
+}
+wan {}
+"#);
+        let dir = TempDir::new().unwrap();
+        let result = generate_linkfiles(&config, dir.path().to_str().unwrap());
+        assert!(result.is_ok());
     }
 
     #[test]
