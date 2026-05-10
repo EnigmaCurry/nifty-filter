@@ -446,7 +446,10 @@ wan {}
 
     #[test]
     fn test_generate_linkfiles_no_links_block_existing_interface() {
-        // "lo" always exists on Linux
+        // Skip in sandboxed builds (no /sys/class/net)
+        if !Path::new("/sys/class/net/lo").exists() {
+            return;
+        }
         let config = parse_test_config(r#"
 interfaces {
   trunk = "lo"
