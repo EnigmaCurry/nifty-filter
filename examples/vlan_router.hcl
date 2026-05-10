@@ -3,6 +3,8 @@
 #
 # Load via: nifty-filter nftables --config vlan_router.hcl
 
+# Interface names as seen by the OS. These assume systemd-networkd (or
+# similar) has already renamed the physical devices to friendly names.
 interfaces {
   trunk = "trunk"
   wan   = "wan"
