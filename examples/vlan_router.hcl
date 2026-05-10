@@ -18,13 +18,16 @@ wan {
 
   icmp_accept = []  # e.g. ["echo-request"] to allow ping
   tcp_accept  = []  # e.g. [22] to allow SSH
-  udp_accept  = []
+  udp_accept  = []  # e.g. [51820] to allow WireGuard
 
+  # Port forwarding (DNAT) to internal hosts: "wan_port:dest_ip:dest_port"
   #tcp_forward = [
   #  "443:10.99.40.50:443",
   #  "22:10.99.40.10:22",
   #]
-  #udp_forward = []
+  #udp_forward = [
+  #  "51820:10.99.40.50:51820",
+  #]
 }
 
 # DNS resolver forwarded to upstream servers (used by dnsmasq).
