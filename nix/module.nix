@@ -1,12 +1,12 @@
 # NixOS module for nifty-filter (read-only system model)
 #
-# The system root is read-only. Configuration lives as an env file
+# The system root is read-only. Configuration lives as an HCL file
 # on the writable /var partition:
 #
-#   /var/nifty-filter/nifty-filter.env
+#   /var/nifty-filter/nifty-filter.hcl
 #
-# A systemd service reads this file at boot and applies the nftables ruleset.
-# To reconfigure the router: edit the env file and reboot.
+# Systemd services read this file at boot and apply network + firewall config.
+# To reconfigure the router: edit the HCL file and reboot.
 self:
 
 { config, lib, pkgs, ... }:
@@ -18,7 +18,6 @@ let
   nifty-filter = self.packages.${pkgs.stdenv.hostPlatform.system}.nifty-filter;
 
   configDir = "/var/nifty-filter";
-  envFile = "${configDir}/nifty-filter.env";
   hclFile = "${configDir}/nifty-filter.hcl";
 
   sodola-switch = self.packages.${pkgs.stdenv.hostPlatform.system}.sodola-switch;
@@ -38,12 +37,6 @@ in
 {
   options.services.nifty-filter = {
     enable = mkEnableOption "nifty-filter nftables firewall";
-
-    configPath = mkOption {
-      type = types.str;
-      default = envFile;
-      description = "Path to the nifty-filter.env configuration file on the writable partition.";
-    };
 
     packages = {
       sodola-switch = {
@@ -85,15 +78,15 @@ in
       description = "Initialize nifty-filter default configuration";
       wantedBy = [ "multi-user.target" ];
       before = [ "nifty-filter.service" ];
-      unitConfig.ConditionPathExists = "!${cfg.configPath}";
+      unitConfig.ConditionPathExists = "!${hclFile}";
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
       };
       script = ''
         mkdir -p ${configDir}
-        cp ${./default-nifty-filter.env} ${cfg.configPath}
-        chmod 0600 ${cfg.configPath}
+        cp ${./default-nifty-filter.hcl} ${hclFile}
+        chmod 0600 ${hclFile}
         mkdir -p ${configDir}/ssh
       '';
     };
@@ -124,7 +117,7 @@ in
       '';
     };
 
-    # Apply nftables rules from the env file at every boot
+    # Apply nftables rules from the HCL config at every boot
     systemd.services.nifty-filter = {
       description = "Apply nifty-filter nftables ruleset";
       wantedBy = [ "multi-user.target" ];
@@ -135,13 +128,13 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${pkgs.bash}/bin/bash -c '${nifty-filter}/bin/nifty-filter nftables --env-file ${cfg.configPath} --strict-env | ${pkgs.nftables}/bin/nft -f -'";
+        ExecStart = "${pkgs.bash}/bin/bash -c '${nifty-filter}/bin/nifty-filter nftables --config ${hclFile} | ${pkgs.nftables}/bin/nft -f -'";
         ExecStop = "${pkgs.nftables}/bin/nft flush ruleset";
       };
 
       preStart = ''
-        if [ ! -f ${cfg.configPath} ]; then
-          echo "ERROR: ${cfg.configPath} not found. Applying emergency lockdown rules."
+        if [ ! -f ${hclFile} ]; then
+          echo "ERROR: ${hclFile} not found. Applying emergency lockdown rules."
           ${pkgs.nftables}/bin/nft -f - <<'LOCKDOWN'
         flush ruleset
         table inet filter {
@@ -161,27 +154,10 @@ in
         LOCKDOWN
           exit 1
         fi
-
-        # Check ENABLED flag
-        ENABLED=$(${pkgs.gnugrep}/bin/grep -oP '^ENABLED=\K.*' ${cfg.configPath} | ${pkgs.gnused}/bin/sed "s/^\([\"']\)\(.*\)\1$/\2/" || echo "false")
-        if [ "$ENABLED" != "true" ]; then
-          echo ""
-          echo "============================================"
-          echo " nifty-filter is not enabled."
-          echo ""
-          echo " Configure your router:"
-          echo "   sudo nano ${cfg.configPath}"
-          echo ""
-          echo " Set your interfaces (ip link to identify),"
-          echo " then set ENABLED=true and reboot."
-          echo "============================================"
-          echo ""
-          exit 1
-        fi
       '';
     };
 
-    # QoS traffic shaping (CAKE qdisc) — runs only when WAN_QOS_*_MBPS are set
+    # QoS traffic shaping (CAKE qdisc) — runs only when qos block is configured
     systemd.services.nifty-qos = {
       description = "Apply QoS traffic shaping (CAKE)";
       wantedBy = [ "multi-user.target" ];
@@ -192,8 +168,8 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${pkgs.bash}/bin/bash -o pipefail -c '${nifty-filter}/bin/nifty-filter qos --env-file ${cfg.configPath} --strict-env | ${pkgs.bash}/bin/bash'";
-        ExecStop = "${pkgs.bash}/bin/bash -c 'IFACE=$(${pkgs.gnugrep}/bin/grep -oP \"^WAN_INTERFACE=\\K.*\" ${cfg.configPath} | ${pkgs.coreutils}/bin/tr -d \"\\047\\042\"); ${pkgs.iproute2}/bin/tc qdisc del dev \"$IFACE\" root 2>/dev/null; ${pkgs.iproute2}/bin/tc qdisc del dev \"$IFACE\" ingress 2>/dev/null; ${pkgs.iproute2}/bin/tc qdisc del dev ifb0 root 2>/dev/null; ${pkgs.iproute2}/bin/ip link set ifb0 down 2>/dev/null; true'";
+        ExecStart = "${pkgs.bash}/bin/bash -o pipefail -c '${nifty-filter}/bin/nifty-filter qos --config ${hclFile} | ${pkgs.bash}/bin/bash'";
+        ExecStop = "${pkgs.bash}/bin/bash -c 'WAN_IFACE=$(${nifty-filter}/bin/nifty-filter hostname --config ${hclFile} 2>/dev/null; ${pkgs.coreutils}/bin/cat ${hclFile} | ${pkgs.gnugrep}/bin/grep -oP \"wan\\s*=\\s*\\\"\\K[^\\\"]+\" | head -1); ${pkgs.iproute2}/bin/tc qdisc del dev \"$WAN_IFACE\" root 2>/dev/null; ${pkgs.iproute2}/bin/tc qdisc del dev \"$WAN_IFACE\" ingress 2>/dev/null; ${pkgs.iproute2}/bin/tc qdisc del dev ifb0 root 2>/dev/null; ${pkgs.iproute2}/bin/ip link set ifb0 down 2>/dev/null; true'";
       };
     };
 
@@ -205,8 +181,7 @@ in
 
       serviceConfig = {
         Type = "simple";
-        EnvironmentFile = cfg.configPath;
-        ExecStart = "${pkgs.bash}/bin/bash -c '${pkgs.iperf3}/bin/iperf3 --server --port \${IPERF_PORT:-5201}'";
+        ExecStart = "${pkgs.bash}/bin/bash -c 'PORT=$(${pkgs.gnugrep}/bin/grep -oP \"iperf_port\\s*=\\s*\\K[0-9]+\" ${hclFile} 2>/dev/null || echo 5201); exec ${pkgs.iperf3}/bin/iperf3 --server --port $PORT'";
         Restart = "on-failure";
         RestartSec = "5s";
         DynamicUser = true;
@@ -227,9 +202,8 @@ in
       environment.NIFTY_CONFIG_BOOT_SHA_FILE = "/run/nifty-filter/config-boot-sha";
       serviceConfig = {
         Type = "simple";
-        EnvironmentFile = cfg.configPath;
         StateDirectory = "nifty-dashboard";
-        ExecStart = "${pkgs.bash}/bin/bash -c '${nifty-dashboard}/bin/nifty-dashboard serve --net-listen-ip $(echo $MGMT_SUBNET | cut -d/ -f1) --net-listen-port \${NIFTY_DASHBOARD_PORT:-3000}'";
+        ExecStart = "${pkgs.bash}/bin/bash -c 'MGMT_IP=$(${pkgs.gnugrep}/bin/grep -oP \"mgmt_subnet\\s*=\\s*\\\"\\K[^\\\"/]+\" ${hclFile} 2>/dev/null || echo \"0.0.0.0\"); DASH_PORT=$(${pkgs.gnugrep}/bin/grep -oP \"dashboard_port\\s*=\\s*\\K[0-9]+\" ${hclFile} 2>/dev/null || echo 3000); exec ${nifty-dashboard}/bin/nifty-dashboard serve --net-listen-ip $MGMT_IP --net-listen-port $DASH_PORT'";
         Restart = "on-failure";
         RestartSec = "5s";
       };
@@ -246,13 +220,12 @@ in
         Type = "simple";
         RuntimeDirectory = "nifty-filter";
         RuntimeDirectoryPreserve = "yes";
-        EnvironmentFile = cfg.configPath;
         ExecStartPre = [
           # Block forwarded traffic to the switch management subnet —
           # only the router itself (output chain) may reach the switch.
-          "${pkgs.bash}/bin/bash -c 'NETWORK=$(echo $SODOLA_ROUTER_IP | sed \"s|\\.[0-9]*/|.0/|\"); nft insert rule inet filter forward ip daddr $NETWORK drop comment \"block switch mgmt\" 2>/dev/null || true'"
+          "${pkgs.bash}/bin/bash -c 'ROUTER_IP=$(${pkgs.gnugrep}/bin/grep -oP \"router_ip\\s*=\\s*\\\"\\K[^\\\"]+\" ${hclFile} 2>/dev/null); if [ -n \"$ROUTER_IP\" ]; then NETWORK=$(echo $ROUTER_IP | ${pkgs.gnused}/bin/sed \"s|\\.[0-9]*/|.0/|\"); nft insert rule inet filter forward ip daddr $NETWORK drop comment \"block switch mgmt\" 2>/dev/null || true; fi'"
         ];
-        ExecStart = "${sodola-switch}/bin/sodola-switch supervise --interval 60 --env-file ${cfg.configPath} --state-file /run/nifty-filter/sodola-switch.json";
+        ExecStart = "${sodola-switch}/bin/sodola-switch supervise --interval 60 --config ${hclFile} --state-file /run/nifty-filter/sodola-switch.json";
         Restart = "on-failure";
         RestartSec = "10s";
       };
