@@ -10,8 +10,15 @@ interfaces {
   wan   = "wan"
 }
 
-# WAN-facing firewall policy. All inbound ports are closed by default.
-# Uncomment tcp_forward/udp_forward to expose services via DNAT.
+# Trunk:
+##   Trunk is the backend (LAN side) interface trafficking ALL VLANs.
+##   Trunk MUST be connected to a managed switch.
+##     (use home_router.hcl instead if you don't have one).
+##   If your switch has mixed speed ports, plug trunk into the fastest one.
+
+# WAN-facing firewall policy:
+##   All inbound ports are closed by default.
+##   Uncomment tcp_forward/udp_forward to expose services via DNAT.
 wan {
   enable_ipv4 = true
   enable_ipv6 = true
@@ -30,7 +37,7 @@ wan {
   #]
 }
 
-# DNS resolver forwarded to upstream servers (used by dnsmasq).
+# DNS resolver forwarded to upstream servers (used by dnsmasq, not VLAN clients).
 dns {
   upstream = ["1.1.1.1", "1.0.0.1"]
 }
@@ -42,15 +49,23 @@ vlan "trusted" {
 
   ipv4 {
     subnet = "10.99.10.1/24"
-    egress = ["0.0.0.0/0"]
+    egress = ["0.0.0.0/0"] # Full outbound access to the internet
   }
 
+  # Firewall rules for VLAN 10, specifically, what can clients connect to on the router itself?
+  #   Default example allows these connections made from VLAN clients:
+  #    - ["echo-request", ...] pinging the router.
+  #    - [22] SSH into the router.
+  #    - [53] DNS requests made to the router IP.
+  #    - [67, 68] DHCP requests handled by the router.
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable", "time-exceeded"]
     tcp_accept  = [22]
     udp_accept  = [53, 67, 68]
   }
 
+  # DHCP config for dnsmasq - clients receive IP addresses from the range defined.
+  ## You may add static hosts by uncommenting the host subsection.
   dhcp {
     pool_start = "10.99.10.100"
     pool_end   = "10.99.10.250"
@@ -158,6 +173,16 @@ vlan "lab" {
 }
 
 # --- QoS: Bufferbloat mitigation (CAKE) ---
+## You SHOULD uncomment the `qos` section, but you need to find out
+## what your real maximum upload/download bandwidth of your WAN
+## connection is before doing so. Run iperf or use speedtest.net. Set
+## the upload_mbps and download_mbps below according to your actual
+## (peak) results. The shave_percent will throttle your connection
+## below the actual limit you set, so that the bottleneck remains on
+## your router rather than your ISP. This bottleneck will reduce your
+## peak transfer rate, but will give the router more headroom to
+## effectively prioritize traffic.
+
 # qos {
 #   upload_mbps    = 20
 #   download_mbps  = 300
@@ -170,68 +195,71 @@ vlan "lab" {
 # }
 
 # --- Managed switch (Sodola) ---
+## nifty-filter has OPTIONAL support to manage your Sodola switch for
+## you, uncomment the config and set the port assignments to the VLANs you desire.
+#
 # Supervise the managed switch: enforce VLAN port assignments.
 # The NixOS module extracts these settings as env vars for sodola-switch.
-switch {
-  url        = "http://192.168.2.1"
-  user       = "admin"
-  pass       = "admin"
-  mgmt_iface = "trunk"
-  router_ip  = "192.168.2.2/24"
-
-  # Per-port configuration (Sodola SL-SWTGW218AS: ports 1-8 RJ45, port 9 SFP+)
-  # VLANs not listed on a port are not members of that port.
-  port "1" {
-    pvid   = 10
-    accept = "untagged-only"
-    vlans { untagged = [10] }
-  }
-  port "2" {
-    pvid   = 20
-    accept = "untagged-only"
-    vlans { untagged = [20] }
-  }
-  port "3" {
-    pvid   = 30
-    accept = "untagged-only"
-    vlans { untagged = [30] }
-  }
-  port "4" {
-    pvid   = 30
-    accept = "untagged-only"
-    vlans { untagged = [30] }
-  }
-  port "5" {
-    pvid   = 40
-    accept = "untagged-only"
-    vlans { untagged = [40] }
-  }
-  port "6" {
-    pvid   = 40
-    accept = "untagged-only"
-    vlans { untagged = [40] }
-  }
-  port "7" {
-    pvid   = 40
-    accept = "tagged-only"
-    label  = "secondary switch"
-    vlans {
-      tagged = [20, 40]
-    }
-  }
-  port "8" {
-    pvid   = 1
-    accept = "all"
-    label  = "management"
-    vlans { untagged = [1] }
-  }
-  port "9" {
-    pvid   = 1
-    accept = "all"
-    label  = "trunk/uplink"
-    vlans {
-      untagged = [1]
-      tagged   = [10, 20, 30, 40]
-    }
-  }
-}
+# switch {
+#   url        = "http://192.168.2.1"
+#   user       = "admin"
+#   pass       = "admin"
+#   mgmt_iface = "trunk"
+#   router_ip  = "192.168.2.2/24"
+#
+#   # Per-port configuration (Sodola SL-SWTGW218AS: ports 1-8 RJ45, port 9 SFP+)
+#   # VLANs not listed on a port are not members of that port.
+#   port "1" {
+#     pvid   = 10
+#     accept = "untagged-only"
+#     vlans { untagged = [10] }
+#   }
+#   port "2" {
+#     pvid   = 20
+#     accept = "untagged-only"
+#     vlans { untagged = [20] }
+#   }
+#   port "3" {
+#     pvid   = 30
+#     accept = "untagged-only"
+#     vlans { untagged = [30] }
+#   }
+#   port "4" {
+#     pvid   = 30
+#     accept = "untagged-only"
+#     vlans { untagged = [30] }
+#   }
+#   port "5" {
+#     pvid   = 40
+#     accept = "untagged-only"
+#     vlans { untagged = [40] }
+#   }
+#   port "6" {
+#     pvid   = 40
+#     accept = "untagged-only"
+#     vlans { untagged = [40] }
+#   }
+#   port "7" {
+#     pvid   = 40
+#     accept = "tagged-only"
+#     label  = "secondary switch"
+#     vlans {
+#       tagged = [20, 40]
+#     }
+#   }
+#   port "8" {
+#     pvid   = 1
+#     accept = "all"
+#     label  = "management"
+#     vlans { untagged = [1] }
+#   }
+#   port "9" {
+#     pvid   = 1
+#     accept = "all"
+#     label  = "trunk/uplink"
+#     vlans {
+#       untagged = [1]
+#       tagged   = [10, 20, 30, 40]
+#     }
+#   }
+# }
