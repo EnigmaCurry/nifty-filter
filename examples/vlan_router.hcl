@@ -10,6 +10,8 @@ interfaces {
   wan   = "wan"
 }
 
+# WAN-facing firewall policy. All inbound ports are closed by default.
+# Uncomment tcp_forward/udp_forward to expose services via DNAT.
 wan {
   enable_ipv4 = true
   enable_ipv6 = true
@@ -25,6 +27,7 @@ wan {
   #udp_forward = []
 }
 
+# DNS resolver forwarded to upstream servers (used by dnsmasq).
 dns {
   upstream = ["1.1.1.1", "1.0.0.1"]
 }
