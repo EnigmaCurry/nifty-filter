@@ -18,7 +18,7 @@ wan {
 
   icmp_accept = []  # e.g. ["echo-request"] to allow ping
   tcp_accept  = []  # e.g. [22] to allow SSH
-  udp_accept  = []  # e.g. [51820] to allow WireGuard
+  udp_accept  = []  # e.g. [51820, 1194] to allow WireGuard and OpenVPN
 
   # Port forwarding (DNAT) to internal hosts: "wan_port:dest_ip:dest_port"
   #tcp_forward = [
