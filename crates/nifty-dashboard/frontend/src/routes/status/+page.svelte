@@ -692,14 +692,16 @@
     <!-- Tab content -->
     <div class="pt-2">
       {#if activeTab === "config"}
-        {#if configJson == null}
+        {#if configError}
           <Card.Root>
             <Card.Content class="pt-4">
-              {#if configError}
-                <p class="text-red-400 text-sm font-mono">{configError}</p>
-              {:else}
-                <p class="text-muted-foreground text-sm">No configuration file found. Create <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.hcl</code> to get started.</p>
-              {/if}
+              <p class="text-red-400 text-sm font-mono">{configError}</p>
+            </Card.Content>
+          </Card.Root>
+        {:else if configJson == null}
+          <Card.Root>
+            <Card.Content class="pt-4">
+              <p class="text-muted-foreground text-sm">No configuration file found. Create <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.hcl</code> to get started.</p>
             </Card.Content>
           </Card.Root>
         {:else}
