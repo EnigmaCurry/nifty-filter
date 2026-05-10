@@ -19,6 +19,7 @@ let
 
   configDir = "/var/nifty-filter";
   envFile = "${configDir}/nifty-filter.env";
+  hclFile = "${configDir}/nifty-filter.hcl";
 
   sodola-switch = self.packages.${pkgs.stdenv.hostPlatform.system}.sodola-switch;
   sodolaConfigDir = "${configDir}/sodola-switch";
@@ -110,10 +111,15 @@ in
         RuntimeDirectoryPreserve = "yes";
       };
       script = ''
-        ${pkgs.coreutils}/bin/sha256sum ${cfg.configPath} \
-          | ${pkgs.coreutils}/bin/cut -d' ' -f1 \
-          > /run/nifty-filter/config-boot-sha
-        ${pkgs.coreutils}/bin/cp ${cfg.configPath} /run/nifty-filter/config-boot-snapshot
+        if [ -f ${hclFile} ]; then
+          ${pkgs.coreutils}/bin/sha256sum ${hclFile} \
+            | ${pkgs.coreutils}/bin/cut -d' ' -f1 \
+            > /run/nifty-filter/config-boot-sha
+          ${pkgs.coreutils}/bin/cp ${hclFile} /run/nifty-filter/config-boot-snapshot
+        else
+          echo "" > /run/nifty-filter/config-boot-sha
+          echo "" > /run/nifty-filter/config-boot-snapshot
+        fi
         ${pkgs.coreutils}/bin/chmod 0444 /run/nifty-filter/config-boot-sha /run/nifty-filter/config-boot-snapshot
       '';
     };
@@ -217,7 +223,7 @@ in
       path = [ pkgs.iproute2 pkgs.nftables ];
       environment.ROOT_DIR = "/var/lib/nifty-dashboard";
       environment.SODOLA_STATE_FILE = "/run/nifty-filter/sodola-switch.json";
-      environment.NIFTY_CONFIG_FILE = "${configDir}/nifty-filter.hcl";
+      environment.NIFTY_CONFIG_FILE = hclFile;
       environment.NIFTY_CONFIG_BOOT_SHA_FILE = "/run/nifty-filter/config-boot-sha";
       serviceConfig = {
         Type = "simple";
