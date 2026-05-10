@@ -177,6 +177,8 @@ struct ConfigResponse {
     reboot_needed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     boot_config: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_error: Option<String>,
 }
 
 const SENSITIVE_PATTERNS: &[&str] = &["PASS", "SECRET", "TOKEN", "KEY"];
@@ -223,11 +225,12 @@ async fn get_config(state: State<AppState>) -> ApiJson<ConfigResponse> {
     let path = crate::config_watcher::config_file_path();
     let contents = match tokio::fs::read_to_string(&path).await {
         Ok(c) => c,
-        Err(_) => {
+        Err(e) => {
             return json_ok(ConfigResponse {
                 config: Value::Null,
                 reboot_needed: false,
                 boot_config: None,
+                config_error: Some(format!("Cannot read config file: {e}")),
             });
         }
     };
@@ -239,10 +242,11 @@ async fn get_config(state: State<AppState>) -> ApiJson<ConfigResponse> {
     let reboot_needed =
         !state.config_boot_sha.is_empty() && current_sha != state.config_boot_sha;
 
-    let mut config = match parse_hcl_to_json(&contents) {
-        Ok(v) => v,
-        Err(_) => Value::Null,
+    let (config, config_error) = match parse_hcl_to_json(&contents) {
+        Ok(v) => (v, None),
+        Err(e) => (Value::Null, Some(e)),
     };
+    let mut config = config;
     redact_sensitive(&mut config);
 
     let boot_config = if reboot_needed {
@@ -258,6 +262,7 @@ async fn get_config(state: State<AppState>) -> ApiJson<ConfigResponse> {
         config,
         reboot_needed,
         boot_config,
+        config_error,
     })
 }
 

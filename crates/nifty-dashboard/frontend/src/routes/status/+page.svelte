@@ -199,6 +199,7 @@
   let configJson = $state<Record<string, any> | null>(null);
   let bootConfigJson = $state<Record<string, any> | null>(null);
   let rebootNeeded = $state(false);
+  let configError = $state<string | null>(null);
   let aboutData = $state<AboutData | null>(null);
   let qosData = $state<QosData | null>(null);
   let dnsmasqData = $state<DnsmasqData | null>(null);
@@ -482,6 +483,7 @@
         configJson = body.data?.config ?? null;
         bootConfigJson = body.data?.boot_config ?? null;
         rebootNeeded = body.data?.reboot_needed ?? false;
+        configError = body.data?.config_error ?? null;
       }
     } catch {}
   }
@@ -693,7 +695,11 @@
         {#if configJson == null}
           <Card.Root>
             <Card.Content class="pt-4">
-              <p class="text-muted-foreground text-sm">No configuration file found. Create <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.hcl</code> to get started.</p>
+              {#if configError}
+                <p class="text-red-400 text-sm font-mono">{configError}</p>
+              {:else}
+                <p class="text-muted-foreground text-sm">No configuration file found. Create <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.hcl</code> to get started.</p>
+              {/if}
             </Card.Content>
           </Card.Root>
         {:else}
