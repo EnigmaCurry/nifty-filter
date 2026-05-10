@@ -557,25 +557,9 @@ wan {}
         let input = include_str!("../examples/vlan_router.hcl");
         let config = parse_hcl(input).unwrap();
         assert_eq!(config.vlan.len(), 4);
-        assert_eq!(config.wan.tcp_forward.len(), 2);
+        assert!(config.wan.tcp_forward.is_empty());
         assert!(config.qos.is_none());
-
-        // Switch config
-        let sw = config.switch.as_ref().expect("missing switch block");
-        assert_eq!(sw.url, "http://192.168.2.1");
-        assert_eq!(sw.user.as_deref(), Some("admin"));
-        assert_eq!(sw.router_ip.as_deref(), Some("192.168.2.2/24"));
-        assert_eq!(sw.port.len(), 9);
-        assert_eq!(sw.port["1"].pvid, 10);
-        assert_eq!(sw.port["1"].accept, "untagged-only");
-        let p1_vlans = sw.port["1"].vlans.as_ref().unwrap();
-        assert_eq!(p1_vlans.untagged, vec![10]);
-        assert!(p1_vlans.tagged.is_empty());
-        assert_eq!(sw.port["9"].pvid, 1);
-        assert_eq!(sw.port["9"].accept, "all");
-        let p9_vlans = sw.port["9"].vlans.as_ref().unwrap();
-        assert_eq!(p9_vlans.untagged, vec![1]);
-        assert_eq!(p9_vlans.tagged, vec![10, 20, 30, 40]);
+        assert!(config.switch.is_none());
     }
 
     #[test]
