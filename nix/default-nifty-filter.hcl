@@ -5,18 +5,21 @@
 
 # hostname = "nifty-filter"
 
-# Interface names as seen by the OS (set by systemd-networkd .link files).
-interfaces {
-  trunk = "trunk"
-  wan   = "wan"
-}
-
-# MAC addresses for interface renaming (used to generate .link files).
+# Interfaces:
+# To give friendly names to your NICs, identify them via MAC address,
+# and specify their *new* names. If the interface already has the
+# name you want, don't specify the MAC address, and specify the existing name.
 # Find your MACs with: ip link
-# links {
-#   wan   = "aa:bb:cc:dd:ee:01"
-#   trunk = "aa:bb:cc:dd:ee:02"
-# }
+interfaces {
+  trunk {
+    # mac  = "aa:bb:cc:dd:ee:01"
+    name = "trunk"
+  }
+  wan {
+    # mac  = "aa:bb:cc:dd:ee:02"
+    name = "wan"
+  }
+}
 
 # WAN-facing firewall policy. All inbound ports are closed by default.
 wan {

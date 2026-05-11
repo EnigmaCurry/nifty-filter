@@ -98,6 +98,15 @@ enum Commands {
         config: String,
     },
 
+    /// Print a config value by key (wan-name, trunk-name, mgmt-name, mgmt-subnet, enable-ipv6, dashboard-port, iperf-port)
+    Get {
+        /// Path to the HCL config file
+        #[arg(long, short)]
+        config: String,
+        /// Key to retrieve
+        key: String,
+    },
+
     /// Generate system configuration files from HCL config
     Generate {
         #[command(subcommand)]
@@ -187,19 +196,19 @@ impl RouterTemplate {
         let mut errors = Vec::new();
 
         // Interfaces
-        let interface_trunk = Interface::new(&config.interfaces.trunk)
+        let interface_trunk = Interface::new(&config.interfaces.trunk_name())
             .unwrap_or_else(|e| { errors.push(e); Interface::new("eth0").unwrap() });
-        let interface_wan = Interface::new(&config.interfaces.wan)
+        let interface_wan = Interface::new(&config.interfaces.wan_name())
             .unwrap_or_else(|e| { errors.push(e); Interface::new("eth0").unwrap() });
-        let interface_mgmt = config.interfaces.mgmt.clone().unwrap_or_default();
+        let interface_mgmt = config.interfaces.mgmt_name().unwrap_or("").to_string();
         let subnet_mgmt_ipv4 = if !interface_mgmt.is_empty() {
-            match &config.interfaces.mgmt_subnet {
+            match config.interfaces.mgmt_subnet() {
                 Some(s) => match Subnet::new(s) {
                     Ok(subnet) => subnet.to_string(),
                     Err(e) => { errors.push(e); String::new() }
                 },
                 None => {
-                    errors.push("interfaces.mgmt_subnet is required when interfaces.mgmt is set.".to_string());
+                    errors.push("interfaces.mgmt.subnet is required when interfaces.mgmt is set.".to_string());
                     String::new()
                 }
             }
@@ -347,7 +356,7 @@ impl RouterTemplate {
         enable_ipv4: bool,
         errors: &mut Vec<String>,
     ) -> Vec<Vlan> {
-        let trunk_name = &config.interfaces.trunk;
+        let trunk_name = &config.interfaces.trunk_name();
 
         // Sort by ID for deterministic output
         let mut entries: Vec<(&String, &hcl_config::VlanHclConfig)> = config.vlan.iter().collect();
@@ -377,7 +386,7 @@ impl RouterTemplate {
         // Build name -> (id, interface_name) lookup for inter-VLAN rules
         let name_lookup: HashMap<&str, (u16, String)> = entries.iter().map(|(name, v)| {
             let iface = if v.id == 1 && !config.vlan_aware_switch {
-                trunk_name.clone()
+                trunk_name.to_string()
             } else {
                 name.to_string()
             };
@@ -643,7 +652,7 @@ fn app() {
             match &hcl_config.qos {
                 Some(qos_hcl) => {
                     let mut errors = Vec::new();
-                    let interface_wan = Interface::new(&hcl_config.interfaces.wan)
+                    let interface_wan = Interface::new(&hcl_config.interfaces.wan_name())
                         .unwrap_or_else(|e| { errors.push(e); Interface::new("eth0").unwrap() });
 
                     match QosConfig::from_hcl(qos_hcl) {
@@ -715,6 +724,26 @@ fn app() {
                 "{}",
                 hcl_config.hostname.as_deref().unwrap_or("nifty-filter")
             );
+        }
+        Commands::Get { config, key } => {
+            let hcl_config = load_hcl_config(&config);
+            let value = match key.as_str() {
+                "wan-name" => Some(hcl_config.interfaces.wan_name().to_string()),
+                "trunk-name" => Some(hcl_config.interfaces.trunk_name().to_string()),
+                "mgmt-name" => hcl_config.interfaces.mgmt_name().map(|s| s.to_string()),
+                "mgmt-subnet" => hcl_config.interfaces.mgmt_subnet().map(|s| s.to_string()),
+                "enable-ipv6" => Some(hcl_config.wan.enable_ipv6.to_string()),
+                "dashboard-port" => Some(hcl_config.dashboard_port.unwrap_or(3000).to_string()),
+                "iperf-port" => Some(hcl_config.iperf_port.unwrap_or(5201).to_string()),
+                "switch-router-ip" => hcl_config.switch.as_ref().and_then(|s| s.router_ip.clone()),
+                _ => {
+                    eprintln!("Unknown key: {}", key);
+                    exit(1);
+                }
+            };
+            if let Some(v) = value {
+                println!("{}", v);
+            }
         }
         Commands::Generate { what } => match what {
             GenerateCommands::Linkfiles { config, output_dir } => {
@@ -790,8 +819,8 @@ mod tests {
     fn test_simple_mode_vlan1() {
         let hcl = r#"
             interfaces {
-                trunk = "trunk"
-                wan   = "wan"
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
             }
             wan { enable_ipv4 = true }
             vlan "lan" {
@@ -826,8 +855,8 @@ mod tests {
     fn test_vlan_aware_multi_vlan() {
         let hcl = r#"
             interfaces {
-                trunk = "trunk"
-                wan   = "wan"
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
             }
             wan { enable_ipv4 = true }
             vlan_aware_switch = true
@@ -876,8 +905,8 @@ mod tests {
     fn test_vlan_aware_rejects_vlan_1() {
         let hcl = r#"
             interfaces {
-                trunk = "trunk"
-                wan   = "wan"
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
             }
             wan { enable_ipv4 = true }
             vlan_aware_switch = true
@@ -903,8 +932,8 @@ mod tests {
     fn test_vlan_names_as_interfaces() {
         let hcl = r#"
             interfaces {
-                trunk = "trunk"
-                wan   = "wan"
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
             }
             wan { enable_ipv4 = true }
             vlan_aware_switch = true
@@ -943,8 +972,8 @@ mod tests {
     fn test_per_vlan_router_access_isolation() {
         let hcl = r#"
             interfaces {
-                trunk = "trunk"
-                wan   = "wan"
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
             }
             wan { enable_ipv4 = true }
             vlan_aware_switch = true
@@ -982,8 +1011,8 @@ mod tests {
     fn test_inter_vlan_allow_rules() {
         let hcl = r#"
             interfaces {
-                trunk = "trunk"
-                wan   = "wan"
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
             }
             wan { enable_ipv4 = true }
             vlan_aware_switch = true
@@ -1036,8 +1065,8 @@ mod tests {
     fn test_qos_disabled_no_mangle_table() {
         let hcl = r#"
             interfaces {
-                trunk = "trunk"
-                wan   = "wan"
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
             }
             wan { enable_ipv4 = true }
             vlan "lan" {
@@ -1058,8 +1087,8 @@ mod tests {
     fn test_qos_enabled_dscp_marking() {
         let hcl = r#"
             interfaces {
-                trunk = "trunk"
-                wan   = "wan"
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
             }
             wan { enable_ipv4 = true }
             vlan_aware_switch = true
@@ -1104,8 +1133,8 @@ mod tests {
     fn test_qos_override_rules() {
         let hcl = r#"
             interfaces {
-                trunk = "trunk"
-                wan   = "wan"
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
             }
             wan { enable_ipv4 = true }
             qos {
@@ -1135,8 +1164,8 @@ mod tests {
     fn test_qos_no_flowtable() {
         let hcl = r#"
             interfaces {
-                trunk = "trunk"
-                wan   = "wan"
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
             }
             wan { enable_ipv4 = true }
             vlan "lan" {

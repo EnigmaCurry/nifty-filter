@@ -9,8 +9,6 @@ pub struct HclConfig {
     #[serde(default)]
     pub dashboard_port: Option<u16>,
     pub interfaces: InterfacesConfig,
-    #[serde(default)]
-    pub links: Option<LinksConfig>,
     pub wan: WanConfig,
     #[serde(default)]
     pub vlan_aware_switch: bool,
@@ -26,25 +24,51 @@ pub struct HclConfig {
     pub vlan: HashMap<String, VlanHclConfig>,
 }
 
-/// MAC address to interface name mapping for systemd .link file generation.
-#[derive(Debug, Deserialize)]
-pub struct LinksConfig {
-    pub wan: String,
-    pub trunk: String,
-    #[serde(default)]
-    pub mgmt: Option<String>,
-    #[serde(default)]
-    pub extra: Option<Vec<String>>,
-}
-
+/// Interface configuration: each interface is a labeled block with a name
+/// and an optional MAC address for renaming.
 #[derive(Debug, Deserialize)]
 pub struct InterfacesConfig {
-    pub trunk: String,
-    pub wan: String,
+    pub trunk: InterfaceEntry,
+    pub wan: InterfaceEntry,
     #[serde(default)]
-    pub mgmt: Option<String>,
+    pub mgmt: Option<MgmtInterfaceEntry>,
+}
+
+/// A single interface entry with a name and optional MAC for .link generation.
+#[derive(Debug, Deserialize)]
+pub struct InterfaceEntry {
+    pub name: String,
     #[serde(default)]
-    pub mgmt_subnet: Option<String>,
+    pub mac: Option<String>,
+}
+
+/// Management interface entry — also has an optional subnet.
+#[derive(Debug, Deserialize)]
+pub struct MgmtInterfaceEntry {
+    pub name: String,
+    #[serde(default)]
+    pub mac: Option<String>,
+    #[serde(default)]
+    pub subnet: Option<String>,
+}
+
+impl InterfacesConfig {
+    /// WAN interface name.
+    pub fn wan_name(&self) -> &str {
+        &self.wan.name
+    }
+    /// Trunk interface name.
+    pub fn trunk_name(&self) -> &str {
+        &self.trunk.name
+    }
+    /// Management interface name, if configured.
+    pub fn mgmt_name(&self) -> Option<&str> {
+        self.mgmt.as_ref().map(|m| m.name.as_str())
+    }
+    /// Management subnet, if configured.
+    pub fn mgmt_subnet(&self) -> Option<&str> {
+        self.mgmt.as_ref().and_then(|m| m.subnet.as_deref())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -287,8 +311,8 @@ mod tests {
     fn hcl_prefix() -> &'static str {
         r#"
 interfaces {
-  trunk = "trunk"
-  wan   = "wan"
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
 }
 wan {}
 "#
@@ -333,7 +357,7 @@ vlan "trusted" {
   }
 }
 "#);
-        assert_eq!(config.interfaces.trunk, "trunk");
+        assert_eq!(config.interfaces.trunk_name(), "trunk");
         assert!(!config.vlan_aware_switch);
 
         let trusted = config.vlan.get("trusted").unwrap();
@@ -358,8 +382,8 @@ vlan "trusted" {
     fn test_parse_dual_stack() {
         let input = r#"
 interfaces {
-  trunk = "trunk"
-  wan   = "wan"
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
 }
 wan {
   enable_ipv4 = true
@@ -401,8 +425,8 @@ vlan "lab" {
     fn test_parse_wan_forward() {
         let input = r#"
 interfaces {
-  trunk = "trunk"
-  wan   = "wan"
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
 }
 wan {
   tcp_forward = ["443:10.99.40.50:443", "22:10.99.40.10:22"]
@@ -557,16 +581,18 @@ vlan "lab" {
     fn test_parse_mgmt_interface() {
         let input = r#"
 interfaces {
-  trunk       = "trunk"
-  wan         = "wan"
-  mgmt        = "mgmt0"
-  mgmt_subnet = "192.168.88.1/24"
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
+  mgmt {
+    name   = "mgmt0"
+    subnet = "192.168.88.1/24"
+  }
 }
 wan {}
 "#;
         let config = parse_hcl(input).unwrap();
-        assert_eq!(config.interfaces.mgmt.as_deref(), Some("mgmt0"));
-        assert_eq!(config.interfaces.mgmt_subnet.as_deref(), Some("192.168.88.1/24"));
+        assert_eq!(config.interfaces.mgmt_name(), Some("mgmt0"));
+        assert_eq!(config.interfaces.mgmt_subnet(), Some("192.168.88.1/24"));
     }
 
     #[test]

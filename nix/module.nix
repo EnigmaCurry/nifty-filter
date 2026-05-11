@@ -176,11 +176,11 @@ in
           exit 0
         fi
 
-        # Read interface names from HCL
-        WAN_INTERFACE=$(${pkgs.gnugrep}/bin/grep -oP 'wan\s*=\s*"\K[^"]+' ${hclFile} | head -1)
-        TRUNK_INTERFACE=$(${pkgs.gnugrep}/bin/grep -oP 'trunk\s*=\s*"\K[^"]+' ${hclFile} | head -1)
-        MGMT_INTERFACE=$(${pkgs.gnugrep}/bin/grep -oP 'mgmt\s*=\s*"\K[^"]+' ${hclFile} | head -1)
-        ENABLE_IPV6=$(${pkgs.gnugrep}/bin/grep -oP 'enable_ipv6\s*=\s*\K\w+' ${hclFile} | head -1)
+        # Read interface names and settings from HCL
+        WAN_INTERFACE=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} wan-name)
+        TRUNK_INTERFACE=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} trunk-name)
+        MGMT_INTERFACE=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} mgmt-name 2>/dev/null || true)
+        ENABLE_IPV6=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} enable-ipv6)
 
         # Bring up interfaces
         [ -n "$WAN_INTERFACE" ] && ip link set "$WAN_INTERFACE" up
@@ -285,7 +285,7 @@ in
         Type = "oneshot";
         RemainAfterExit = true;
         ExecStart = "${pkgs.bash}/bin/bash -o pipefail -c '${nifty-filter}/bin/nifty-filter qos --config ${hclFile} | ${pkgs.bash}/bin/bash'";
-        ExecStop = "${pkgs.bash}/bin/bash -c 'WAN_IFACE=$(${nifty-filter}/bin/nifty-filter hostname --config ${hclFile} 2>/dev/null; ${pkgs.coreutils}/bin/cat ${hclFile} | ${pkgs.gnugrep}/bin/grep -oP \"wan\\s*=\\s*\\\"\\K[^\\\"]+\" | head -1); ${pkgs.iproute2}/bin/tc qdisc del dev \"$WAN_IFACE\" root 2>/dev/null; ${pkgs.iproute2}/bin/tc qdisc del dev \"$WAN_IFACE\" ingress 2>/dev/null; ${pkgs.iproute2}/bin/tc qdisc del dev ifb0 root 2>/dev/null; ${pkgs.iproute2}/bin/ip link set ifb0 down 2>/dev/null; true'";
+        ExecStop = "${pkgs.bash}/bin/bash -c 'WAN_IFACE=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} wan-name 2>/dev/null); ${pkgs.iproute2}/bin/tc qdisc del dev \"$WAN_IFACE\" root 2>/dev/null; ${pkgs.iproute2}/bin/tc qdisc del dev \"$WAN_IFACE\" ingress 2>/dev/null; ${pkgs.iproute2}/bin/tc qdisc del dev ifb0 root 2>/dev/null; ${pkgs.iproute2}/bin/ip link set ifb0 down 2>/dev/null; true'";
       };
     };
 
@@ -297,7 +297,7 @@ in
 
       serviceConfig = {
         Type = "simple";
-        ExecStart = "${pkgs.bash}/bin/bash -c 'PORT=$(${pkgs.gnugrep}/bin/grep -oP \"iperf_port\\s*=\\s*\\K[0-9]+\" ${hclFile} 2>/dev/null || echo 5201); exec ${pkgs.iperf3}/bin/iperf3 --server --port $PORT'";
+        ExecStart = "${pkgs.bash}/bin/bash -c 'PORT=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} iperf-port); exec ${pkgs.iperf3}/bin/iperf3 --server --port $PORT'";
         Restart = "on-failure";
         RestartSec = "5s";
         DynamicUser = true;
@@ -319,7 +319,7 @@ in
       serviceConfig = {
         Type = "simple";
         StateDirectory = "nifty-dashboard";
-        ExecStart = "${pkgs.bash}/bin/bash -c 'MGMT_IP=$(${pkgs.gnugrep}/bin/grep -oP \"mgmt_subnet\\s*=\\s*\\\"\\K[^\\\"/]+\" ${hclFile} 2>/dev/null || echo \"0.0.0.0\"); DASH_PORT=$(${pkgs.gnugrep}/bin/grep -oP \"dashboard_port\\s*=\\s*\\K[0-9]+\" ${hclFile} 2>/dev/null || echo 3000); exec ${nifty-dashboard}/bin/nifty-dashboard serve --net-listen-ip $MGMT_IP --net-listen-port $DASH_PORT'";
+        ExecStart = "${pkgs.bash}/bin/bash -c 'MGMT_SUBNET=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} mgmt-subnet 2>/dev/null || true); MGMT_IP=$(echo \"$MGMT_SUBNET\" | cut -d/ -f1); [ -z \"$MGMT_IP\" ] && MGMT_IP=\"0.0.0.0\"; DASH_PORT=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} dashboard-port); exec ${nifty-dashboard}/bin/nifty-dashboard serve --net-listen-ip $MGMT_IP --net-listen-port $DASH_PORT'";
         Restart = "on-failure";
         RestartSec = "5s";
       };
@@ -339,7 +339,7 @@ in
         ExecStartPre = [
           # Block forwarded traffic to the switch management subnet —
           # only the router itself (output chain) may reach the switch.
-          "${pkgs.bash}/bin/bash -c 'ROUTER_IP=$(${pkgs.gnugrep}/bin/grep -oP \"router_ip\\s*=\\s*\\\"\\K[^\\\"]+\" ${hclFile} 2>/dev/null); if [ -n \"$ROUTER_IP\" ]; then NETWORK=$(echo $ROUTER_IP | ${pkgs.gnused}/bin/sed \"s|\\.[0-9]*/|.0/|\"); nft insert rule inet filter forward ip daddr $NETWORK drop comment \"block switch mgmt\" 2>/dev/null || true; fi'"
+          "${pkgs.bash}/bin/bash -c 'ROUTER_IP=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} switch-router-ip 2>/dev/null); if [ -n \"$ROUTER_IP\" ]; then NETWORK=$(echo $ROUTER_IP | ${pkgs.gnused}/bin/sed \"s|\\.[0-9]*/|.0/|\"); nft insert rule inet filter forward ip daddr $NETWORK drop comment \"block switch mgmt\" 2>/dev/null || true; fi'"
         ];
         ExecStart = "${sodola-switch}/bin/sodola-switch supervise --interval 60 --config ${hclFile} --state-file /run/nifty-filter/sodola-switch.json";
         Restart = "on-failure";

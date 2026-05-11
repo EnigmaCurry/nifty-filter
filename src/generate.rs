@@ -16,51 +16,46 @@ fn interface_exists(name: &str) -> bool {
 pub fn generate_linkfiles(config: &HclConfig, output_dir: &str) -> Result<(), String> {
     let dir = Path::new(output_dir);
 
-    let links = match &config.links {
-        Some(l) => l,
-        None => {
-            // No links block — verify all required interfaces already exist
-            let mut missing = Vec::new();
-            if !interface_exists(&config.interfaces.wan) {
-                missing.push(config.interfaces.wan.as_str());
-            }
-            if !interface_exists(&config.interfaces.trunk) {
-                missing.push(config.interfaces.trunk.as_str());
-            }
-            if let Some(mgmt) = &config.interfaces.mgmt {
-                if !interface_exists(mgmt) {
-                    missing.push(mgmt.as_str());
-                }
-            }
-            if missing.is_empty() {
-                return Ok(()); // all interfaces exist, nothing to generate
-            }
-            return Err(format!(
-                "Interface(s) {} not found and no links block to create them. \
-                 Add a links {{ wan = \"MAC\" trunk = \"MAC\" }} block to your config.",
-                missing.join(", ")
-            ));
+    // Check if any interface has a MAC (needs .link file generation)
+    let has_any_mac = config.interfaces.wan.mac.is_some()
+        || config.interfaces.trunk.mac.is_some()
+        || config.interfaces.mgmt.as_ref().and_then(|m| m.mac.as_ref()).is_some();
+
+    if !has_any_mac {
+        // No MACs configured — verify all required interfaces already exist
+        let mut missing = Vec::new();
+        if !interface_exists(config.interfaces.wan_name()) {
+            missing.push(config.interfaces.wan_name());
         }
-    };
+        if !interface_exists(config.interfaces.trunk_name()) {
+            missing.push(config.interfaces.trunk_name());
+        }
+        if let Some(mgmt_name) = config.interfaces.mgmt_name() {
+            if !interface_exists(mgmt_name) {
+                missing.push(mgmt_name);
+            }
+        }
+        if missing.is_empty() {
+            return Ok(());
+        }
+        return Err(format!(
+            "Interface(s) {} not found and no mac address configured to create them. \
+             Add mac = \"...\" to each interface block in your config.",
+            missing.join(", ")
+        ));
+    }
 
     fs::create_dir_all(dir).map_err(|e| format!("Cannot create {}: {}", output_dir, e))?;
 
-    let wan_name = &config.interfaces.wan;
-    let trunk_name = &config.interfaces.trunk;
-
-    write_link_file(dir, wan_name, &links.wan)?;
-    write_link_file(dir, trunk_name, &links.trunk)?;
-
-    if let (Some(mgmt_name), Some(mgmt_mac)) = (&config.interfaces.mgmt, &links.mgmt) {
-        write_link_file(dir, mgmt_name, mgmt_mac)?;
+    if let Some(mac) = &config.interfaces.wan.mac {
+        write_link_file(dir, config.interfaces.wan_name(), mac)?;
     }
-
-    if let Some(extras) = &links.extra {
-        for entry in extras {
-            let (mac, name) = entry
-                .split_once('=')
-                .ok_or_else(|| format!("Invalid extra link entry '{}': expected MAC=name", entry))?;
-            write_link_file(dir, name.trim(), mac.trim())?;
+    if let Some(mac) = &config.interfaces.trunk.mac {
+        write_link_file(dir, config.interfaces.trunk_name(), mac)?;
+    }
+    if let Some(mgmt) = &config.interfaces.mgmt {
+        if let Some(mac) = &mgmt.mac {
+            write_link_file(dir, &mgmt.name, mac)?;
         }
     }
 
@@ -85,8 +80,8 @@ pub fn generate_networkd(config: &HclConfig, output_dir: &str) -> Result<(), Str
     let dir = Path::new(output_dir);
     fs::create_dir_all(dir).map_err(|e| format!("Cannot create {}: {}", output_dir, e))?;
 
-    let wan = &config.interfaces.wan;
-    let trunk = &config.interfaces.trunk;
+    let wan = config.interfaces.wan_name();
+    let trunk = config.interfaces.trunk_name();
 
     // --- WAN (DHCP client) ---
     let mut wan_network = String::from("[Network]\n");
@@ -199,7 +194,7 @@ pub fn generate_networkd(config: &HclConfig, output_dir: &str) -> Result<(), Str
 
     // Optional management interface
     if let (Some(mgmt_name), Some(mgmt_subnet)) =
-        (&config.interfaces.mgmt, &config.interfaces.mgmt_subnet)
+        (config.interfaces.mgmt_name(), config.interfaces.mgmt_subnet())
     {
         let mgmt_content = format!(
             "[Match]\nName={}\n\n[Network]\nAddress={}\nLinkLocalAddressing=no\nIPv6AcceptRA=no\n",
@@ -253,7 +248,7 @@ pub fn generate_dnsmasq(config: &HclConfig, output: &str) -> Result<(), String> 
     let mut vlans_sorted: Vec<_> = config.vlan.iter().collect();
     vlans_sorted.sort_by_key(|(_, v)| v.id);
 
-    let trunk = &config.interfaces.trunk;
+    let trunk = config.interfaces.trunk_name();
 
     for (name, vlan) in &vlans_sorted {
         let vid = vlan.id;
@@ -262,7 +257,7 @@ pub fn generate_dnsmasq(config: &HclConfig, output: &str) -> Result<(), String> 
         let iface = if config.vlan_aware_switch {
             name.to_string()
         } else if vid == 1 {
-            trunk.clone()
+            trunk.to_string()
         } else {
             format!("{}.{}", trunk, vid)
         };
@@ -366,12 +361,14 @@ mod tests {
     fn test_generate_linkfiles() {
         let config = parse_test_config(r#"
 interfaces {
-  trunk = "trunk"
-  wan   = "wan"
-}
-links {
-  wan   = "aa:bb:cc:dd:ee:01"
-  trunk = "aa:bb:cc:dd:ee:02"
+  trunk {
+    name = "trunk"
+    mac  = "aa:bb:cc:dd:ee:02"
+  }
+  wan {
+    name = "wan"
+    mac  = "aa:bb:cc:dd:ee:01"
+  }
 }
 wan {}
 "#);
@@ -391,15 +388,19 @@ wan {}
     fn test_generate_linkfiles_with_mgmt() {
         let config = parse_test_config(r#"
 interfaces {
-  trunk       = "trunk"
-  wan         = "wan"
-  mgmt        = "mgmt0"
-  mgmt_subnet = "192.168.0.1/24"
-}
-links {
-  wan   = "aa:bb:cc:dd:ee:01"
-  trunk = "aa:bb:cc:dd:ee:02"
-  mgmt  = "aa:bb:cc:dd:ee:03"
+  trunk {
+    name = "trunk"
+    mac  = "aa:bb:cc:dd:ee:02"
+  }
+  wan {
+    name = "wan"
+    mac  = "aa:bb:cc:dd:ee:01"
+  }
+  mgmt {
+    name   = "mgmt0"
+    mac    = "aa:bb:cc:dd:ee:03"
+    subnet = "192.168.0.1/24"
+  }
 }
 wan {}
 "#);
@@ -409,51 +410,31 @@ wan {}
     }
 
     #[test]
-    fn test_generate_linkfiles_with_extra() {
-        let config = parse_test_config(r#"
-interfaces {
-  trunk = "trunk"
-  wan   = "wan"
-}
-links {
-  wan   = "aa:bb:cc:dd:ee:01"
-  trunk = "aa:bb:cc:dd:ee:02"
-  extra = ["ff:ff:ff:ff:ff:01=extra0"]
-}
-wan {}
-"#);
-        let dir = TempDir::new().unwrap();
-        generate_linkfiles(&config, dir.path().to_str().unwrap()).unwrap();
-        let extra = fs::read_to_string(dir.path().join("10-extra0.link")).unwrap();
-        assert!(extra.contains("MACAddress=ff:ff:ff:ff:ff:01"));
-    }
-
-    #[test]
-    fn test_generate_linkfiles_no_links_block_missing_interfaces() {
+    fn test_generate_linkfiles_no_mac_missing_interfaces() {
         // Interfaces "trunk" and "wan" won't exist on a dev machine
         let config = parse_test_config(r#"
 interfaces {
-  trunk = "trunk"
-  wan   = "wan"
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
 }
 wan {}
 "#);
         let dir = TempDir::new().unwrap();
         let result = generate_linkfiles(&config, dir.path().to_str().unwrap());
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not found and no links block"));
+        assert!(result.unwrap_err().contains("not found and no mac"));
     }
 
     #[test]
-    fn test_generate_linkfiles_no_links_block_existing_interface() {
+    fn test_generate_linkfiles_no_mac_existing_interface() {
         // Skip in sandboxed builds (no /sys/class/net)
         if !Path::new("/sys/class/net/lo").exists() {
             return;
         }
         let config = parse_test_config(r#"
 interfaces {
-  trunk = "lo"
-  wan   = "lo"
+  trunk { name = "lo" }
+  wan   { name = "lo" }
 }
 wan {}
 "#);
@@ -466,8 +447,8 @@ wan {}
     fn test_generate_networkd_vlan_aware() {
         let config = parse_test_config(r#"
 interfaces {
-  trunk = "trunk"
-  wan   = "wan"
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
 }
 wan {
   enable_ipv4 = true
@@ -531,8 +512,8 @@ vlan "lab" {
     fn test_generate_networkd_simple_mode() {
         let config = parse_test_config(r#"
 interfaces {
-  trunk = "trunk"
-  wan   = "wan"
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
 }
 wan { enable_ipv4 = true }
 vlan "default" {
@@ -556,10 +537,12 @@ vlan "default" {
     fn test_generate_networkd_mgmt() {
         let config = parse_test_config(r#"
 interfaces {
-  trunk       = "trunk"
-  wan         = "wan"
-  mgmt        = "mgmt0"
-  mgmt_subnet = "192.168.88.1/24"
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
+  mgmt {
+    name   = "mgmt0"
+    subnet = "192.168.88.1/24"
+  }
 }
 wan {}
 "#);
@@ -575,8 +558,8 @@ wan {}
     fn test_generate_dnsmasq_basic() {
         let config = parse_test_config(r#"
 interfaces {
-  trunk = "trunk"
-  wan   = "wan"
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
 }
 wan {}
 dns { upstream = ["8.8.8.8", "8.8.4.4"] }
@@ -612,8 +595,8 @@ vlan "trusted" {
     fn test_generate_dnsmasq_with_hosts() {
         let config = parse_test_config(r#"
 interfaces {
-  trunk = "trunk"
-  wan   = "wan"
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
 }
 wan {}
 vlan_aware_switch = true
@@ -649,8 +632,8 @@ vlan "trusted" {
     fn test_generate_dnsmasq_dhcpv6() {
         let config = parse_test_config(r#"
 interfaces {
-  trunk = "trunk"
-  wan   = "wan"
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
 }
 wan { enable_ipv6 = true }
 vlan_aware_switch = true

@@ -3,25 +3,25 @@
 #
 # Load via: nifty-filter nftables --config vlan_router.hcl
 
-# Interface names as seen by the OS. These assume systemd-networkd (or
-# similar) has already renamed the physical devices to friendly names.
+# Interfaces:
+## To give friendly names to your NICs, identify them via MAC address,
+## and specify their *new* names. If the interface already has the
+## name you want, don't specify the MAC address, and specify the existing name:
 interfaces {
-  trunk = "trunk"
-  wan   = "wan"
-}
-
-# MAC addresses for interface renaming (generates systemd .link files).
-# Find your MACs with: ip link
-# If your interfaces are already named "wan" and "trunk", you can omit this block.
-links {
-  wan   = "aa:bb:cc:dd:ee:01"
-  trunk = "aa:bb:cc:dd:ee:02"
+  trunk {
+    mac = "aa:bb:cc:dd:ee:01" # the real mac of the LAN-side interface
+    name = "trunk"            # the new name you want for the interface
+  }
+  wan {
+    mac = "aa:bb:cc:dd:ee:02" # the real mac of the WAN-side interface
+    name = "wan"              # the new name you want for the interface
+  }
 }
 
 # Trunk:
 ##   Trunk is the backend (LAN side) interface trafficking ALL VLANs.
 ##   Trunk MUST be connected to a managed switch.
-##     (use home_router.hcl instead if you don't have one).
+##     (if you don't have one, use home_router.hcl instead).
 ##   If your switch has mixed speed ports, plug trunk into the fastest one.
 
 # WAN-facing firewall policy:
