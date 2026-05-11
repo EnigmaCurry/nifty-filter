@@ -1,28 +1,42 @@
 # Example: VLAN-aware router with managed switch
 # Four VLANs: trusted (10), iot (20), guest (30), lab (40)
-#
 # Load via: nifty-filter nftables --config vlan_router.hcl
 
-# Interfaces:
-## To give friendly names to your NICs, identify them via MAC address,
-## and specify their *new* names. If the interface already has the
-## name you want, don't specify the MAC address, and specify the existing name:
-interfaces {
-  trunk {
-    mac = "aa:bb:cc:dd:ee:01" # the real mac of the LAN-side interface
-    name = "trunk"            # the new name you want for the interface
-  }
-  wan {
-    mac = "aa:bb:cc:dd:ee:02" # the real mac of the WAN-side interface
-    name = "wan"              # the new name you want for the interface
-  }
-}
-
-# Trunk:
-##   Trunk is the backend (LAN side) interface trafficking ALL VLANs.
-##   Trunk MUST be connected to a managed switch.
+# Your router machine must have at least two network interfaces (NICs):
+# 1) trunk:
+##   trunk is the backend (LAN side) interface trafficking ALL VLANs.
+##   trunk MUST be connected to a managed switch.
 ##     (if you don't have one, use home_router.hcl instead).
 ##   If your switch has mixed speed ports, plug trunk into the fastest one.
+# 2) wan:
+##   wan is the upstream (internet) connection.
+# 3) mgmt (optional):
+##   mgmt is the optional management interface, for direct access to
+##   the router for configuration, upgrade, and maintainance purposes.
+
+# Interfaces:
+## The nifty-filter config uses logical names for interfaces: trunk, wan, mgmt.
+## However, your physical NICs may be named differently.
+## To give friendly names to your NICs, identify them via their MAC address,
+## and specify their *new* names. It is recommended that you stick
+## with the names "trunk", "wan", "mgmt". If the interfaces already have
+## the names you want, you don't need to specify the MAC addresses,
+## and you only need to specify their existing name.
+interfaces {
+  trunk {
+    mac = "aa:bb:cc:dd:ee:01" # the real MAC address of the LAN-side interface.
+    name = "trunk"            # the new name you want for the interface.
+  }
+  wan {
+    mac = "aa:bb:cc:dd:ee:02" # the real MAC address of the WAN-side interface.
+    name = "wan"              # the new name you want for the interface.
+  }
+  mgmt {
+    mac = "aa:bb:cc:dd:ee:03" # the real MAC address of the MGMT interface.
+    name = "mgmt"             # the new name you want for the interface.
+    subnet = "10.99.0.1/24"   # Static subnet for the MGMT interface only.
+  }
+}
 
 # WAN-facing firewall policy:
 ##   All inbound ports are closed by default.
