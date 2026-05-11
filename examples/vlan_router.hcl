@@ -10,6 +10,14 @@ interfaces {
   wan   = "wan"
 }
 
+# MAC addresses for interface renaming (generates systemd .link files).
+# Find your MACs with: ip link
+# If your interfaces are already named "wan" and "trunk", you can omit this block.
+links {
+  wan   = "aa:bb:cc:dd:ee:01"
+  trunk = "aa:bb:cc:dd:ee:02"
+}
+
 # Trunk:
 ##   Trunk is the backend (LAN side) interface trafficking ALL VLANs.
 ##   Trunk MUST be connected to a managed switch.
