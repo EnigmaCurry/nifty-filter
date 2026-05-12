@@ -394,29 +394,30 @@ async fn read_htb_classes(device: &str) -> Vec<HtbClassInfo> {
 
     for line in stdout.lines() {
         let trimmed = line.trim();
-        // Match: "class htb 1:XX parent 1:1 rate NNNKbit ceil NNNKbit ..."
-        if !trimmed.starts_with("class htb ") || !trimmed.contains("parent ") {
+        // Match: "class htb 1:XX ..." (with "parent" or "root")
+        if !trimmed.starts_with("class htb ") {
             continue;
         }
-        // Skip root class (no parent) and the 1:1 class
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        // parts: ["class", "htb", "1:XX", "parent", "1:1", "rate", "NNNKbit", "ceil", "NNNKbit", ...]
-        if parts.len() < 9 {
+        if parts.len() < 4 {
             continue;
         }
         let classid = parts[2];
         let minor = classid.split(':').nth(1).unwrap_or("");
-        // Skip root (1:1) and default (1:ffff)
+        // Skip root class (1:1) and default (1:ffff)
         if minor == "1" || minor == "ffff" || minor.is_empty() {
             continue;
         }
-        // Find rate and ceil
+        // Find rate and ceil by keyword position (works regardless of "parent" vs "root")
         let rate = parts.iter().position(|&p| p == "rate")
             .and_then(|i| parts.get(i + 1))
             .unwrap_or(&"");
         let ceil = parts.iter().position(|&p| p == "ceil")
             .and_then(|i| parts.get(i + 1))
             .unwrap_or(&"");
+        if rate.is_empty() {
+            continue;
+        }
 
         classes.push(HtbClassInfo {
             minor: minor.to_string(),
