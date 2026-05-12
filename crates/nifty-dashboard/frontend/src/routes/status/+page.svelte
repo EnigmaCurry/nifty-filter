@@ -1534,6 +1534,36 @@
                     </tbody>
                   </table>
                 </div>
+
+                <div>
+                  <h4 class="text-xs font-semibold mb-2">CAKE statistics columns</h4>
+                  <table class="w-full text-xs">
+                    <tbody class="text-muted-foreground">
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Tin</td><td>The priority tier (Bulk, Best Effort, Video, Voice). CAKE sorts packets into tins based on their DSCP marking.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Threshold</td><td>Maximum bandwidth this tin can use. CAKE allocates bandwidth proportionally across tins, with higher-priority tins getting a larger share.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Packets</td><td>Total number of packets processed by this tin since QoS was activated.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Bytes</td><td>Total bytes processed by this tin.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Drops</td><td>Packets dropped by CAKE to manage congestion. Some drops are normal under heavy load — CAKE intentionally drops to signal TCP senders to slow down.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Marks</td><td>Packets marked with ECN (Explicit Congestion Notification) instead of being dropped. ECN is a gentler alternative to dropping — the sender is notified of congestion without losing data.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Peak Delay</td><td>Maximum time a packet waited in the queue. High peak delays indicate momentary bursts that filled the queue.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Avg Delay</td><td>Average queuing delay. This is the key bufferbloat metric — lower is better. Under 5ms is excellent, under 20ms is good.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Flows</td><td>Number of active network flows (connections) in this tin. CAKE tracks flows to ensure fair sharing — one greedy connection can't starve others.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div>
+                  <h4 class="text-xs font-semibold mb-2">Bandwidth limits columns</h4>
+                  <table class="w-full text-xs">
+                    <tbody class="text-muted-foreground">
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">VLAN</td><td>The VLAN ID that has a bandwidth limit configured.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Name</td><td>Human-readable name of the VLAN from the HCL config.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Upload</td><td>Maximum upload speed (WAN egress) for this VLAN, enforced by an HTB class. Traffic is classified via nftables fwmark.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Download</td><td>Maximum download speed (WAN ingress) for this VLAN, enforced by an HTB class on the IFB device. Traffic is classified via conntrack marks.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Type</td><td>Non-burstable means rate equals ceil — the VLAN can never exceed its cap, even when the link is idle. Burstable means the VLAN has a guaranteed minimum but can burst higher.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </Card.Content>
           </Card.Root>
