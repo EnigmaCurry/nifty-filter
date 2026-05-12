@@ -371,6 +371,17 @@ table inet mangle {
         oif "{{ interface_wan }}" ip6 saddr { {{ ovr.cidrs_ipv6.join(", ") }} } ip6 dscp set {{ ovr.class.dscp_name() }} comment "nf:QoS override {{ ovr.class }} (IPv6)"
         {% endif %}
         {% endfor %}
+
+        {% for vlan in vlans %}
+        {% if vlan.bandwidth_upload_kbit.is_some() %}
+        {% if enable_ipv4 && vlan.subnet_ipv4 != "" %}
+        oif "{{ interface_wan }}" ip saddr {{ vlan.subnet_ipv4 }} meta mark set {{ vlan.id }} comment "nf:Bandwidth VLAN {{ vlan.id }}"
+        {% endif %}
+        {% if enable_ipv6 && vlan.subnet_ipv6 != "" %}
+        oif "{{ interface_wan }}" ip6 saddr {{ vlan.subnet_ipv6 }} meta mark set {{ vlan.id }} comment "nf:Bandwidth VLAN {{ vlan.id }} (IPv6)"
+        {% endif %}
+        {% endif %}
+        {% endfor %}
     }
 }
 {% endif %}

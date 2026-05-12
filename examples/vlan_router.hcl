@@ -111,8 +111,14 @@ vlan "trusted" {
 
 # --- VLAN 20: IoT Jail ---
 # DHCP only, no internet, no router access beyond DHCP
+# bandwidth limits hard-cap this VLAN's WAN egress (upload), non-burstable.
+# Requires the qos block to be enabled.
 vlan "iot" {
   id = 20
+
+  # bandwidth {
+  #   upload_mbps = 5
+  # }
 
   ipv4 {
     subnet = "10.99.20.1/24"

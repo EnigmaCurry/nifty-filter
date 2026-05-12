@@ -117,6 +117,8 @@ pub struct VlanHclConfig {
     #[serde(default)]
     pub qos_class: Option<String>,
     #[serde(default)]
+    pub bandwidth: Option<BandwidthHclConfig>,
+    #[serde(default)]
     pub iperf_enabled: bool,
     #[serde(default)]
     pub tcp_forward: Vec<String>,
@@ -212,6 +214,12 @@ pub struct QosOverridesConfig {
     pub besteffort: Vec<String>,
     #[serde(default)]
     pub bulk: Vec<String>,
+}
+
+/// Per-VLAN bandwidth limit (hard cap, non-burstable).
+#[derive(Debug, Deserialize)]
+pub struct BandwidthHclConfig {
+    pub upload_mbps: u32,
 }
 
 /// Managed switch configuration (sodola-switch).
@@ -731,6 +739,30 @@ vlan "iot" {
 "#);
         assert_eq!(config.vlan.get("trusted").unwrap().qos_class.as_deref(), Some("voice"));
         assert_eq!(config.vlan.get("iot").unwrap().qos_class.as_deref(), Some("bulk"));
+    }
+
+    #[test]
+    fn test_parse_vlan_bandwidth() {
+        let config = parse_with_prefix(r#"
+vlan "iot" {
+  id = 20
+  bandwidth {
+    upload_mbps = 5
+  }
+}
+"#);
+        let bw = config.vlan.get("iot").unwrap().bandwidth.as_ref().unwrap();
+        assert_eq!(bw.upload_mbps, 5);
+    }
+
+    #[test]
+    fn test_parse_vlan_no_bandwidth() {
+        let config = parse_with_prefix(r#"
+vlan "trusted" {
+  id = 10
+}
+"#);
+        assert!(config.vlan.get("trusted").unwrap().bandwidth.is_none());
     }
 
     #[test]

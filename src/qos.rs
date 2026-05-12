@@ -30,6 +30,12 @@ impl QosOverride {
     }
 }
 
+/// Per-VLAN bandwidth limit for HTB class shaping.
+pub struct QosVlanBandwidth {
+    pub vlan_id: u16,
+    pub upload_kbit: u32,
+}
+
 /// Parsed QoS configuration for the tc/CAKE subcommand.
 #[derive(Debug)]
 pub struct QosConfig {

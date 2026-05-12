@@ -26,7 +26,9 @@ struct QosResponse {
     config: Option<QosConfigInfo>,
     upload: Option<CakeStats>,
     download: Option<CakeStats>,
+    upload_classes: Vec<CakeClassStats>,
     dscp_rules: Vec<DscpRule>,
+    bandwidth_rules: Vec<DscpRule>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -88,6 +90,14 @@ struct DscpRule {
     description: Option<String>,
 }
 
+/// Per-VLAN CAKE stats when HTB+CAKE is in use.
+#[derive(Serialize, JsonSchema)]
+struct CakeClassStats {
+    class_id: String,
+    label: String,
+    cake: CakeStats,
+}
+
 // --- Handler ---
 
 #[api_doc(
@@ -108,13 +118,15 @@ async fn get_qos(_state: State<AppState>) -> ApiJson<QosResponse> {
 
     let configured = config.is_some();
 
-    let (upload, download, dscp_rules) = tokio::join!(
-        read_cake_stats(&wan_iface),
-        read_cake_stats("ifb0"),
+    let (wan_upload, download, dscp_rules, bandwidth_rules) = tokio::join!(
+        read_wan_upload_stats(&wan_iface),
+        read_cake_stats_flat("ifb0"),
         read_dscp_rules(),
+        read_bandwidth_rules(),
     );
 
-    let active = upload.is_some();
+    let (upload, upload_classes) = wan_upload;
+    let active = upload.is_some() || !upload_classes.is_empty();
 
     json_ok(QosResponse {
         configured,
@@ -122,7 +134,9 @@ async fn get_qos(_state: State<AppState>) -> ApiJson<QosResponse> {
         config,
         upload,
         download,
+        upload_classes,
         dscp_rules,
+        bandwidth_rules,
     })
 }
 
@@ -210,8 +224,8 @@ async fn read_qos_config() -> Option<QosConfigInfo> {
     })
 }
 
-async fn read_cake_stats(device: &str) -> Option<CakeStats> {
-    // Validate device name
+/// Run `tc -s qdisc show dev <device>` and return stdout.
+async fn run_tc_qdisc_show(device: &str) -> Option<String> {
     if !device
         .chars()
         .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
@@ -229,17 +243,105 @@ async fn read_cake_stats(device: &str) -> Option<CakeStats> {
         return None;
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
 
-    // Check this is a CAKE qdisc
+/// Read WAN upload stats. Returns (flat_cake, htb_classes).
+/// When HTB+CAKE is active, flat_cake is None and htb_classes is populated.
+/// When flat CAKE is active, flat_cake is populated and htb_classes is empty.
+async fn read_wan_upload_stats(device: &str) -> (Option<CakeStats>, Vec<CakeClassStats>) {
+    let stdout = match run_tc_qdisc_show(device).await {
+        Some(s) => s,
+        None => return (None, vec![]),
+    };
+
+    if stdout.contains("qdisc htb") {
+        // HTB+CAKE mode: parse per-class CAKE qdiscs
+        let classes = parse_htb_cake_sections(device, &stdout);
+        (None, classes)
+    } else if stdout.contains("cake") {
+        // Flat CAKE mode
+        (parse_cake_section(device, &stdout), vec![])
+    } else {
+        (None, vec![])
+    }
+}
+
+/// Read a single flat CAKE qdisc (used for download/ifb0).
+async fn read_cake_stats_flat(device: &str) -> Option<CakeStats> {
+    let stdout = run_tc_qdisc_show(device).await?;
     if !stdout.contains("cake") {
         return None;
     }
-
-    parse_cake_output(device, &stdout)
+    parse_cake_section(device, &stdout)
 }
 
-fn parse_cake_output(device: &str, output: &str) -> Option<CakeStats> {
+/// Split tc output into per-qdisc sections.
+fn split_qdisc_sections(output: &str) -> Vec<String> {
+    let mut sections = Vec::new();
+    let mut current = String::new();
+    for line in output.lines() {
+        if line.trim_start().starts_with("qdisc ") && !current.is_empty() {
+            sections.push(current);
+            current = String::new();
+        }
+        if !current.is_empty() {
+            current.push('\n');
+        }
+        current.push_str(line);
+    }
+    if !current.is_empty() {
+        sections.push(current);
+    }
+    sections
+}
+
+/// Extract the minor classid from a `parent major:minor` in a qdisc line.
+fn extract_parent_minor(line: &str) -> Option<String> {
+    let parent_idx = line.find("parent ")?;
+    let rest = &line[parent_idx + 7..];
+    let classid = rest.split_whitespace().next()?;
+    let minor = classid.split(':').nth(1)?;
+    Some(minor.to_string())
+}
+
+/// Parse HTB+CAKE output into per-class stats.
+fn parse_htb_cake_sections(device: &str, output: &str) -> Vec<CakeClassStats> {
+    let sections = split_qdisc_sections(output);
+    let mut classes = Vec::new();
+
+    for section in &sections {
+        let trimmed = section.trim_start();
+        if !trimmed.starts_with("qdisc cake") {
+            continue;
+        }
+
+        let first_line = trimmed.lines().next().unwrap_or("");
+        let parent_minor = match extract_parent_minor(first_line) {
+            Some(m) => m,
+            None => continue,
+        };
+
+        let label = if parent_minor == "ffff" {
+            "Default".to_string()
+        } else {
+            format!("VLAN {}", parent_minor)
+        };
+
+        if let Some(cake) = parse_cake_section(device, section) {
+            classes.push(CakeClassStats {
+                class_id: format!("1:{}", parent_minor),
+                label,
+                cake,
+            });
+        }
+    }
+
+    classes
+}
+
+/// Parse a single CAKE qdisc section into CakeStats.
+fn parse_cake_section(device: &str, output: &str) -> Option<CakeStats> {
     let mut bandwidth = String::new();
     let mut sent_bytes: u64 = 0;
     let mut sent_packets: u64 = 0;
@@ -388,6 +490,7 @@ fn extract_tin_values(line: &str) -> Vec<String> {
     }
 }
 
+/// Parse nftables mangle rules containing `dscp set` (priority marking).
 async fn read_dscp_rules() -> Vec<DscpRule> {
     let output = Command::new("nft")
         .args(["list", "table", "inet", "mangle"])
@@ -405,25 +508,49 @@ async fn read_dscp_rules() -> Vec<DscpRule> {
         .lines()
         .map(|l| l.trim())
         .filter(|l| l.contains("dscp set"))
-        .map(|l| {
-            // Extract nf: comment if present
-            let (text, description) = if let Some(comment_pos) = l.rfind(" comment \"") {
-                let after = &l[comment_pos + 10..];
-                if let Some(end_quote) = after.rfind('"') {
-                    let comment = &after[..end_quote];
-                    let rule_text = l[..comment_pos].to_string();
-                    let desc = comment
-                        .strip_prefix("nf:")
-                        .map(|d| if d.is_empty() { None } else { Some(d.to_string()) })
-                        .unwrap_or(None);
-                    (rule_text, desc)
-                } else {
-                    (l.to_string(), None)
-                }
-            } else {
-                (l.to_string(), None)
-            };
-            DscpRule { text, description }
-        })
+        .map(|l| parse_nft_rule(l))
         .collect()
+}
+
+/// Parse nftables mangle rules containing `meta mark set` (bandwidth marking).
+async fn read_bandwidth_rules() -> Vec<DscpRule> {
+    let output = Command::new("nft")
+        .args(["list", "table", "inet", "mangle"])
+        .output()
+        .await;
+
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return vec![],
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    stdout
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| l.contains("meta mark set"))
+        .map(|l| parse_nft_rule(l))
+        .collect()
+}
+
+/// Parse a single nftables rule line, extracting comment as description.
+fn parse_nft_rule(l: &str) -> DscpRule {
+    let (text, description) = if let Some(comment_pos) = l.rfind(" comment \"") {
+        let after = &l[comment_pos + 10..];
+        if let Some(end_quote) = after.rfind('"') {
+            let comment = &after[..end_quote];
+            let rule_text = l[..comment_pos].to_string();
+            let desc = comment
+                .strip_prefix("nf:")
+                .map(|d| if d.is_empty() { None } else { Some(d.to_string()) })
+                .unwrap_or(None);
+            (rule_text, desc)
+        } else {
+            (l.to_string(), None)
+        }
+    } else {
+        (l.to_string(), None)
+    };
+    DscpRule { text, description }
 }

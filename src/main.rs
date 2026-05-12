@@ -324,6 +324,15 @@ impl RouterTemplate {
         // VLANs
         let vlans = Self::convert_vlans(config, enable_ipv4, &mut errors);
 
+        // Validate: bandwidth requires qos block
+        if !qos_enabled {
+            for (name, vhcl) in &config.vlan {
+                if vhcl.bandwidth.is_some() {
+                    errors.push(format!("vlan \"{}\".bandwidth requires a qos block to be configured.", name));
+                }
+            }
+        }
+
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -464,6 +473,14 @@ impl RouterTemplate {
                 })
             });
 
+            // Per-VLAN bandwidth limit
+            let bandwidth_upload_kbit = vhcl.bandwidth.as_ref().map(|bw| {
+                if bw.upload_mbps == 0 {
+                    errors.push(format!("vlan \"{}\".bandwidth.upload_mbps must be greater than 0.", name));
+                }
+                bw.upload_mbps * 1000
+            });
+
             // DHCP
             let dhcp_enabled = vhcl.dhcp.is_some();
             let (dhcp_pool_start, dhcp_pool_end, dhcp_router, dhcp_dns) = vhcl.dhcp.as_ref()
@@ -507,6 +524,7 @@ impl RouterTemplate {
                 tcp_allow_inter_vlan: InterVlanRuleList::new(),
                 udp_allow_inter_vlan: InterVlanRuleList::new(),
                 qos_class,
+                bandwidth_upload_kbit,
                 iperf_enabled: vhcl.iperf_enabled,
                 dhcp_enabled,
                 dhcp_pool_start,
@@ -553,6 +571,8 @@ struct QosTemplate {
     interface_wan: Interface,
     upload_kbit: u32,
     download_kbit: u32,
+    vlan_bandwidths: Vec<qos::QosVlanBandwidth>,
+    default_upload_kbit: u32,
 }
 
 pub fn validate_nftables_config(config: &str) -> Result<(), String> {
@@ -657,6 +677,34 @@ fn app() {
 
                     match QosConfig::from_hcl(qos_hcl) {
                         Ok(qos_config) => {
+                            // Collect per-VLAN bandwidth limits
+                            let mut vlan_bandwidths = Vec::new();
+                            let mut entries: Vec<_> = hcl_config.vlan.iter().collect();
+                            entries.sort_by_key(|(_, v)| v.id);
+                            for (name, vhcl) in &entries {
+                                if let Some(bw) = &vhcl.bandwidth {
+                                    if bw.upload_mbps == 0 {
+                                        errors.push(format!("vlan \"{}\".bandwidth.upload_mbps must be greater than 0.", name));
+                                        continue;
+                                    }
+                                    let upload_kbit = bw.upload_mbps * 1000;
+                                    vlan_bandwidths.push(qos::QosVlanBandwidth {
+                                        vlan_id: vhcl.id,
+                                        upload_kbit,
+                                    });
+                                }
+                            }
+
+                            let vlan_bw_sum: u32 = vlan_bandwidths.iter().map(|v| v.upload_kbit).sum();
+                            let default_upload_kbit = if !vlan_bandwidths.is_empty() && vlan_bw_sum >= qos_config.upload_kbit {
+                                errors.push("Sum of per-VLAN bandwidth.upload_mbps exceeds total qos.upload_mbps (after shave).".to_string());
+                                0
+                            } else if vlan_bandwidths.is_empty() {
+                                qos_config.upload_kbit
+                            } else {
+                                qos_config.upload_kbit - vlan_bw_sum
+                            };
+
                             if !errors.is_empty() {
                                 for err in errors {
                                     eprintln!("Error: {}", err);
@@ -667,6 +715,8 @@ fn app() {
                                 interface_wan,
                                 upload_kbit: qos_config.upload_kbit,
                                 download_kbit: qos_config.download_kbit,
+                                vlan_bandwidths,
+                                default_upload_kbit,
                             };
                             println!("{}", tmpl.render().unwrap());
                         }
@@ -1179,5 +1229,159 @@ mod tests {
 
         assert!(!rendered.contains("flowtable"));
         assert!(!rendered.contains("flow add @ft"));
+    }
+
+    #[test]
+    fn test_bandwidth_fwmark_rules() {
+        let hcl = r#"
+            interfaces {
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
+            }
+            wan { enable_ipv4 = true }
+            vlan_aware_switch = true
+            qos {
+                upload_mbps = 20
+                download_mbps = 300
+            }
+            vlan "trusted" {
+                id = 10
+                ipv4 {
+                    subnet = "10.10.0.1/24"
+                    egress = ["0.0.0.0/0"]
+                }
+                firewall {
+                    tcp_accept = [22]
+                    udp_accept = [67, 68]
+                }
+            }
+            vlan "iot" {
+                id = 20
+                ipv4 { subnet = "10.20.0.1/24" }
+                firewall {
+                    tcp_accept = []
+                    udp_accept = [67, 68]
+                }
+                bandwidth {
+                    upload_mbps = 5
+                }
+            }
+        "#;
+        let config = parse_hcl(hcl).unwrap();
+        let tmpl = RouterTemplate::from_hcl(&config).unwrap();
+        let rendered = tmpl.render().unwrap();
+
+        // VLAN 20 should get a fwmark rule
+        assert!(rendered.contains(r#"oif "wan" ip saddr 10.20.0.1/24 meta mark set 20"#));
+        // VLAN 10 should NOT get a fwmark rule (no bandwidth limit)
+        assert!(!rendered.contains("meta mark set 10"));
+    }
+
+    #[test]
+    fn test_bandwidth_requires_qos_block() {
+        let hcl = r#"
+            interfaces {
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
+            }
+            wan { enable_ipv4 = true }
+            vlan "iot" {
+                id = 20
+                ipv4 { subnet = "10.20.0.1/24" }
+                bandwidth {
+                    upload_mbps = 5
+                }
+            }
+        "#;
+        let config = parse_hcl(hcl).unwrap();
+        match RouterTemplate::from_hcl(&config) {
+            Err(errors) => assert!(errors.iter().any(|e| e.contains("bandwidth requires a qos block"))),
+            Ok(_) => panic!("expected error for bandwidth without qos block"),
+        }
+    }
+
+    #[test]
+    fn test_bandwidth_qos_template_htb() {
+        let hcl = r#"
+            interfaces {
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
+            }
+            wan { enable_ipv4 = true }
+            qos {
+                upload_mbps = 20
+                download_mbps = 300
+            }
+            vlan "iot" {
+                id = 20
+                ipv4 { subnet = "10.20.0.1/24" }
+                bandwidth {
+                    upload_mbps = 5
+                }
+            }
+        "#;
+        let config = parse_hcl(hcl).unwrap();
+        let qos_hcl = config.qos.as_ref().unwrap();
+        let qos_config = QosConfig::from_hcl(qos_hcl).unwrap();
+
+        let interface_wan = Interface::new("wan").unwrap();
+        let vlan_bandwidths = vec![qos::QosVlanBandwidth {
+            vlan_id: 20,
+            upload_kbit: 5000,
+        }];
+        let default_upload_kbit = qos_config.upload_kbit - 5000;
+
+        let tmpl = QosTemplate {
+            interface_wan,
+            upload_kbit: qos_config.upload_kbit,
+            download_kbit: qos_config.download_kbit,
+            vlan_bandwidths,
+            default_upload_kbit,
+        };
+        let rendered = tmpl.render().unwrap();
+
+        // Should use HTB, not flat CAKE
+        assert!(rendered.contains("htb default ffff"));
+        assert!(rendered.contains("classid 1:20"));
+        assert!(rendered.contains("rate 5000kbit ceil 5000kbit"));
+        assert!(rendered.contains("handle 20 fw classid 1:20"));
+        // Default class should have remaining bandwidth
+        assert!(rendered.contains("classid 1:ffff"));
+        assert!(rendered.contains(&format!("rate {}kbit", default_upload_kbit)));
+    }
+
+    #[test]
+    fn test_bandwidth_qos_template_flat_cake() {
+        let hcl = r#"
+            interfaces {
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
+            }
+            wan { enable_ipv4 = true }
+            qos {
+                upload_mbps = 20
+                download_mbps = 300
+            }
+            vlan "trusted" {
+                id = 10
+                ipv4 { subnet = "10.10.0.1/24" }
+            }
+        "#;
+        let config = parse_hcl(hcl).unwrap();
+        let qos_hcl = config.qos.as_ref().unwrap();
+        let qos_config = QosConfig::from_hcl(qos_hcl).unwrap();
+
+        let tmpl = QosTemplate {
+            interface_wan: Interface::new("wan").unwrap(),
+            upload_kbit: qos_config.upload_kbit,
+            download_kbit: qos_config.download_kbit,
+            vlan_bandwidths: vec![],
+            default_upload_kbit: qos_config.upload_kbit,
+        };
+        let rendered = tmpl.render().unwrap();
+
+        // Should use flat CAKE, not HTB
+        assert!(!rendered.contains("htb"));
+        assert!(rendered.contains("cake bandwidth 18000kbit diffserv4 nat wash"));
     }
 }

@@ -5,6 +5,8 @@ set -euo pipefail
 
 WAN_INTERFACE="{{ interface_wan }}"
 
+{% if vlan_bandwidths.is_empty() %}
+# --- Flat CAKE (no per-VLAN bandwidth limits) ---
 echo "QoS: upload {{ upload_kbit }}kbit, download {{ download_kbit }}kbit on $WAN_INTERFACE"
 
 # --- Upload shaping (egress on WAN) ---
@@ -22,3 +24,37 @@ tc qdisc add dev "$WAN_INTERFACE" handle ffff: ingress
 tc filter add dev "$WAN_INTERFACE" parent ffff: matchall action mirred egress redirect dev ifb0
 tc qdisc del dev ifb0 root 2>/dev/null || true
 tc qdisc add dev ifb0 root cake bandwidth {{ download_kbit }}kbit diffserv4 nat wash ingress
+{% else %}
+# --- HTB + CAKE (per-VLAN bandwidth limits on egress) ---
+echo "QoS: upload {{ upload_kbit }}kbit, download {{ download_kbit }}kbit on $WAN_INTERFACE (HTB+CAKE)"
+
+# --- Upload shaping (egress on WAN via HTB + CAKE leaves) ---
+# Packets are classified into HTB classes via nftables fwmark (meta mark set).
+tc qdisc del dev "$WAN_INTERFACE" root 2>/dev/null || true
+tc qdisc add dev "$WAN_INTERFACE" root handle 1: htb default ffff
+tc class add dev "$WAN_INTERFACE" parent 1: classid 1:1 htb rate {{ upload_kbit }}kbit ceil {{ upload_kbit }}kbit
+{% for vb in vlan_bandwidths %}
+
+# VLAN {{ vb.vlan_id }} — hard cap {{ vb.upload_kbit }}kbit (non-burstable: ceil == rate)
+tc class add dev "$WAN_INTERFACE" parent 1:1 classid 1:{{ vb.vlan_id }} htb rate {{ vb.upload_kbit }}kbit ceil {{ vb.upload_kbit }}kbit
+tc qdisc add dev "$WAN_INTERFACE" parent 1:{{ vb.vlan_id }} cake bandwidth {{ vb.upload_kbit }}kbit diffserv4 nat wash
+tc filter add dev "$WAN_INTERFACE" parent 1: protocol ip prio 1 handle {{ vb.vlan_id }} fw classid 1:{{ vb.vlan_id }}
+tc filter add dev "$WAN_INTERFACE" parent 1: protocol ipv6 prio 1 handle {{ vb.vlan_id }} fw classid 1:{{ vb.vlan_id }}
+{% endfor %}
+
+# Default class — uncapped VLANs share remaining bandwidth, can burst to total
+tc class add dev "$WAN_INTERFACE" parent 1:1 classid 1:ffff htb rate {{ default_upload_kbit }}kbit ceil {{ upload_kbit }}kbit
+tc qdisc add dev "$WAN_INTERFACE" parent 1:ffff cake bandwidth {{ upload_kbit }}kbit diffserv4 nat wash
+
+# --- Download shaping (ingress via IFB) — flat CAKE ---
+modprobe ifb 2>/dev/null || true
+if ! ip link show ifb0 &>/dev/null; then
+    ip link add ifb0 type ifb
+fi
+ip link set ifb0 up
+tc qdisc del dev "$WAN_INTERFACE" ingress 2>/dev/null || true
+tc qdisc add dev "$WAN_INTERFACE" handle ffff: ingress
+tc filter add dev "$WAN_INTERFACE" parent ffff: matchall action mirred egress redirect dev ifb0
+tc qdisc del dev ifb0 root 2>/dev/null || true
+tc qdisc add dev ifb0 root cake bandwidth {{ download_kbit }}kbit diffserv4 nat wash ingress
+{% endif %}

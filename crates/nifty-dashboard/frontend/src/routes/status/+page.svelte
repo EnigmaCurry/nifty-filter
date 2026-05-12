@@ -129,13 +129,21 @@
     description?: string;
   }
 
+  interface CakeClassStats {
+    class_id: string;
+    label: string;
+    cake: CakeStats;
+  }
+
   interface QosData {
     configured: boolean;
     active: boolean;
     config: QosConfigInfo | null;
     upload: CakeStats | null;
     download: CakeStats | null;
+    upload_classes: CakeClassStats[];
     dscp_rules: DscpRule[];
+    bandwidth_rules: DscpRule[];
   }
 
   interface DnsmasqInterface {
@@ -415,7 +423,7 @@
       // Set braces and contents
       .replace(/(\{[^}]+\})/g, '<span class="text-amber-300">$1</span>')
       // Protocol/field keywords
-      .replace(/\b(tcp|udp|icmp|icmpv6|ct state|ct status|meta nfproto|ip saddr|ip daddr|ip6 saddr|ip6 daddr|tcp dport|udp dport|udp sport|icmp type|icmpv6 type)\b/g, '<span class="text-sky-400">$1</span>')
+      .replace(/\b(tcp|udp|icmp|icmpv6|ct state|ct status|meta nfproto|meta mark set|ip saddr|ip daddr|ip6 saddr|ip6 daddr|ip dscp set|ip6 dscp set|tcp dport|udp dport|udp sport|icmp type|icmpv6 type)\b/g, '<span class="text-sky-400">$1</span>')
       // Log prefix strings
       .replace(/(log prefix &quot;[^&]*&quot;)/g, '<span class="text-zinc-500">$1</span>');
   }
@@ -1319,7 +1327,58 @@
             </Card.Root>
           {/if}
 
-          <!-- CAKE Stats -->
+          <!-- CAKE Stats: HTB+CAKE per-VLAN upload -->
+          {#if qosData.upload_classes.length > 0}
+            {#each qosData.upload_classes as cls}
+              <Card.Root>
+                <Card.Header class="pb-2">
+                  <Card.Title>Upload — {cls.label}</Card.Title>
+                  <Card.Description>
+                    CAKE {cls.cake.bandwidth} &middot;
+                    {cls.cake.sent_packets.toLocaleString()} pkts ({formatBytes(cls.cake.sent_bytes)}) &middot;
+                    {cls.cake.dropped} dropped &middot;
+                    {cls.cake.overlimits} overlimits
+                  </Card.Description>
+                </Card.Header>
+                <Card.Content>
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="border-b border-border text-left text-muted-foreground">
+                          <th class="py-2 pr-4">Tin</th>
+                          <th class="py-2 pr-4">Threshold</th>
+                          <th class="py-2 pr-4">Packets</th>
+                          <th class="py-2 pr-4">Bytes</th>
+                          <th class="py-2 pr-4">Drops</th>
+                          <th class="py-2 pr-4">Marks</th>
+                          <th class="py-2 pr-4">Peak Delay</th>
+                          <th class="py-2 pr-4">Avg Delay</th>
+                          <th class="py-2">Flows</th>
+                        </tr>
+                      </thead>
+                      <tbody class="font-mono">
+                        {#each cls.cake.tins as tin}
+                          <tr class="border-b border-border/50">
+                            <td class="py-2 pr-4 font-semibold {tinColor(tin.name)}">{tin.name}</td>
+                            <td class="py-2 pr-4">{tin.threshold}</td>
+                            <td class="py-2 pr-4">{tin.packets.toLocaleString()}</td>
+                            <td class="py-2 pr-4">{formatBytes(tin.bytes)}</td>
+                            <td class="py-2 pr-4 {tin.drops > 0 ? 'text-red-400' : ''}">{tin.drops}</td>
+                            <td class="py-2 pr-4 {tin.marks > 0 ? 'text-yellow-400' : ''}">{tin.marks}</td>
+                            <td class="py-2 pr-4">{tin.peak_delay}</td>
+                            <td class="py-2 pr-4">{tin.avg_delay}</td>
+                            <td class="py-2">{tin.sp_flows + tin.bk_flows}</td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card.Content>
+              </Card.Root>
+            {/each}
+          {/if}
+
+          <!-- CAKE Stats: flat mode (upload + download) -->
           {#each [{ label: "Upload", stats: qosData.upload, direction: "egress" }, { label: "Download", stats: qosData.download, direction: "ingress" }] as side}
             {#if side.stats}
               <Card.Root>
@@ -1392,6 +1451,40 @@
                     </thead>
                     <tbody class="font-mono">
                       {#each qosData.dscp_rules as rule}
+                        <tr class="border-b border-border/50">
+                          <td class="py-2 whitespace-pre-wrap">{@html highlightRule(rule.text)}</td>
+                          <td class="py-2 pl-4 text-muted-foreground text-xs font-sans">{rule.description ?? ""}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              </Card.Content>
+            </Card.Root>
+          {/if}
+
+          <!-- Bandwidth Rules -->
+          {#if qosData.bandwidth_rules.length > 0}
+            <Card.Root>
+              <Card.Header class="pb-2">
+                <Card.Title>Bandwidth Marking Rules</Card.Title>
+                <Card.Description>Active nftables mangle rules for per-VLAN bandwidth limiting (fwmark for HTB classification)</Card.Description>
+              </Card.Header>
+              <Card.Content>
+                <div class="overflow-x-auto">
+                  <table class="w-full text-sm" style="table-layout:fixed">
+                    <colgroup>
+                      <col />
+                      <col style="width: 16rem;" />
+                    </colgroup>
+                    <thead>
+                      <tr class="border-b border-border text-left text-muted-foreground">
+                        <th class="py-2">Rule</th>
+                        <th class="py-2 pl-4">Description</th>
+                      </tr>
+                    </thead>
+                    <tbody class="font-mono">
+                      {#each qosData.bandwidth_rules as rule}
                         <tr class="border-b border-border/50">
                           <td class="py-2 whitespace-pre-wrap">{@html highlightRule(rule.text)}</td>
                           <td class="py-2 pl-4 text-muted-foreground text-xs font-sans">{rule.description ?? ""}</td>
