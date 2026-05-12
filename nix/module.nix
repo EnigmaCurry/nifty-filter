@@ -206,8 +206,10 @@ in
           sysctl -w net.ipv6.conf.$MGMT_INTERFACE.disable_ipv6=1
         fi
 
-        # Restart networkd to pick up the new configs
-        networkctl reload || systemctl restart systemd-networkd
+        # Restart networkd to pick up new .netdev and .network configs
+        # A full restart is required for new .netdev files (VLAN interfaces);
+        # networkctl reload only re-applies .network files.
+        systemctl restart systemd-networkd
       '';
     };
 
