@@ -63,9 +63,10 @@ tc qdisc add dev ifb0 parent 1:{{ vb.vlan_id }} cake bandwidth {{ vb.kbit }}kbit
 tc class add dev ifb0 parent 1:1 classid 1:ffff htb rate {{ default_download_kbit }}kbit ceil {{ download_kbit }}kbit
 tc qdisc add dev ifb0 parent 1:ffff cake bandwidth {{ download_kbit }}kbit diffserv4 nat wash ingress
 
-# Restore conntrack marks to skb for fw classification
-tc filter add dev ifb0 parent 1: prio 0 matchall action ct
+# Chain 0: conntrack lookup, then jump to chain 1 for classification
+tc filter add dev ifb0 parent 1: chain 0 protocol all prio 1 matchall action ct pipe action goto chain 1
+# Chain 1: classify by conntrack mark (set by nftables ct mark set on egress)
 {% for vb in vlan_download_limits %}
-tc filter add dev ifb0 parent 1: protocol all prio 1 handle {{ vb.vlan_id }} fw classid 1:{{ vb.vlan_id }}
+tc filter add dev ifb0 parent 1: chain 1 protocol all prio 1 flower ct_mark {{ vb.vlan_id }} classid 1:{{ vb.vlan_id }}
 {% endfor %}
 {% endif %}

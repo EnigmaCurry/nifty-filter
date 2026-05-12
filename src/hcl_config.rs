@@ -192,7 +192,9 @@ pub struct InterVlanHclConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct QosHclConfig {
+    #[serde(default)]
     pub upload_mbps: u32,
+    #[serde(default)]
     pub download_mbps: u32,
     #[serde(default = "default_shave")]
     pub shave_percent: u8,
@@ -229,6 +231,7 @@ pub struct BandwidthHclConfig {
 /// The HCL is the central config; the NixOS module extracts env vars for sodola-switch.
 #[derive(Debug, Deserialize)]
 pub struct SwitchConfig {
+    #[serde(default)]
     pub url: String,
     #[serde(default)]
     pub user: Option<String>,
@@ -612,8 +615,13 @@ wan {}
         let config = parse_hcl(input).unwrap();
         assert_eq!(config.vlan.len(), 4);
         assert!(config.wan.tcp_forward.is_empty());
-        assert!(config.qos.is_none());
-        assert!(config.switch.is_none());
+        // qos block exists but with upload/download commented out (defaulting to 0)
+        let qos = config.qos.as_ref().unwrap();
+        assert_eq!(qos.upload_mbps, 0);
+        assert_eq!(qos.download_mbps, 0);
+        assert_eq!(qos.shave_percent, 10);
+        // switch block exists but with all fields commented out
+        assert!(config.switch.is_some());
     }
 
     #[test]

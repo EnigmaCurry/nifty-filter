@@ -17,13 +17,6 @@
 vlan_aware_switch = true
 
 # Interfaces:
-## The nifty-filter config uses logical names for interfaces: trunk, wan, mgmt.
-## However, your physical NICs may be named differently.
-## To give friendly names to your NICs, identify them via their MAC address,
-## and specify their *new* names. It is recommended that you stick
-## with the names "trunk", "wan", "mgmt". If the interfaces already have
-## the names you want, you don't need to specify the MAC addresses,
-## and you only need to specify their existing name.
 interfaces {
   trunk {
     mac = "aa:bb:cc:dd:ee:01" # the real MAC address of the LAN-side interface.
@@ -204,26 +197,18 @@ vlan "lab" {
 }
 
 # --- QoS: Bufferbloat mitigation (CAKE) ---
-## You SHOULD uncomment the `qos` section, but you need to find out
-## what your real maximum upload/download bandwidth of your WAN
-## connection is before doing so. Run iperf or use speedtest.net. Set
-## the upload_mbps and download_mbps below according to your actual
-## (peak) results. The shave_percent will throttle your connection
-## below the actual limit you set, so that the bottleneck remains on
-## your router rather than your ISP. This bottleneck will reduce your
-## peak transfer rate, but will give the router more headroom to
-## effectively prioritize traffic.
+## You must run a speed test (speedtest.net) and record your peak upload/download rate:
+## QoS will be disabled if these rates are not set:
+qos {
+  #upload_mbps    = 20
+  #download_mbps  = 300
+  shave_percent  = 10
 
-# qos {
-#   upload_mbps    = 20
-#   download_mbps  = 300
-#   shave_percent  = 10
-#
-#   overrides {
-#     voice = ["10.99.10.50", "10.99.10.51"]
-#     bulk  = ["10.99.20.0/24"]
-#   }
-# }
+  # overrides {
+  #   voice = ["10.99.10.50", "10.99.10.51"]
+  #   bulk  = ["10.99.20.0/24"]
+  # }
+}
 
 # --- Managed switch (Sodola) ---
 ## nifty-filter has OPTIONAL support to manage your Sodola switch for
@@ -231,7 +216,8 @@ vlan "lab" {
 #
 # Supervise the managed switch: enforce VLAN port assignments.
 # The NixOS module extracts these settings as env vars for sodola-switch.
-# switch {
+
+switch {
 #   url        = "http://192.168.2.1"
 #   user       = "admin"
 #   pass       = "admin"
@@ -293,4 +279,4 @@ vlan "lab" {
 #       tagged   = [10, 20, 30, 40]
 #     }
 #   }
-# }
+}

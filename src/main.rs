@@ -1461,8 +1461,8 @@ mod tests {
         assert!(rendered.contains("tc qdisc add dev ifb0 root handle 1: htb default ffff"));
         assert!(rendered.contains("classid 1:20"));
         assert!(rendered.contains("rate 10000kbit ceil 10000kbit"));
-        // Conntrack mark restoration
-        assert!(rendered.contains("matchall action ct"));
-        assert!(rendered.contains("handle 20 fw classid 1:20"));
+        // Conntrack mark restoration via tc chains
+        assert!(rendered.contains("action ct pipe action goto chain 1"));
+        assert!(rendered.contains("flower ct_mark 20 classid 1:20"));
     }
 }
