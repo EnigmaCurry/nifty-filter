@@ -435,7 +435,13 @@ pub enum VlanPortMode { Untagged, Tagged, NotMember }
 pub struct PortVlanSetting { pub port: u8, pub pvid: u16, pub accepted_frame_type: AcceptedFrameType }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
-pub enum AcceptedFrameType { All, TagOnly, UntagOnly }
+pub enum AcceptedFrameType {
+    All,
+    #[serde(rename = "Tagged Only")]
+    TagOnly,
+    #[serde(rename = "Untagged Only")]
+    UntagOnly,
+}
 
 impl PortVlanSetting {
     fn parse_table(html: &str) -> Result<Vec<PortVlanSetting>, SodolaError> {
