@@ -185,7 +185,20 @@
   }
 
   type Tab = "config" | "state" | "updates" | "about";
-  type StateSubTab = "interfaces" | "nftables" | "qos" | "switch" | "dnsmasq";
+  type StateSubTab = "interfaces" | "nftables" | "qos" | "switch" | "dnsmasq" | "services";
+
+  interface ServiceInfo {
+    name: string;
+    active_state: string;
+    sub_state: string;
+    description: string;
+    since?: string;
+  }
+
+  interface ServicesData {
+    nifty: ServiceInfo[];
+    failed: ServiceInfo[];
+  }
 
   interface AboutData {
     version: string;
@@ -203,6 +216,7 @@
   let aboutData = $state<AboutData | null>(null);
   let qosData = $state<QosData | null>(null);
   let dnsmasqData = $state<DnsmasqData | null>(null);
+  let servicesData = $state<ServicesData | null>(null);
   let updatesData = $state<UpdatesData | null>(null);
   let loading = $state(true);
   let errorMsg = $state("");
@@ -233,7 +247,7 @@
     const tab = parts[0];
     const validTabs: Tab[] = ["config", "state", "updates", "about"];
     if (validTabs.includes(tab as Tab)) {
-      const validStateSubs: StateSubTab[] = ["interfaces", "nftables", "dnsmasq", "qos", "switch"];
+      const validStateSubs: StateSubTab[] = ["interfaces", "nftables", "dnsmasq", "qos", "switch", "services"];
       return {
         tab: tab as Tab,
         hook: tab === "state" && parts[1] === "nftables" ? (parts[2] ?? "input") : "input",
@@ -319,7 +333,7 @@
 
   const tabs: { id: Tab; label: string; condition: () => boolean }[] = [
     { id: "config", label: "Config", condition: () => true },
-    { id: "state", label: "State", condition: () => (data?.interfaces.length ?? 0) > 0 || (data?.nft_chains.length ?? 0) > 0 || dnsmasqData != null || qosData != null || data?.switch != null },
+    { id: "state", label: "State", condition: () => (data?.interfaces.length ?? 0) > 0 || (data?.nft_chains.length ?? 0) > 0 || dnsmasqData != null || qosData != null || data?.switch != null || servicesData != null },
     { id: "updates", label: "Updates", condition: () => updatesData != null },
     { id: "about", label: "About", condition: () => aboutData != null },
   ];
@@ -330,6 +344,7 @@
     { id: "dnsmasq", label: "Dnsmasq", condition: () => dnsmasqData != null },
     { id: "qos", label: "QoS", condition: () => qosData != null },
     { id: "switch", label: "Switch", condition: () => data?.switch != null },
+    { id: "services", label: "Services", condition: () => servicesData != null },
   ];
 
   function formatUptime(seconds: number): string {
@@ -530,6 +545,16 @@
     } catch {}
   }
 
+  async function fetchServices() {
+    try {
+      const res = await fetch("/api/services", { credentials: "include" });
+      if (res.ok) {
+        const body = await res.json();
+        servicesData = body.data ?? null;
+      }
+    } catch {}
+  }
+
   async function fetchUpdates() {
     try {
       const res = await fetch("/api/updates", { credentials: "include" });
@@ -555,9 +580,10 @@
     fetchAbout();
     fetchQos();
     fetchDnsmasq();
+    fetchServices();
     fetchUpdates();
     fetchStatus();
-    const interval = setInterval(() => { fetchStatus(); fetchQos(); fetchDnsmasq(); }, 15000);
+    const interval = setInterval(() => { fetchStatus(); fetchQos(); fetchDnsmasq(); fetchServices(); }, 15000);
 
     // SSE: listen for config file changes and re-fetch config in realtime
     const eventSource = new EventSource("/api/events", { withCredentials: true });
@@ -1535,6 +1561,80 @@
             </div>
           </Card.Content>
         </Card.Root>
+        {:else if stateSubTab === "services" && servicesData}
+        <div class="space-y-4">
+          {#if servicesData.nifty.length > 0}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>Nifty Services</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="py-2 pr-4">Service</th>
+                      <th class="py-2 pr-4">State</th>
+                      <th class="py-2">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody class="font-mono">
+                    {#each servicesData.nifty as svc}
+                      <tr class="border-b border-border/50">
+                        <td class="py-2 pr-4 font-semibold">{svc.name}</td>
+                        <td class="py-2 pr-4">
+                          <span class="{svc.active_state === 'active' ? 'text-green-400' : svc.active_state === 'failed' ? 'text-red-400' : 'text-yellow-400'}">
+                            {svc.active_state}
+                          </span>
+                          <span class="text-muted-foreground ml-1">({svc.sub_state})</span>
+                        </td>
+                        <td class="py-2 text-muted-foreground">{svc.description}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+
+          {#if servicesData.failed.length > 0}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title class="text-red-400">Failed Services</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="py-2 pr-4">Service</th>
+                      <th class="py-2 pr-4">State</th>
+                      <th class="py-2">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody class="font-mono">
+                    {#each servicesData.failed as svc}
+                      <tr class="border-b border-border/50">
+                        <td class="py-2 pr-4 font-semibold">{svc.name}</td>
+                        <td class="py-2 pr-4">
+                          <span class="text-red-400">{svc.active_state}</span>
+                          <span class="text-muted-foreground ml-1">({svc.sub_state})</span>
+                        </td>
+                        <td class="py-2 text-muted-foreground">{svc.description}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+
+          {#if servicesData.nifty.length === 0 && servicesData.failed.length === 0}
+          <p class="text-muted-foreground text-sm">No services found.</p>
+          {/if}
+        </div>
         {/if}
 
       {:else if activeTab === "updates" && updatesData}
