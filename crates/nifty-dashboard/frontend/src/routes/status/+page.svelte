@@ -1556,7 +1556,7 @@
                   <table class="w-full text-xs">
                     <tbody class="text-muted-foreground">
                       <tr><td class="py-0.5 pr-3 font-mono text-foreground">Tin</td><td>The priority tier (Bulk, Best Effort, Video, Voice). CAKE sorts packets into tins based on their DSCP marking.</td></tr>
-                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Threshold</td><td>Maximum bandwidth this tin can use. CAKE allocates bandwidth proportionally across tins, with higher-priority tins getting a larger share.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Threshold</td><td>Bandwidth share for this tin during contention. This is not a hard cap — when other tins are idle, any tin can burst up to the full link speed. During congestion, CAKE uses thresholds to divide bandwidth fairly, with higher-priority tins getting a larger share.</td></tr>
                       <tr><td class="py-0.5 pr-3 font-mono text-foreground">Packets</td><td>Total number of packets processed by this tin since QoS was activated.</td></tr>
                       <tr><td class="py-0.5 pr-3 font-mono text-foreground">Bytes</td><td>Total bytes processed by this tin.</td></tr>
                       <tr><td class="py-0.5 pr-3 font-mono text-foreground">Drops</td><td>Packets dropped by CAKE to manage congestion. Some drops are normal under heavy load — CAKE intentionally drops to signal TCP senders to slow down.</td></tr>
