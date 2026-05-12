@@ -533,6 +533,22 @@
     return `${(kbit / 1000).toFixed(0)} Mbit`;
   }
 
+  /** Parse a tc bandwidth string (e.g. "15Mbit", "748800Kbit", "937496bit") and format as rounded Mbit. */
+  function formatBw(s: string): string {
+    if (!s) return "—";
+    const m = s.match(/^(\d+(?:\.\d+)?)\s*(bit|[KkMmGg]bit)$/);
+    if (!m) return s;
+    let val = parseFloat(m[1]);
+    const unit = m[2].toLowerCase();
+    if (unit === "bit") val /= 1_000_000;
+    else if (unit === "kbit") val /= 1000;
+    else if (unit === "gbit") val *= 1000;
+    // val is now in Mbit
+    if (val < 1) return `${(val * 1000).toFixed(0)} Kbit`;
+    if (val < 10) return `${val.toFixed(1)} Mbit`;
+    return `${Math.round(val)} Mbit`;
+  }
+
   function tinColor(name: string): string {
     switch (name) {
       case "Voice": return "text-purple-400";
@@ -1344,7 +1360,7 @@
                 <Card.Header class="pb-2">
                   <Card.Title>Upload — {cls.label}</Card.Title>
                   <Card.Description>
-                    CAKE {cls.cake.bandwidth} &middot;
+                    CAKE {formatBw(cls.cake.bandwidth)} &middot;
                     {cls.cake.sent_packets.toLocaleString()} pkts ({formatBytes(cls.cake.sent_bytes)}) &middot;
                     {cls.cake.dropped} dropped &middot;
                     {cls.cake.overlimits} overlimits
@@ -1370,7 +1386,7 @@
                         {#each cls.cake.tins as tin}
                           <tr class="border-b border-border/50">
                             <td class="py-2 pr-4 font-semibold {tinColor(tin.name)}">{tin.name}</td>
-                            <td class="py-2 pr-4">{tin.threshold}</td>
+                            <td class="py-2 pr-4">{formatBw(tin.threshold)}</td>
                             <td class="py-2 pr-4">{tin.packets.toLocaleString()}</td>
                             <td class="py-2 pr-4">{formatBytes(tin.bytes)}</td>
                             <td class="py-2 pr-4 {tin.drops > 0 ? 'text-red-400' : ''}">{tin.drops}</td>
@@ -1395,7 +1411,7 @@
                 <Card.Header class="pb-2">
                   <Card.Title>{side.label} — {side.stats.device}</Card.Title>
                   <Card.Description>
-                    CAKE {side.stats.bandwidth} &middot;
+                    CAKE {formatBw(side.stats.bandwidth)} &middot;
                     {side.stats.sent_packets.toLocaleString()} pkts ({formatBytes(side.stats.sent_bytes)}) &middot;
                     {side.stats.dropped} dropped &middot;
                     {side.stats.overlimits} overlimits
@@ -1421,7 +1437,7 @@
                         {#each side.stats.tins as tin}
                           <tr class="border-b border-border/50">
                             <td class="py-2 pr-4 font-semibold {tinColor(tin.name)}">{tin.name}</td>
-                            <td class="py-2 pr-4">{tin.threshold}</td>
+                            <td class="py-2 pr-4">{formatBw(tin.threshold)}</td>
                             <td class="py-2 pr-4">{tin.packets.toLocaleString()}</td>
                             <td class="py-2 pr-4">{formatBytes(tin.bytes)}</td>
                             <td class="py-2 pr-4 {tin.drops > 0 ? 'text-red-400' : ''}">{tin.drops}</td>
@@ -1497,8 +1513,8 @@
                         <tr class="border-b border-border/50">
                           <td class="py-2 pr-4 font-semibold">{bw.vlan_id}</td>
                           <td class="py-2 pr-4 text-purple-400">{bw.name}</td>
-                          <td class="py-2 pr-4 text-amber-400">{bw.upload_ceil ?? "—"}</td>
-                          <td class="py-2 pr-4 text-amber-400">{bw.download_ceil ?? "—"}</td>
+                          <td class="py-2 pr-4 text-amber-400">{bw.upload_ceil ? formatBw(bw.upload_ceil) : "—"}</td>
+                          <td class="py-2 pr-4 text-amber-400">{bw.download_ceil ? formatBw(bw.download_ceil) : "—"}</td>
                           <td class="py-2 text-muted-foreground text-xs">{(bw.upload_rate === bw.upload_ceil) || (bw.download_rate === bw.download_ceil) ? "non-burstable" : "burstable"}</td>
                         </tr>
                       {/each}
