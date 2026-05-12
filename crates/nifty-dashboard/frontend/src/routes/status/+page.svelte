@@ -650,7 +650,13 @@
       // onerror instantly when the server is still down
       fetch("/api/status", { credentials: "include" }).then((res) => {
         if (!res.ok || destroyed) { scheduleReconnect(retryDelay); return; }
-        // Server is up — open the SSE stream
+        // Server is up — restore UI immediately
+        retryDelay = 2000;
+        connected = true;
+        errorMsg = "";
+        fetchAll();
+
+        // Open the SSE stream for live events
         const es = new EventSource("/api/events", { withCredentials: true });
 
         es.addEventListener("config-changed", () => {
@@ -661,16 +667,9 @@
           connected = false;
           es.close();
           eventSource = null;
-          retryDelay = 5000; // graceful shutdown — longer delay
+          retryDelay = 5000;
           scheduleReconnect(retryDelay);
         });
-
-        es.onopen = () => {
-          retryDelay = 2000; // reset backoff on success
-          connected = true;
-          errorMsg = "";
-          fetchAll();
-        };
 
         es.onerror = () => {
           connected = false;
