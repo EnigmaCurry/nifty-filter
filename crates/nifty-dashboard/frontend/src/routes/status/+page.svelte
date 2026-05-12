@@ -935,7 +935,10 @@
                   </Card.Header>
                   <Card.Content class="pt-0 pb-3 px-4">
                     <div class="font-mono text-sm space-y-0">
-                      {#each Object.entries(val) as [k, v]}
+                      {#each Object.entries(val).filter(([, v]) => v == null || typeof v !== "object" || Array.isArray(v)) as [k, v]}
+                        {@render specNode(k, v, bootConfigJson?.[key] != null && typeof bootConfigJson[key] === "object" && !Array.isArray(bootConfigJson[key]) ? bootConfigJson[key][k] : undefined, 1)}
+                      {/each}
+                      {#each Object.entries(val).filter(([, v]) => v != null && typeof v === "object" && !Array.isArray(v)) as [k, v]}
                         {@render specNode(k, v, bootConfigJson?.[key] != null && typeof bootConfigJson[key] === "object" && !Array.isArray(bootConfigJson[key]) ? bootConfigJson[key][k] : undefined, 1)}
                       {/each}
                     </div>
