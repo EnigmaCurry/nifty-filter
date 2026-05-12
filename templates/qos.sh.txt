@@ -48,11 +48,17 @@ tc qdisc add dev ifb0 root cake bandwidth {{ download_kbit }}kbit diffserv4 nat 
 {% if !vlan_downloads.is_empty() %}
 
 # =============================================================================
-# Per-VLAN download caps (CAKE on VLAN interface egress)
+# Per-VLAN download caps (HTB + CAKE on VLAN interface egress)
 # =============================================================================
-# Each VLAN interface gets its own CAKE qdisc to enforce the download bandwidth cap.
-# Packets are shaped as they exit toward the VLAN — no conntrack or IFB classification needed.
+# WAN-sourced packets are marked 0x10000 by nftables (iif wan → meta mark set).
+# Only marked traffic is shaped; inter-VLAN and local traffic passes through uncapped.
 {% for dl in vlan_downloads %}
-tc qdisc replace dev "{{ dl.interface_name }}" root cake bandwidth {{ dl.kbit }}kbit diffserv4 nat wash
+
+# {{ dl.interface_name }} — WAN download cap {{ dl.kbit }}kbit
+tc qdisc replace dev "{{ dl.interface_name }}" root handle 1: htb default ffff
+tc class add dev "{{ dl.interface_name }}" parent 1: classid 1:2 htb rate {{ dl.kbit }}kbit ceil {{ dl.kbit }}kbit
+tc qdisc add dev "{{ dl.interface_name }}" parent 1:2 cake bandwidth {{ dl.kbit }}kbit diffserv4 nat wash
+tc filter add dev "{{ dl.interface_name }}" parent 1: protocol all prio 1 handle 0x10000 fw classid 1:2
+tc class add dev "{{ dl.interface_name }}" parent 1: classid 1:ffff htb rate 10gbit ceil 10gbit
 {% endfor %}
 {% endif %}

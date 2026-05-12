@@ -189,6 +189,9 @@ struct RouterTemplate {
     // QoS: DSCP marking for upload traffic prioritization
     qos_enabled: bool,
     qos_overrides: Vec<QosOverride>,
+
+    // Per-VLAN download bandwidth: mark WAN-sourced traffic for shaping on VLAN egress
+    has_download_bandwidth: bool,
 }
 
 impl RouterTemplate {
@@ -333,6 +336,10 @@ impl RouterTemplate {
             }
         }
 
+        // Check if any VLAN has download bandwidth (for nftables WAN mark rule)
+        let has_download_bandwidth = config.vlan.values()
+            .any(|v| v.bandwidth.as_ref().and_then(|b| b.download_mbps).is_some());
+
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -357,6 +364,7 @@ impl RouterTemplate {
             wan_bogons_ipv6,
             qos_enabled,
             qos_overrides,
+            has_download_bandwidth,
         })
     }
 
@@ -1451,7 +1459,10 @@ mod tests {
         assert!(rendered.contains("cake bandwidth 18000kbit diffserv4 nat wash\n"));
         // Global download is flat CAKE on ifb0
         assert!(rendered.contains("cake bandwidth 270000kbit diffserv4 nat wash ingress"));
-        // Per-VLAN download cap via CAKE on VLAN interface
-        assert!(rendered.contains(r#"tc qdisc replace dev "iot" root cake bandwidth 10000kbit diffserv4 nat wash"#));
+        // Per-VLAN download cap via HTB+CAKE on VLAN interface (only WAN traffic shaped)
+        assert!(rendered.contains(r#"tc qdisc replace dev "iot" root handle 1: htb default ffff"#));
+        assert!(rendered.contains("cake bandwidth 10000kbit diffserv4 nat wash"));
+        assert!(rendered.contains("handle 0x10000 fw classid 1:2"));
+        assert!(rendered.contains("classid 1:ffff htb rate 10gbit"));
     }
 }
