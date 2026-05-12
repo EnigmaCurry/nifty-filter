@@ -686,7 +686,7 @@
     {@const bootArr = Array.isArray(bootVal) ? bootVal : undefined}
     {@const changed = bootArr !== undefined && JSON.stringify(val) !== JSON.stringify(bootArr)}
     <div class="flex py-0.5 {'ml-' + (depth > 0 ? '4' : '0')}">
-      <span class="text-purple-400 w-48 shrink-0 truncate" title={key}>{key}</span>
+      <span class="text-purple-400 w-48 shrink-0 truncate" title={key}>{key}:</span>
       <span class="break-all">
         {#if changed}
           <span class="line-through text-muted-foreground mr-2">[{bootArr?.join(", ")}]</span>
@@ -700,7 +700,7 @@
     <!-- Primitive value -->
     {@const changed = bootVal !== undefined && bootVal !== val}
     <div class="flex py-0.5 {'ml-' + (depth > 0 ? '4' : '0')}">
-      <span class="text-purple-400 w-48 shrink-0 truncate" title={key}>{key}</span>
+      <span class="text-purple-400 w-48 shrink-0 truncate" title={key}>{key}:</span>
       <span class="break-all">
         {#if changed}
           <span class="line-through text-muted-foreground mr-2">{String(bootVal)}</span>
