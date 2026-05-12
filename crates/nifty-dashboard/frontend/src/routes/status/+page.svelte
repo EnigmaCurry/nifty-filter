@@ -103,7 +103,7 @@
   }
 
   interface VlanQosClass {
-    vlan_id: string;
+    vlan_id: number;
     name: string;
     qos_class: string;
   }
@@ -114,9 +114,9 @@
   }
 
   interface QosConfigInfo {
-    upload_mbps: string;
-    download_mbps: string;
-    shave_percent: string;
+    upload_mbps: number;
+    download_mbps: number;
+    shave_percent: number;
     effective_upload_kbit: number;
     effective_download_kbit: number;
     wan_interface: string;
@@ -135,6 +135,12 @@
     cake: CakeStats;
   }
 
+  interface BandwidthLimit {
+    vlan_id: number;
+    name: string;
+    upload_mbps: number;
+  }
+
   interface QosData {
     configured: boolean;
     active: boolean;
@@ -142,6 +148,7 @@
     upload: CakeStats | null;
     download: CakeStats | null;
     upload_classes: CakeClassStats[];
+    bandwidth_limits: BandwidthLimit[];
     dscp_rules: DscpRule[];
     bandwidth_rules: DscpRule[];
   }
@@ -1463,31 +1470,31 @@
             </Card.Root>
           {/if}
 
-          <!-- Bandwidth Rules -->
-          {#if qosData.bandwidth_rules.length > 0}
+          <!-- Per-VLAN Bandwidth Limits -->
+          {#if qosData.bandwidth_limits.length > 0}
             <Card.Root>
               <Card.Header class="pb-2">
-                <Card.Title>Bandwidth Marking Rules</Card.Title>
-                <Card.Description>Active nftables mangle rules for per-VLAN bandwidth limiting (fwmark for HTB classification)</Card.Description>
+                <Card.Title>Per-VLAN Bandwidth Limits</Card.Title>
+                <Card.Description>Hard-capped (non-burstable) upload bandwidth via HTB + CAKE</Card.Description>
               </Card.Header>
               <Card.Content>
                 <div class="overflow-x-auto">
-                  <table class="w-full text-sm" style="table-layout:fixed">
-                    <colgroup>
-                      <col />
-                      <col style="width: 16rem;" />
-                    </colgroup>
+                  <table class="w-full text-sm">
                     <thead>
                       <tr class="border-b border-border text-left text-muted-foreground">
-                        <th class="py-2">Rule</th>
-                        <th class="py-2 pl-4">Description</th>
+                        <th class="py-2 pr-4">VLAN</th>
+                        <th class="py-2 pr-4">Name</th>
+                        <th class="py-2 pr-4">Upload Cap</th>
+                        <th class="py-2">Type</th>
                       </tr>
                     </thead>
                     <tbody class="font-mono">
-                      {#each qosData.bandwidth_rules as rule}
+                      {#each qosData.bandwidth_limits as bw}
                         <tr class="border-b border-border/50">
-                          <td class="py-2 whitespace-pre-wrap">{@html highlightRule(rule.text)}</td>
-                          <td class="py-2 pl-4 text-muted-foreground text-xs font-sans">{rule.description ?? ""}</td>
+                          <td class="py-2 pr-4 font-semibold">{bw.vlan_id}</td>
+                          <td class="py-2 pr-4 text-purple-400">{bw.name}</td>
+                          <td class="py-2 pr-4 text-amber-400">{bw.upload_mbps} Mbps</td>
+                          <td class="py-2 text-muted-foreground text-xs">non-burstable</td>
                         </tr>
                       {/each}
                     </tbody>
