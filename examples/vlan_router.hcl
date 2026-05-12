@@ -14,6 +14,8 @@
 ##   mgmt is the optional management interface, for direct access to
 ##   the router for configuration, upgrade, and maintainance purposes.
 
+vlan_aware_switch = true
+
 # Interfaces:
 ## The nifty-filter config uses logical names for interfaces: trunk, wan, mgmt.
 ## However, your physical NICs may be named differently.
