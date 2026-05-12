@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 /// Top-level HCL configuration.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HclConfig {
     #[serde(default)]
     pub hostname: Option<String>,
@@ -27,6 +28,7 @@ pub struct HclConfig {
 /// Interface configuration: each interface is a labeled block with a name
 /// and an optional MAC address for renaming.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InterfacesConfig {
     pub trunk: InterfaceEntry,
     pub wan: InterfaceEntry,
@@ -36,6 +38,7 @@ pub struct InterfacesConfig {
 
 /// A single interface entry with a name and optional MAC for .link generation.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InterfaceEntry {
     pub name: String,
     #[serde(default)]
@@ -44,6 +47,7 @@ pub struct InterfaceEntry {
 
 /// Management interface entry — also has an optional subnet.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MgmtInterfaceEntry {
     pub name: String,
     #[serde(default)]
@@ -72,6 +76,7 @@ impl InterfacesConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WanConfig {
     #[serde(default = "default_true")]
     pub enable_ipv4: bool,
@@ -96,12 +101,14 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DnsConfig {
     pub upstream: Vec<String>,
 }
 
 /// Per-VLAN configuration block.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VlanHclConfig {
     pub id: u16,
     #[serde(default)]
@@ -133,6 +140,7 @@ pub struct VlanHclConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Ipv4Config {
     pub subnet: String,
     #[serde(default)]
@@ -140,6 +148,7 @@ pub struct Ipv4Config {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Ipv6Config {
     pub subnet: String,
     #[serde(default)]
@@ -147,6 +156,7 @@ pub struct Ipv6Config {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FirewallConfig {
     #[serde(default)]
     pub icmp_accept: Vec<String>,
@@ -159,6 +169,7 @@ pub struct FirewallConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DhcpConfig {
     pub pool_start: String,
     pub pool_end: String,
@@ -169,6 +180,7 @@ pub struct DhcpConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DhcpHost {
     pub mac: String,
     pub ip: String,
@@ -177,12 +189,14 @@ pub struct DhcpHost {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Dhcpv6Config {
     pub pool_start: String,
     pub pool_end: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InterVlanHclConfig {
     #[serde(default)]
     pub tcp: Vec<String>,
@@ -191,6 +205,7 @@ pub struct InterVlanHclConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct QosHclConfig {
     #[serde(default)]
     pub upload_mbps: u32,
@@ -207,6 +222,7 @@ fn default_shave() -> u8 {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct QosOverridesConfig {
     #[serde(default)]
     pub voice: Vec<String>,
@@ -220,6 +236,7 @@ pub struct QosOverridesConfig {
 
 /// Per-VLAN bandwidth limit (hard cap, non-burstable).
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BandwidthHclConfig {
     #[serde(default)]
     pub upload_mbps: Option<u32>,
@@ -230,6 +247,7 @@ pub struct BandwidthHclConfig {
 /// Managed switch configuration (sodola-switch).
 /// The HCL is the central config; the NixOS module extracts env vars for sodola-switch.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SwitchConfig {
     #[serde(default)]
     pub url: String,
@@ -247,6 +265,7 @@ pub struct SwitchConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SwitchPortConfig {
     pub pvid: u16,
     /// Accepted frame type: "all", "tagged-only", or "untagged-only"
@@ -262,6 +281,7 @@ pub struct SwitchPortConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PortVlans {
     #[serde(default)]
     pub untagged: Vec<u16>,
@@ -802,6 +822,21 @@ vlan "trusted" {
 }
 "#);
         assert!(config.vlan.get("trusted").unwrap().iperf_enabled);
+    }
+
+    #[test]
+    fn test_reject_unknown_top_level_field() {
+        let input = format!("{}{}", hcl_prefix(), "bogus_field = true\n");
+        let result = parse_hcl(&input);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown field"));
+    }
+
+    #[test]
+    fn test_reject_unknown_vlan_field() {
+        let input = format!("{}{}", hcl_prefix(), "vlan \"test\" { id = 10\n bogus = 42 }\n");
+        let result = parse_hcl(&input);
+        assert!(result.is_err(), "expected error but got: {:?}", result);
     }
 
     #[test]
