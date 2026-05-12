@@ -784,7 +784,7 @@ pve-manage-dashboard pve_host target_ip="10.99.0.1" dashboard_port="3000" local_
 
     discover_ip() {
         DASHBOARD_IP=$(ssh ${SSH_OPTS} ${PROXY} ${REMOTE} \
-            "grep '^MGMT_SUBNET=' /var/nifty-filter/nifty-filter.env | cut -d= -f2 | cut -d/ -f1" 2>/dev/null)
+            "nifty-filter get -c /var/nifty-filter/config.hcl mgmt-subnet 2>/dev/null | cut -d/ -f1" 2>/dev/null)
     }
 
     connect() {
