@@ -473,13 +473,25 @@ impl RouterTemplate {
                 })
             });
 
-            // Per-VLAN bandwidth limit
-            let bandwidth_upload_kbit = vhcl.bandwidth.as_ref().map(|bw| {
-                if bw.upload_mbps == 0 {
-                    errors.push(format!("vlan \"{}\".bandwidth.upload_mbps must be greater than 0.", name));
+            // Per-VLAN bandwidth limits
+            let (bandwidth_upload_kbit, bandwidth_download_kbit) = if let Some(bw) = &vhcl.bandwidth {
+                if bw.upload_mbps.is_none() && bw.download_mbps.is_none() {
+                    errors.push(format!("vlan \"{}\".bandwidth: at least one of upload_mbps or download_mbps must be set.", name));
                 }
-                bw.upload_mbps * 1000
-            });
+                if let Some(up) = bw.upload_mbps {
+                    if up == 0 {
+                        errors.push(format!("vlan \"{}\".bandwidth.upload_mbps must be greater than 0.", name));
+                    }
+                }
+                if let Some(down) = bw.download_mbps {
+                    if down == 0 {
+                        errors.push(format!("vlan \"{}\".bandwidth.download_mbps must be greater than 0.", name));
+                    }
+                }
+                (bw.upload_mbps.map(|v| v * 1000), bw.download_mbps.map(|v| v * 1000))
+            } else {
+                (None, None)
+            };
 
             // DHCP
             let dhcp_enabled = vhcl.dhcp.is_some();
@@ -525,6 +537,7 @@ impl RouterTemplate {
                 udp_allow_inter_vlan: InterVlanRuleList::new(),
                 qos_class,
                 bandwidth_upload_kbit,
+                bandwidth_download_kbit,
                 iperf_enabled: vhcl.iperf_enabled,
                 dhcp_enabled,
                 dhcp_pool_start,
@@ -571,8 +584,10 @@ struct QosTemplate {
     interface_wan: Interface,
     upload_kbit: u32,
     download_kbit: u32,
-    vlan_bandwidths: Vec<qos::QosVlanBandwidth>,
+    vlan_upload_limits: Vec<qos::QosVlanBandwidth>,
+    vlan_download_limits: Vec<qos::QosVlanBandwidth>,
     default_upload_kbit: u32,
+    default_download_kbit: u32,
 }
 
 pub fn validate_nftables_config(config: &str) -> Result<(), String> {
@@ -678,31 +693,53 @@ fn app() {
                     match QosConfig::from_hcl(qos_hcl) {
                         Ok(qos_config) => {
                             // Collect per-VLAN bandwidth limits
-                            let mut vlan_bandwidths = Vec::new();
+                            let mut vlan_upload_limits = Vec::new();
+                            let mut vlan_download_limits = Vec::new();
                             let mut entries: Vec<_> = hcl_config.vlan.iter().collect();
                             entries.sort_by_key(|(_, v)| v.id);
                             for (name, vhcl) in &entries {
                                 if let Some(bw) = &vhcl.bandwidth {
-                                    if bw.upload_mbps == 0 {
-                                        errors.push(format!("vlan \"{}\".bandwidth.upload_mbps must be greater than 0.", name));
-                                        continue;
+                                    if let Some(up) = bw.upload_mbps {
+                                        if up == 0 {
+                                            errors.push(format!("vlan \"{}\".bandwidth.upload_mbps must be greater than 0.", name));
+                                        } else {
+                                            vlan_upload_limits.push(qos::QosVlanBandwidth {
+                                                vlan_id: vhcl.id,
+                                                kbit: up * 1000,
+                                            });
+                                        }
                                     }
-                                    let upload_kbit = bw.upload_mbps * 1000;
-                                    vlan_bandwidths.push(qos::QosVlanBandwidth {
-                                        vlan_id: vhcl.id,
-                                        upload_kbit,
-                                    });
+                                    if let Some(down) = bw.download_mbps {
+                                        if down == 0 {
+                                            errors.push(format!("vlan \"{}\".bandwidth.download_mbps must be greater than 0.", name));
+                                        } else {
+                                            vlan_download_limits.push(qos::QosVlanBandwidth {
+                                                vlan_id: vhcl.id,
+                                                kbit: down * 1000,
+                                            });
+                                        }
+                                    }
                                 }
                             }
 
-                            let vlan_bw_sum: u32 = vlan_bandwidths.iter().map(|v| v.upload_kbit).sum();
-                            let default_upload_kbit = if !vlan_bandwidths.is_empty() && vlan_bw_sum >= qos_config.upload_kbit {
+                            let upload_bw_sum: u32 = vlan_upload_limits.iter().map(|v| v.kbit).sum();
+                            let default_upload_kbit = if !vlan_upload_limits.is_empty() && upload_bw_sum >= qos_config.upload_kbit {
                                 errors.push("Sum of per-VLAN bandwidth.upload_mbps exceeds total qos.upload_mbps (after shave).".to_string());
                                 0
-                            } else if vlan_bandwidths.is_empty() {
+                            } else if vlan_upload_limits.is_empty() {
                                 qos_config.upload_kbit
                             } else {
-                                qos_config.upload_kbit - vlan_bw_sum
+                                qos_config.upload_kbit - upload_bw_sum
+                            };
+
+                            let download_bw_sum: u32 = vlan_download_limits.iter().map(|v| v.kbit).sum();
+                            let default_download_kbit = if !vlan_download_limits.is_empty() && download_bw_sum >= qos_config.download_kbit {
+                                errors.push("Sum of per-VLAN bandwidth.download_mbps exceeds total qos.download_mbps (after shave).".to_string());
+                                0
+                            } else if vlan_download_limits.is_empty() {
+                                qos_config.download_kbit
+                            } else {
+                                qos_config.download_kbit - download_bw_sum
                             };
 
                             if !errors.is_empty() {
@@ -715,8 +752,10 @@ fn app() {
                                 interface_wan,
                                 upload_kbit: qos_config.upload_kbit,
                                 download_kbit: qos_config.download_kbit,
-                                vlan_bandwidths,
+                                vlan_upload_limits,
+                                vlan_download_limits,
                                 default_upload_kbit,
+                                default_download_kbit,
                             };
                             println!("{}", tmpl.render().unwrap());
                         }
@@ -1325,9 +1364,9 @@ mod tests {
         let qos_config = QosConfig::from_hcl(qos_hcl).unwrap();
 
         let interface_wan = Interface::new("wan").unwrap();
-        let vlan_bandwidths = vec![qos::QosVlanBandwidth {
+        let vlan_upload_limits = vec![qos::QosVlanBandwidth {
             vlan_id: 20,
-            upload_kbit: 5000,
+            kbit: 5000,
         }];
         let default_upload_kbit = qos_config.upload_kbit - 5000;
 
@@ -1335,12 +1374,14 @@ mod tests {
             interface_wan,
             upload_kbit: qos_config.upload_kbit,
             download_kbit: qos_config.download_kbit,
-            vlan_bandwidths,
+            vlan_upload_limits,
+            vlan_download_limits: vec![],
             default_upload_kbit,
+            default_download_kbit: qos_config.download_kbit,
         };
         let rendered = tmpl.render().unwrap();
 
-        // Should use HTB, not flat CAKE
+        // Should use HTB for upload, not flat CAKE
         assert!(rendered.contains("htb default ffff"));
         assert!(rendered.contains("classid 1:20"));
         assert!(rendered.contains("rate 5000kbit ceil 5000kbit"));
@@ -1348,6 +1389,8 @@ mod tests {
         // Default class should have remaining bandwidth
         assert!(rendered.contains("classid 1:ffff"));
         assert!(rendered.contains(&format!("rate {}kbit", default_upload_kbit)));
+        // Download should be flat CAKE (no download limits)
+        assert!(rendered.contains("cake bandwidth 270000kbit diffserv4 nat wash ingress"));
     }
 
     #[test]
@@ -1375,13 +1418,51 @@ mod tests {
             interface_wan: Interface::new("wan").unwrap(),
             upload_kbit: qos_config.upload_kbit,
             download_kbit: qos_config.download_kbit,
-            vlan_bandwidths: vec![],
+            vlan_upload_limits: vec![],
+            vlan_download_limits: vec![],
             default_upload_kbit: qos_config.upload_kbit,
+            default_download_kbit: qos_config.download_kbit,
         };
         let rendered = tmpl.render().unwrap();
 
         // Should use flat CAKE, not HTB
         assert!(!rendered.contains("htb"));
-        assert!(rendered.contains("cake bandwidth 18000kbit diffserv4 nat wash"));
+        assert!(rendered.contains("cake bandwidth 18000kbit diffserv4 nat wash\n"));
+        assert!(rendered.contains("cake bandwidth 270000kbit diffserv4 nat wash ingress"));
+    }
+
+    #[test]
+    fn test_bandwidth_download_htb() {
+        let qos_hcl = crate::hcl_config::QosHclConfig {
+            upload_mbps: 20,
+            download_mbps: 300,
+            shave_percent: 10,
+            overrides: None,
+        };
+        let qos_config = QosConfig::from_hcl(&qos_hcl).unwrap();
+
+        let tmpl = QosTemplate {
+            interface_wan: Interface::new("wan").unwrap(),
+            upload_kbit: qos_config.upload_kbit,
+            download_kbit: qos_config.download_kbit,
+            vlan_upload_limits: vec![],
+            vlan_download_limits: vec![qos::QosVlanBandwidth {
+                vlan_id: 20,
+                kbit: 10000,
+            }],
+            default_upload_kbit: qos_config.upload_kbit,
+            default_download_kbit: qos_config.download_kbit - 10000,
+        };
+        let rendered = tmpl.render().unwrap();
+
+        // Upload should be flat CAKE
+        assert!(rendered.contains("cake bandwidth 18000kbit diffserv4 nat wash\n"));
+        // Download should use HTB+CAKE on ifb0
+        assert!(rendered.contains("tc qdisc add dev ifb0 root handle 1: htb default ffff"));
+        assert!(rendered.contains("classid 1:20"));
+        assert!(rendered.contains("rate 10000kbit ceil 10000kbit"));
+        // Conntrack mark restoration
+        assert!(rendered.contains("matchall action ct"));
+        assert!(rendered.contains("handle 20 fw classid 1:20"));
     }
 }

@@ -117,7 +117,8 @@ vlan "iot" {
   id = 20
 
   # bandwidth {
-  #   upload_mbps = 5
+  #   upload_mbps   = 5
+  #   download_mbps = 10
   # }
 
   ipv4 {

@@ -26,6 +26,7 @@ pub struct Vlan {
     pub udp_allow_inter_vlan: InterVlanRuleList,
     pub qos_class: Option<QosClass>,
     pub bandwidth_upload_kbit: Option<u32>,
+    pub bandwidth_download_kbit: Option<u32>,
     pub iperf_enabled: bool,
     pub dhcp_enabled: bool,
     pub dhcp_pool_start: String,

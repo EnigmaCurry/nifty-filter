@@ -106,7 +106,10 @@ struct CakeClassStats {
 struct BandwidthLimit {
     vlan_id: u64,
     name: String,
-    upload_mbps: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upload_mbps: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_mbps: Option<u64>,
 }
 
 // --- Handler ---
@@ -196,11 +199,14 @@ fn extract_qos_config(
                 vlan_names.insert(id.to_string(), name.clone());
 
                 if let Some(bw) = vlan.get("bandwidth") {
-                    if let Some(upload_mbps) = bw.get("upload_mbps").and_then(|v| v.as_u64()) {
+                    let upload_mbps = bw.get("upload_mbps").and_then(|v| v.as_u64());
+                    let download_mbps = bw.get("download_mbps").and_then(|v| v.as_u64());
+                    if upload_mbps.is_some() || download_mbps.is_some() {
                         bandwidth_limits.push(BandwidthLimit {
                             vlan_id: id,
                             name: name.clone(),
                             upload_mbps,
+                            download_mbps,
                         });
                     }
                 }

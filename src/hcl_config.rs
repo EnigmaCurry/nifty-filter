@@ -219,7 +219,10 @@ pub struct QosOverridesConfig {
 /// Per-VLAN bandwidth limit (hard cap, non-burstable).
 #[derive(Debug, Deserialize)]
 pub struct BandwidthHclConfig {
-    pub upload_mbps: u32,
+    #[serde(default)]
+    pub upload_mbps: Option<u32>,
+    #[serde(default)]
+    pub download_mbps: Option<u32>,
 }
 
 /// Managed switch configuration (sodola-switch).
@@ -747,12 +750,29 @@ vlan "iot" {
 vlan "iot" {
   id = 20
   bandwidth {
+    upload_mbps   = 5
+    download_mbps = 10
+  }
+}
+"#);
+        let bw = config.vlan.get("iot").unwrap().bandwidth.as_ref().unwrap();
+        assert_eq!(bw.upload_mbps, Some(5));
+        assert_eq!(bw.download_mbps, Some(10));
+    }
+
+    #[test]
+    fn test_parse_vlan_bandwidth_upload_only() {
+        let config = parse_with_prefix(r#"
+vlan "iot" {
+  id = 20
+  bandwidth {
     upload_mbps = 5
   }
 }
 "#);
         let bw = config.vlan.get("iot").unwrap().bandwidth.as_ref().unwrap();
-        assert_eq!(bw.upload_mbps, 5);
+        assert_eq!(bw.upload_mbps, Some(5));
+        assert_eq!(bw.download_mbps, None);
     }
 
     #[test]
