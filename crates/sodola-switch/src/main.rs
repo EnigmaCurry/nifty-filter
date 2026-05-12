@@ -415,8 +415,8 @@ fn port_mode_label(m: VlanPortMode) -> &'static str {
 fn parse_accepted_frame_type(s: &str) -> Result<AcceptedFrameType, String> {
     match s.to_lowercase().as_str() {
         "all" => Ok(AcceptedFrameType::All),
-        "tag-only" | "tag" | "tagged" => Ok(AcceptedFrameType::TagOnly),
-        "untag-only" | "untag" | "untagged" => Ok(AcceptedFrameType::UntagOnly),
+        "tag-only" | "tagged-only" | "tag" | "tagged" => Ok(AcceptedFrameType::TagOnly),
+        "untag-only" | "untagged-only" | "untag" | "untagged" => Ok(AcceptedFrameType::UntagOnly),
         other => Err(format!("invalid frame type '{}' (use all/tag-only/untag-only)", other)),
     }
 }
