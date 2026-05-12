@@ -24,8 +24,7 @@ tc class add dev "$WAN_INTERFACE" parent 1: classid 1:1 htb rate {{ upload_kbit 
 # VLAN {{ vb.vlan_id }} — hard cap {{ vb.kbit }}kbit (non-burstable: ceil == rate)
 tc class add dev "$WAN_INTERFACE" parent 1:1 classid 1:{{ vb.vlan_id }} htb rate {{ vb.kbit }}kbit ceil {{ vb.kbit }}kbit
 tc qdisc add dev "$WAN_INTERFACE" parent 1:{{ vb.vlan_id }} cake bandwidth {{ vb.kbit }}kbit diffserv4 nat wash
-tc filter add dev "$WAN_INTERFACE" parent 1: protocol ip prio 1 handle {{ vb.vlan_id }} fw classid 1:{{ vb.vlan_id }}
-tc filter add dev "$WAN_INTERFACE" parent 1: protocol ipv6 prio 1 handle {{ vb.vlan_id }} fw classid 1:{{ vb.vlan_id }}
+tc filter add dev "$WAN_INTERFACE" parent 1: protocol all prio 1 handle {{ vb.vlan_id }} fw classid 1:{{ vb.vlan_id }}
 {% endfor %}
 
 # Default class — uncapped VLANs share remaining bandwidth, can burst to total
@@ -65,10 +64,8 @@ tc class add dev ifb0 parent 1:1 classid 1:ffff htb rate {{ default_download_kbi
 tc qdisc add dev ifb0 parent 1:ffff cake bandwidth {{ download_kbit }}kbit diffserv4 nat wash ingress
 
 # Restore conntrack marks to skb for fw classification
-tc filter add dev ifb0 parent 1: prio 0 protocol ip matchall action ct
-tc filter add dev ifb0 parent 1: prio 0 protocol ipv6 matchall action ct
+tc filter add dev ifb0 parent 1: prio 0 matchall action ct
 {% for vb in vlan_download_limits %}
-tc filter add dev ifb0 parent 1: protocol ip prio 1 handle {{ vb.vlan_id }} fw classid 1:{{ vb.vlan_id }}
-tc filter add dev ifb0 parent 1: protocol ipv6 prio 1 handle {{ vb.vlan_id }} fw classid 1:{{ vb.vlan_id }}
+tc filter add dev ifb0 parent 1: protocol all prio 1 handle {{ vb.vlan_id }} fw classid 1:{{ vb.vlan_id }}
 {% endfor %}
 {% endif %}
