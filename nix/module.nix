@@ -193,8 +193,8 @@ in
 
         # Ensure WAN accepts RAs despite forwarding (must override after networkd)
         if [ "$ENABLE_IPV6" = "true" ] && [ -n "$WAN_INTERFACE" ]; then
-          mkdir -p /etc/systemd/system/systemd-networkd.service.d
-          cat > /etc/systemd/system/systemd-networkd.service.d/accept-ra.conf <<RAEOF
+          mkdir -p /run/systemd/system/systemd-networkd.service.d
+          cat > /run/systemd/system/systemd-networkd.service.d/accept-ra.conf <<RAEOF
         [Service]
         ExecStartPost=/bin/sh -c 'sleep 1 && /run/current-system/sw/bin/sysctl -w net.ipv6.conf.$WAN_INTERFACE.accept_ra=2 net.ipv6.conf.$WAN_INTERFACE.forwarding=0'
         RAEOF

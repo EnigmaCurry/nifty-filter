@@ -722,10 +722,13 @@
 
         {#if configSubTab === "overview"}
           {@const hostname = configJson?.hostname ?? "nifty-filter"}
-          {@const wanIface = configJson?.interfaces?.wan ?? ""}
-          {@const trunkIface = configJson?.interfaces?.trunk ?? ""}
-          {@const mgmtIface = configJson?.interfaces?.mgmt ?? ""}
-          {@const mgmtSubnet = configJson?.interfaces?.mgmt_subnet ?? ""}
+          {@const wanRaw = configJson?.interfaces?.wan ?? ""}
+          {@const trunkRaw = configJson?.interfaces?.trunk ?? ""}
+          {@const mgmtRaw = configJson?.interfaces?.mgmt ?? ""}
+          {@const wanIface = typeof wanRaw === "object" ? wanRaw?.name ?? "" : wanRaw}
+          {@const trunkIface = typeof trunkRaw === "object" ? trunkRaw?.name ?? "" : trunkRaw}
+          {@const mgmtIface = typeof mgmtRaw === "object" ? mgmtRaw?.name ?? "" : mgmtRaw}
+          {@const mgmtSubnet = configJson?.interfaces?.mgmt_subnet ?? (typeof mgmtRaw === "object" ? mgmtRaw?.subnet ?? "" : "")}
           {@const ipv4 = configJson?.wan?.enable_ipv4 === true}
           {@const ipv6 = configJson?.wan?.enable_ipv6 === true}
           {@const vlanSwitch = configJson?.vlan_aware_switch === true}
