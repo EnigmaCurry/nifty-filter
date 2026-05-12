@@ -238,6 +238,7 @@
   let updatesData = $state<UpdatesData | null>(null);
   let loading = $state(true);
   let errorMsg = $state("");
+  let connected = $state(true);
   let activeTab = $state<Tab>("config");
   let configSubTab = $state<ConfigSubTab>("overview");
   let stateSubTab = $state<StateSubTab>("interfaces");
@@ -502,6 +503,9 @@
         }
       }
     } catch (e) {
+      if (String(e).includes("NetworkError") || String(e).includes("fetch")) {
+        connected = false;
+      }
       errorMsg = String(e);
     } finally {
       loading = false;
@@ -617,17 +621,55 @@
     fetchServices();
     fetchUpdates();
     fetchStatus();
-    const interval = setInterval(() => { fetchStatus(); fetchQos(); fetchDnsmasq(); fetchServices(); }, 15000);
+    const interval = setInterval(() => {
+      if (!connected) return;
+      fetchStatus(); fetchQos(); fetchDnsmasq(); fetchServices();
+    }, 15000);
 
-    // SSE: listen for config file changes and re-fetch config in realtime
-    const eventSource = new EventSource("/api/events", { withCredentials: true });
-    eventSource.addEventListener("config-changed", () => {
-      console.log("SSE: config-changed event received, re-fetching config");
-      fetchConfig();
-    });
-    eventSource.onerror = (e) => {
-      console.warn("SSE connection error", e);
-    };
+    // SSE with reconnection logic
+    let eventSource: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let destroyed = false;
+
+    function fetchAll() {
+      fetchStatus(); fetchConfig(); fetchQos(); fetchDnsmasq(); fetchServices(); fetchUpdates(); fetchAbout();
+    }
+
+    function connectSSE() {
+      if (destroyed) return;
+      eventSource = new EventSource("/api/events", { withCredentials: true });
+
+      eventSource.addEventListener("config-changed", () => {
+        fetchConfig();
+      });
+
+      eventSource.addEventListener("shutdown", () => {
+        connected = false;
+        eventSource?.close();
+        eventSource = null;
+        // Server is gracefully shutting down — wait 5s before reconnecting
+        reconnectTimer = setTimeout(connectSSE, 5000);
+      });
+
+      eventSource.onopen = () => {
+        if (!connected) {
+          // Reconnected after a disconnect — re-fetch everything
+          connected = true;
+          errorMsg = "";
+          fetchAll();
+        }
+      };
+
+      eventSource.onerror = () => {
+        connected = false;
+        eventSource?.close();
+        eventSource = null;
+        // Unexpected disconnect — retry after 2s
+        reconnectTimer = setTimeout(connectSSE, 2000);
+      };
+    }
+
+    connectSSE();
 
     function onPopState() {
       const saved = readHash();
@@ -643,8 +685,10 @@
     window.addEventListener("popstate", onPopState);
 
     return () => {
+      destroyed = true;
       clearInterval(interval);
-      eventSource.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      eventSource?.close();
       window.removeEventListener("popstate", onPopState);
     };
   });
@@ -723,6 +767,15 @@
   <title>Status</title>
 </svelte:head>
 
+{#if !connected}
+  <div class="min-h-screen flex flex-col items-center justify-center gap-4">
+    <svg class="animate-spin h-10 w-10 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+    <p class="text-muted-foreground text-sm">Connection lost. Reconnecting...</p>
+  </div>
+{:else}
 <div class="min-h-screen px-4 py-2 md:px-8 md:py-3 max-w-6xl mx-auto space-y-3">
   <!-- Title bar with uptime -->
   <div class="flex items-baseline justify-between">
@@ -1952,3 +2005,4 @@
     </div>
   {/if}
 </div>
+{/if}
