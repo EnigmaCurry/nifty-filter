@@ -172,6 +172,9 @@ enum Commands {
         /// Path to the config env file (default: $SODOLA_CONFIG_DIR/config.env)
         #[arg(long, env = "SODOLA_SWITCH_CONFIG")]
         env_file: Option<PathBuf>,
+        /// Path to the HCL config file (alternative to --env-file, reads switch block directly)
+        #[arg(long)]
+        config: Option<PathBuf>,
         /// Write switch state JSON to this file after each run
         #[arg(long, env = "SODOLA_STATE_FILE")]
         state_file: Option<PathBuf>,
@@ -228,6 +231,139 @@ struct DesiredState {
     vlans: Vec<DesiredVlan>,
     managed_vids: HashSet<u16>,
     ports: Vec<DesiredPort>,
+}
+
+// --- HCL config support ---
+
+#[derive(serde::Deserialize)]
+struct HclRoot {
+    #[serde(default)]
+    switch: Option<HclSwitchConfig>,
+    #[serde(default)]
+    vlan: HashMap<String, HclVlanEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct HclSwitchConfig {
+    url: String,
+    #[serde(default)]
+    user: Option<String>,
+    #[serde(default)]
+    pass: Option<String>,
+    #[serde(default)]
+    mgmt_iface: Option<String>,
+    #[serde(default)]
+    router_ip: Option<String>,
+    #[serde(default)]
+    port: HashMap<String, HclPortConfig>,
+}
+
+#[derive(serde::Deserialize)]
+struct HclPortConfig {
+    pvid: u16,
+    accept: String,
+    #[serde(default)]
+    vlans: Option<HclPortVlans>,
+}
+
+#[derive(serde::Deserialize)]
+struct HclPortVlans {
+    #[serde(default)]
+    untagged: Vec<u16>,
+    #[serde(default)]
+    tagged: Vec<u16>,
+}
+
+#[derive(serde::Deserialize)]
+struct HclVlanEntry {
+    id: u16,
+}
+
+/// Credentials + connection info extracted from HCL switch block.
+#[allow(dead_code)]
+struct HclSwitchAuth {
+    url: String,
+    user: String,
+    pass: String,
+    mgmt_iface: Option<String>,
+    router_ip: Option<String>,
+}
+
+fn parse_hcl_config(path: &std::path::Path) -> Result<(HclSwitchAuth, Option<DesiredState>), String> {
+    let contents = fs::read_to_string(path)
+        .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
+    let root: HclRoot = hcl::from_str(&contents)
+        .map_err(|e| format!("HCL parse error: {}", e))?;
+
+    let switch = match root.switch {
+        Some(s) => s,
+        None => return Err("no switch block in config".to_string()),
+    };
+
+    let auth = HclSwitchAuth {
+        url: switch.url.clone(),
+        user: switch.user.clone().unwrap_or_else(|| "admin".to_string()),
+        pass: switch.pass.clone().unwrap_or_else(|| "admin".to_string()),
+        mgmt_iface: switch.mgmt_iface.clone(),
+        router_ip: switch.router_ip.clone(),
+    };
+
+    if switch.port.is_empty() {
+        return Ok((auth, None));
+    }
+
+    // Collect all VLAN IDs referenced by ports
+    let mut managed_vids: HashSet<u16> = HashSet::new();
+    // Always include VLAN 1
+    managed_vids.insert(1);
+    for (_, vlan) in &root.vlan {
+        managed_vids.insert(vlan.id);
+    }
+
+    // Build per-VLAN port mode arrays from port configs
+    // First, collect all VLANs and their port memberships
+    let mut vlan_ports: HashMap<u16, [VlanPortMode; 9]> = HashMap::new();
+    for vid in &managed_vids {
+        vlan_ports.insert(*vid, [VlanPortMode::NotMember; 9]);
+    }
+
+    let mut desired_ports: Vec<DesiredPort> = Vec::new();
+
+    for (port_str, port_cfg) in &switch.port {
+        let port_num: u8 = port_str.parse()
+            .map_err(|e| format!("bad port number '{}': {}", port_str, e))?;
+        if !(1..=9).contains(&port_num) {
+            return Err(format!("port {} out of range (1-9)", port_num));
+        }
+        let idx = (port_num - 1) as usize;
+
+        if let Some(ref vlans) = port_cfg.vlans {
+            for &vid in &vlans.untagged {
+                managed_vids.insert(vid);
+                vlan_ports.entry(vid).or_insert([VlanPortMode::NotMember; 9])[idx] = VlanPortMode::Untagged;
+            }
+            for &vid in &vlans.tagged {
+                managed_vids.insert(vid);
+                vlan_ports.entry(vid).or_insert([VlanPortMode::NotMember; 9])[idx] = VlanPortMode::Tagged;
+            }
+        }
+
+        let accepted_frame_type = parse_accepted_frame_type(&port_cfg.accept)?;
+        desired_ports.push(DesiredPort { port: port_num, pvid: port_cfg.pvid, accepted_frame_type });
+    }
+
+    // Build VLAN desired state
+    let mut vlans: Vec<DesiredVlan> = Vec::new();
+    for (&vid, ports) in &vlan_ports {
+        // Find name from top-level vlan blocks
+        let name = root.vlan.iter()
+            .find(|(_, v)| v.id == vid)
+            .map(|(n, _)| n.clone())
+            .unwrap_or_default();
+        vlans.push(DesiredVlan { vid, name, ports: *ports });
+    }
+
+    Ok((auth, Some(DesiredState { vlans, managed_vids, ports: desired_ports })))
 }
 
 /// Parse a port-range string like "5-7,9" or "-" into a set of port numbers.
@@ -389,7 +525,7 @@ fn dump_state(client: &SodolaClient, state_file: &std::path::Path) {
     }
 }
 
-fn run_supervise(client: &mut SodolaClient, env_file: &std::path::Path, state_file: Option<&std::path::Path>, dry_run: bool, do_save: bool) {
+fn run_supervise_from_env(client: &mut SodolaClient, env_file: &std::path::Path, state_file: Option<&std::path::Path>, dry_run: bool, do_save: bool) {
     let desired = match parse_desired_state(env_file) {
         Ok(Some(d)) => d,
         Ok(None) => {
@@ -401,6 +537,10 @@ fn run_supervise(client: &mut SodolaClient, env_file: &std::path::Path, state_fi
             return;
         }
     };
+    run_supervise(client, desired, state_file, dry_run, do_save);
+}
+
+fn run_supervise(client: &mut SodolaClient, desired: DesiredState, state_file: Option<&std::path::Path>, dry_run: bool, do_save: bool) {
 
     let current_vlans = match client.vlans() {
         Ok(v) => v,
@@ -588,17 +728,50 @@ fn main() {
         return;
     }
 
-    // Supervise handles its own auth from the env file
-    if let Commands::Supervise { ref env_file, ref state_file, dry_run, save, interval, ref iface, ref ip } = cli.command {
-        let path = env_file.clone().unwrap_or_else(|| config_dir().join("config.env"));
-        // Load env file first so SODOLA_URL/USER/PASS are available
-        if let Err(e) = dotenvy::from_filename(&path) {
-            eprintln!("supervise: failed to load {}: {}", path.display(), e);
-            exit(1);
-        }
-        let url = env::var("SODOLA_URL").unwrap_or_else(|_| "http://192.168.2.1".to_string());
-        let user = env::var("SODOLA_USER").unwrap_or_else(|_| "admin".to_string());
-        let pass = env::var("SODOLA_PASS").unwrap_or_else(|_| "admin".to_string());
+    // Supervise handles its own auth
+    if let Commands::Supervise { ref env_file, ref config, ref state_file, dry_run, save, interval, ref iface, ref ip } = cli.command {
+        // Determine auth and desired-state source
+        let (url, user, pass, run_fn): (String, String, String, Box<dyn Fn(&mut SodolaClient)>) = if let Some(ref hcl_path) = config {
+            // HCL mode: read switch block from HCL config
+            let (auth, desired) = match parse_hcl_config(hcl_path) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("supervise: {}", e);
+                    exit(1);
+                }
+            };
+            let _desired = match desired {
+                Some(d) => d,
+                None => {
+                    eprintln!("supervise: no switch port config found in HCL");
+                    exit(1);
+                }
+            };
+            let sf = state_file.clone();
+            (auth.url, auth.user, auth.pass, Box::new(move |client: &mut SodolaClient| {
+                // Re-parse HCL each time in daemon mode to pick up config changes
+                let (_, desired) = match parse_hcl_config(hcl_path) {
+                    Ok((_, Some(d))) => ((), d),
+                    Ok((_, None)) => { eprintln!("supervise: no switch port config"); return; }
+                    Err(e) => { eprintln!("supervise: {}", e); return; }
+                };
+                run_supervise(client, desired, sf.as_deref(), dry_run, save);
+            }))
+        } else {
+            // Env file mode (legacy)
+            let path = env_file.clone().unwrap_or_else(|| config_dir().join("config.env"));
+            if let Err(e) = dotenvy::from_filename(&path) {
+                eprintln!("supervise: failed to load {}: {}", path.display(), e);
+                exit(1);
+            }
+            let url = env::var("SODOLA_URL").unwrap_or_else(|_| "http://192.168.2.1".to_string());
+            let user = env::var("SODOLA_USER").unwrap_or_else(|_| "admin".to_string());
+            let pass = env::var("SODOLA_PASS").unwrap_or_else(|_| "admin".to_string());
+            let sf = state_file.clone();
+            (url, user, pass, Box::new(move |client: &mut SodolaClient| {
+                run_supervise_from_env(client, &path, sf.as_deref(), dry_run, save);
+            }))
+        };
 
         if interval == 0 {
             // One-shot mode
@@ -607,7 +780,7 @@ fn main() {
                 eprintln!("supervise: login failed: {}", e);
                 exit(1);
             }
-            run_supervise(&mut client, &path, state_file.as_deref(), dry_run, save);
+            run_fn(&mut client);
         } else {
             // Daemon mode: route-up first, then loop
             if let (Some(iface), Some(ip)) = (iface, ip) {
@@ -619,7 +792,7 @@ fn main() {
                 if let Err(e) = client.login(&user, &pass) {
                     eprintln!("supervise: login failed (will retry): {}", e);
                 } else {
-                    run_supervise(&mut client, &path, state_file.as_deref(), dry_run, save);
+                    run_fn(&mut client);
                 }
                 std::thread::sleep(std::time::Duration::from_secs(interval));
             }
