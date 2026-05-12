@@ -137,17 +137,24 @@ async fn get_qos(_state: State<AppState>) -> ApiJson<QosResponse> {
         .unwrap_or("wan")
         .to_string();
 
-    let (config, vlan_names) = extract_qos_config(&hcl, &wan_iface);
-    let configured = config.is_some();
+    let hcl_info = extract_qos_config(&hcl, &wan_iface);
+    let configured = hcl_info.config.is_some();
 
-    let (wan_upload, download, dscp_rules, bandwidth_rules, upload_htb, download_htb) = tokio::join!(
+    let (wan_upload, download, dscp_rules, bandwidth_rules, upload_htb) = tokio::join!(
         read_wan_upload_stats(&wan_iface),
         read_cake_stats_flat("ifb0"),
         read_dscp_rules(),
         read_bandwidth_rules(),
         read_htb_classes(&wan_iface),
-        read_htb_classes("ifb0"),
     );
+
+    // Read download caps from each VLAN interface that has download bandwidth
+    let mut vlan_download_caps: HashMap<String, HtbClassInfo> = HashMap::new();
+    for iface in &hcl_info.download_vlan_ifaces {
+        if let Some(cap) = read_vlan_download_cap(iface).await {
+            vlan_download_caps.insert(iface.clone(), cap);
+        }
+    }
 
     let (upload, mut upload_classes) = wan_upload;
     let active = upload.is_some() || !upload_classes.is_empty();
@@ -155,19 +162,19 @@ async fn get_qos(_state: State<AppState>) -> ApiJson<QosResponse> {
     // Enrich upload_classes labels with VLAN names
     for cls in &mut upload_classes {
         if cls.label.starts_with("VLAN ") {
-            if let Some(name) = vlan_names.get(&cls.label[5..]) {
+            if let Some(name) = hcl_info.vlan_names.get(&cls.label[5..]) {
                 cls.label = format!("{} (VLAN {})", name, &cls.label[5..]);
             }
         }
     }
 
-    // Build bandwidth_limits from live tc HTB class state
-    let bandwidth_limits = build_bandwidth_limits(&upload_htb, &download_htb, &vlan_names);
+    // Build bandwidth_limits from live tc state
+    let bandwidth_limits = build_bandwidth_limits(&upload_htb, &vlan_download_caps, &hcl_info.vlan_names);
 
     json_ok(QosResponse {
         configured,
         active,
-        config,
+        config: hcl_info.config,
         upload,
         download,
         upload_classes,
@@ -185,23 +192,36 @@ async fn read_hcl_config() -> Option<Value> {
     hcl::from_str(&contents).ok()
 }
 
-/// Extract QoS configuration and VLAN name map from parsed HCL.
-fn extract_qos_config(
-    hcl: &Option<Value>,
-    wan_iface: &str,
-) -> (Option<QosConfigInfo>, HashMap<String, String>) {
+/// Extracted info from HCL config.
+struct HclQosInfo {
+    config: Option<QosConfigInfo>,
+    vlan_names: HashMap<String, String>,
+    /// VLAN interface names that have download bandwidth limits (for tc queries).
+    download_vlan_ifaces: Vec<String>,
+}
+
+/// Extract QoS configuration, VLAN name map, and download VLAN interfaces from parsed HCL.
+fn extract_qos_config(hcl: &Option<Value>, wan_iface: &str) -> HclQosInfo {
     let hcl = match hcl {
         Some(v) => v,
-        None => return (None, HashMap::new()),
+        None => return HclQosInfo { config: None, vlan_names: HashMap::new(), download_vlan_ifaces: vec![] },
     };
 
     // Build VLAN name map: vlan_id_str → name
+    // Also collect interfaces with download bandwidth
     let mut vlan_names: HashMap<String, String> = HashMap::new();
+    let mut download_vlan_ifaces: Vec<String> = Vec::new();
 
     if let Some(vlans) = hcl.get("vlan").and_then(|v| v.as_object()) {
         for (name, vlan) in vlans {
             if let Some(id) = vlan.get("id").and_then(|v| v.as_u64()) {
                 vlan_names.insert(id.to_string(), name.clone());
+
+                if let Some(bw) = vlan.get("bandwidth") {
+                    if bw.get("download_mbps").and_then(|v| v.as_u64()).is_some() {
+                        download_vlan_ifaces.push(name.clone());
+                    }
+                }
             }
         }
     }
@@ -209,7 +229,7 @@ fn extract_qos_config(
     // Parse QoS block
     let qos = match hcl.get("qos") {
         Some(q) => q,
-        None => return (None, vlan_names),
+        None => return HclQosInfo { config: None, vlan_names, download_vlan_ifaces },
     };
 
     let upload_mbps = qos.get("upload_mbps").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -217,7 +237,7 @@ fn extract_qos_config(
     let shave_percent = qos.get("shave_percent").and_then(|v| v.as_u64()).unwrap_or(10);
 
     if upload_mbps == 0 || download_mbps == 0 {
-        return (None, vlan_names);
+        return HclQosInfo { config: None, vlan_names, download_vlan_ifaces };
     }
 
     let effective_upload_kbit = upload_mbps * 1000 * (100 - shave_percent) / 100;
@@ -271,7 +291,7 @@ fn extract_qos_config(
         overrides,
     };
 
-    (Some(config), vlan_names)
+    HclQosInfo { config: Some(config), vlan_names, download_vlan_ifaces }
 }
 
 /// Run `tc -s qdisc show dev <device>` and return stdout.
@@ -408,18 +428,27 @@ async fn read_htb_classes(device: &str) -> Vec<HtbClassInfo> {
     classes
 }
 
+/// Read the download cap (HTB class 1:2) from a VLAN interface.
+async fn read_vlan_download_cap(interface: &str) -> Option<HtbClassInfo> {
+    let classes = read_htb_classes(interface).await;
+    // The download cap class is 1:2 (minor "2")
+    classes.into_iter().find(|c| c.minor == "2")
+}
+
 /// Build bandwidth_limits from live tc HTB class state.
+/// Upload comes from WAN HTB classes (keyed by VLAN ID in classid minor).
+/// Download comes from per-VLAN interface HTB (class 1:2).
 fn build_bandwidth_limits(
     upload_htb: &[HtbClassInfo],
-    download_htb: &[HtbClassInfo],
+    vlan_download_caps: &HashMap<String, HtbClassInfo>,
     vlan_names: &HashMap<String, String>,
 ) -> Vec<BandwidthLimit> {
-    // Collect all VLAN IDs that have any bandwidth limit
     let mut seen: HashMap<String, BandwidthLimit> = HashMap::new();
 
+    // Upload: WAN HTB classes keyed by VLAN ID (classid minor)
     for cls in upload_htb {
         let name = vlan_names.get(&cls.minor).cloned().unwrap_or_else(|| format!("VLAN {}", cls.minor));
-        seen.entry(cls.minor.clone()).or_insert_with(|| BandwidthLimit {
+        let entry = seen.entry(cls.minor.clone()).or_insert_with(|| BandwidthLimit {
             vlan_id: cls.minor.clone(),
             name,
             upload_rate: None,
@@ -427,24 +456,29 @@ fn build_bandwidth_limits(
             download_rate: None,
             download_ceil: None,
         });
-        let entry = seen.get_mut(&cls.minor).unwrap();
         entry.upload_rate = Some(cls.rate.clone());
         entry.upload_ceil = Some(cls.ceil.clone());
     }
 
-    for cls in download_htb {
-        let name = vlan_names.get(&cls.minor).cloned().unwrap_or_else(|| format!("VLAN {}", cls.minor));
-        seen.entry(cls.minor.clone()).or_insert_with(|| BandwidthLimit {
-            vlan_id: cls.minor.clone(),
-            name,
+    // Download: per-VLAN interface HTB, keyed by interface name (== VLAN name)
+    for (iface, cap) in vlan_download_caps {
+        // Find the VLAN ID for this interface name
+        let vlan_id = vlan_names.iter()
+            .find(|(_, name)| name.as_str() == iface)
+            .map(|(id, _)| id.clone())
+            .unwrap_or_else(|| iface.clone());
+        let name = iface.clone();
+
+        let entry = seen.entry(vlan_id.clone()).or_insert_with(|| BandwidthLimit {
+            vlan_id,
+            name: name.clone(),
             upload_rate: None,
             upload_ceil: None,
             download_rate: None,
             download_ceil: None,
         });
-        let entry = seen.get_mut(&cls.minor).unwrap();
-        entry.download_rate = Some(cls.rate.clone());
-        entry.download_ceil = Some(cls.ceil.clone());
+        entry.download_rate = Some(cap.rate.clone());
+        entry.download_ceil = Some(cap.ceil.clone());
     }
 
     let mut limits: Vec<BandwidthLimit> = seen.into_values().collect();
