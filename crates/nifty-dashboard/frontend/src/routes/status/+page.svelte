@@ -630,43 +630,60 @@
     let eventSource: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let destroyed = false;
+    let retryDelay = 2000;
 
     function fetchAll() {
       fetchStatus(); fetchConfig(); fetchQos(); fetchDnsmasq(); fetchServices(); fetchUpdates(); fetchAbout();
     }
 
+    function scheduleReconnect(delay: number) {
+      if (destroyed) return;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connectSSE, delay);
+    }
+
     function connectSSE() {
       if (destroyed) return;
-      eventSource = new EventSource("/api/events", { withCredentials: true });
+      if (eventSource) { eventSource.close(); eventSource = null; }
 
-      eventSource.addEventListener("config-changed", () => {
-        fetchConfig();
-      });
+      // Probe the server with a fetch first — avoids EventSource firing
+      // onerror instantly when the server is still down
+      fetch("/api/status", { credentials: "include" }).then((res) => {
+        if (!res.ok || destroyed) { scheduleReconnect(retryDelay); return; }
+        // Server is up — open the SSE stream
+        const es = new EventSource("/api/events", { withCredentials: true });
 
-      eventSource.addEventListener("shutdown", () => {
-        connected = false;
-        eventSource?.close();
-        eventSource = null;
-        // Server is gracefully shutting down — wait 5s before reconnecting
-        reconnectTimer = setTimeout(connectSSE, 5000);
-      });
+        es.addEventListener("config-changed", () => {
+          fetchConfig();
+        });
 
-      eventSource.onopen = () => {
-        if (!connected) {
-          // Reconnected after a disconnect — re-fetch everything
+        es.addEventListener("shutdown", () => {
+          connected = false;
+          es.close();
+          eventSource = null;
+          retryDelay = 5000; // graceful shutdown — longer delay
+          scheduleReconnect(retryDelay);
+        });
+
+        es.onopen = () => {
+          retryDelay = 2000; // reset backoff on success
           connected = true;
           errorMsg = "";
           fetchAll();
-        }
-      };
+        };
 
-      eventSource.onerror = () => {
+        es.onerror = () => {
+          connected = false;
+          es.close();
+          eventSource = null;
+          scheduleReconnect(retryDelay);
+        };
+
+        eventSource = es;
+      }).catch(() => {
         connected = false;
-        eventSource?.close();
-        eventSource = null;
-        // Unexpected disconnect — retry after 2s
-        reconnectTimer = setTimeout(connectSSE, 2000);
-      };
+        scheduleReconnect(retryDelay);
+      });
     }
 
     connectSSE();
