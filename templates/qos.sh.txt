@@ -42,14 +42,18 @@ fi
 ip link set ifb0 up
 tc qdisc del dev "$WAN_INTERFACE" ingress 2>/dev/null || true
 tc qdisc add dev "$WAN_INTERFACE" handle ffff: ingress
+{% if vlan_download_limits.is_empty() %}
+# Mirror WAN ingress to ifb0
 tc filter add dev "$WAN_INTERFACE" parent ffff: matchall action mirred egress redirect dev ifb0
 tc qdisc del dev ifb0 root 2>/dev/null || true
-{% if vlan_download_limits.is_empty() %}
 # --- Flat CAKE (no per-VLAN download limits) ---
 tc qdisc add dev ifb0 root cake bandwidth {{ download_kbit }}kbit diffserv4 nat wash ingress
 {% else %}
+# Mirror WAN ingress to ifb0 with conntrack lookup (act_ct requires ingress qdisc)
+# This attaches ct info to the skb so flower ct_mark works on ifb0.
+tc filter add dev "$WAN_INTERFACE" parent ffff: matchall action ct pipe action mirred egress redirect dev ifb0
+tc qdisc del dev ifb0 root 2>/dev/null || true
 # --- HTB + CAKE (per-VLAN download limits) ---
-# Packets classified via conntrack mark (ct mark set in nftables, restored by act_ct).
 tc qdisc add dev ifb0 root handle 1: htb default ffff
 tc class add dev ifb0 parent 1: classid 1:1 htb rate {{ download_kbit }}kbit ceil {{ download_kbit }}kbit
 {% for vb in vlan_download_limits %}
@@ -63,10 +67,8 @@ tc qdisc add dev ifb0 parent 1:{{ vb.vlan_id }} cake bandwidth {{ vb.kbit }}kbit
 tc class add dev ifb0 parent 1:1 classid 1:ffff htb rate {{ default_download_kbit }}kbit ceil {{ download_kbit }}kbit
 tc qdisc add dev ifb0 parent 1:ffff cake bandwidth {{ download_kbit }}kbit diffserv4 nat wash ingress
 
-# Chain 0: conntrack lookup, then jump to chain 1 for classification
-tc filter add dev ifb0 parent 1: chain 0 protocol all prio 1 matchall action ct pipe action goto chain 1
-# Chain 1: classify by conntrack mark (set by nftables ct mark set on egress)
+# Classify by conntrack mark (ct info attached at WAN ingress, survives mirred redirect)
 {% for vb in vlan_download_limits %}
-tc filter add dev ifb0 parent 1: chain 1 protocol all prio 1 flower ct_mark {{ vb.vlan_id }} classid 1:{{ vb.vlan_id }}
+tc filter add dev ifb0 parent 1: protocol all prio 1 flower ct_mark {{ vb.vlan_id }} classid 1:{{ vb.vlan_id }}
 {% endfor %}
 {% endif %}
