@@ -770,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "nifty-filter"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "askama",
  "clap",
@@ -1102,6 +1102,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "dotenvy",
+ "hcl-rs",
  "libc",
  "md-5",
  "rpassword",

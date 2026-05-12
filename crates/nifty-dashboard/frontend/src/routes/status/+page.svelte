@@ -888,19 +888,46 @@
         {:else}
           <!-- Spec sub-tab: hierarchical HCL config view -->
           <p class="text-sm text-muted-foreground mb-4">This page shows the HCL configuration spec for nifty-filter. Edit <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.hcl</code> and your changes will appear here immediately, but will not be applied until you reboot. Changes since boot are shown in <span class="text-orange-400">orange</span>.</p>
-          <Card.Root>
-            <Card.Content class="pt-2">
-              {#if configJson}
-                <div class="font-mono text-sm space-y-0">
-                  {#each Object.entries(configJson) as [key, val]}
-                    {@render specNode(key, val, bootConfigJson?.[key], 0)}
-                  {/each}
-                </div>
-              {:else}
-                <p class="text-muted-foreground text-sm">No configuration loaded.</p>
+          {#if configJson}
+            {@const looseEntries = Object.entries(configJson).filter(([, v]) => v == null || typeof v !== "object" || Array.isArray(v))}
+            {@const blockEntries = Object.entries(configJson).filter(([, v]) => v != null && typeof v === "object" && !Array.isArray(v))}
+            <div class="space-y-3">
+              {#if looseEntries.length > 0}
+                <Card.Root>
+                  <Card.Header class="pb-1 pt-3 px-4">
+                    <Card.Title class="text-sm font-semibold">General</Card.Title>
+                  </Card.Header>
+                  <Card.Content class="pt-0 pb-3 px-4">
+                    <div class="font-mono text-sm space-y-0">
+                      {#each looseEntries as [key, val]}
+                        {@render specNode(key, val, bootConfigJson?.[key], 0)}
+                      {/each}
+                    </div>
+                  </Card.Content>
+                </Card.Root>
               {/if}
-            </Card.Content>
-          </Card.Root>
+              {#each blockEntries as [key, val]}
+                <Card.Root>
+                  <Card.Header class="pb-1 pt-3 px-4">
+                    <Card.Title class="text-sm font-semibold">{key}</Card.Title>
+                  </Card.Header>
+                  <Card.Content class="pt-0 pb-3 px-4">
+                    <div class="font-mono text-sm space-y-0">
+                      {#each Object.entries(val) as [k, v]}
+                        {@render specNode(k, v, bootConfigJson?.[key] != null && typeof bootConfigJson[key] === "object" && !Array.isArray(bootConfigJson[key]) ? bootConfigJson[key][k] : undefined, 1)}
+                      {/each}
+                    </div>
+                  </Card.Content>
+                </Card.Root>
+              {/each}
+            </div>
+          {:else}
+            <Card.Root>
+              <Card.Content class="pt-2">
+                <p class="text-muted-foreground text-sm">No configuration loaded.</p>
+              </Card.Content>
+            </Card.Root>
+          {/if}
         {/if}
         {/if}
 
