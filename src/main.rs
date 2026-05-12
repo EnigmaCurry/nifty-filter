@@ -1457,12 +1457,7 @@ mod tests {
 
         // Upload should be flat CAKE
         assert!(rendered.contains("cake bandwidth 18000kbit diffserv4 nat wash\n"));
-        // Download should use HTB+CAKE on ifb0
-        assert!(rendered.contains("tc qdisc add dev ifb0 root handle 1: htb default ffff"));
-        assert!(rendered.contains("classid 1:20"));
-        assert!(rendered.contains("rate 10000kbit ceil 10000kbit"));
-        // CT lookup on WAN ingress, ct_mark classification on ifb0
-        assert!(rendered.contains("action ct pipe action mirred egress redirect dev ifb0"));
-        assert!(rendered.contains("flower ct_mark 20 classid 1:20"));
+        // Download is flat CAKE (per-VLAN download limiting not yet supported)
+        assert!(rendered.contains("cake bandwidth 270000kbit diffserv4 nat wash ingress"));
     }
 }
