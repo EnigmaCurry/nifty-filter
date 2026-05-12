@@ -136,10 +136,12 @@
   }
 
   interface BandwidthLimit {
-    vlan_id: number;
+    vlan_id: string;
     name: string;
-    upload_mbps?: number;
-    download_mbps?: number;
+    upload_rate?: string;
+    upload_ceil?: string;
+    download_rate?: string;
+    download_ceil?: string;
   }
 
   interface QosData {
@@ -1476,7 +1478,7 @@
             <Card.Root>
               <Card.Header class="pb-2">
                 <Card.Title>Per-VLAN Bandwidth Limits</Card.Title>
-                <Card.Description>Hard-capped (non-burstable) bandwidth via HTB + CAKE</Card.Description>
+                <Card.Description>Active HTB class state from tc (live system)</Card.Description>
               </Card.Header>
               <Card.Content>
                 <div class="overflow-x-auto">
@@ -1485,8 +1487,8 @@
                       <tr class="border-b border-border text-left text-muted-foreground">
                         <th class="py-2 pr-4">VLAN</th>
                         <th class="py-2 pr-4">Name</th>
-                        <th class="py-2 pr-4">Upload Cap</th>
-                        <th class="py-2 pr-4">Download Cap</th>
+                        <th class="py-2 pr-4">Upload</th>
+                        <th class="py-2 pr-4">Download</th>
                         <th class="py-2">Type</th>
                       </tr>
                     </thead>
@@ -1495,9 +1497,9 @@
                         <tr class="border-b border-border/50">
                           <td class="py-2 pr-4 font-semibold">{bw.vlan_id}</td>
                           <td class="py-2 pr-4 text-purple-400">{bw.name}</td>
-                          <td class="py-2 pr-4 text-amber-400">{bw.upload_mbps != null ? `${bw.upload_mbps} Mbps` : "—"}</td>
-                          <td class="py-2 pr-4 text-amber-400">{bw.download_mbps != null ? `${bw.download_mbps} Mbps` : "—"}</td>
-                          <td class="py-2 text-muted-foreground text-xs">non-burstable</td>
+                          <td class="py-2 pr-4 text-amber-400">{bw.upload_ceil ?? "—"}</td>
+                          <td class="py-2 pr-4 text-amber-400">{bw.download_ceil ?? "—"}</td>
+                          <td class="py-2 text-muted-foreground text-xs">{(bw.upload_rate === bw.upload_ceil) || (bw.download_rate === bw.download_ceil) ? "non-burstable" : "burstable"}</td>
                         </tr>
                       {/each}
                     </tbody>

@@ -101,15 +101,19 @@ struct CakeClassStats {
     cake: CakeStats,
 }
 
-/// Per-VLAN bandwidth limit from HCL config.
+/// Per-VLAN bandwidth limit from live tc HTB class state.
 #[derive(Serialize, JsonSchema)]
 struct BandwidthLimit {
-    vlan_id: u64,
+    vlan_id: String,
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    upload_mbps: Option<u64>,
+    upload_rate: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    download_mbps: Option<u64>,
+    upload_ceil: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_rate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_ceil: Option<String>,
 }
 
 // --- Handler ---
@@ -133,14 +137,16 @@ async fn get_qos(_state: State<AppState>) -> ApiJson<QosResponse> {
         .unwrap_or("wan")
         .to_string();
 
-    let (config, vlan_names, bandwidth_limits) = extract_qos_config(&hcl, &wan_iface);
+    let (config, vlan_names) = extract_qos_config(&hcl, &wan_iface);
     let configured = config.is_some();
 
-    let (wan_upload, download, dscp_rules, bandwidth_rules) = tokio::join!(
+    let (wan_upload, download, dscp_rules, bandwidth_rules, upload_htb, download_htb) = tokio::join!(
         read_wan_upload_stats(&wan_iface),
         read_cake_stats_flat("ifb0"),
         read_dscp_rules(),
         read_bandwidth_rules(),
+        read_htb_classes(&wan_iface),
+        read_htb_classes("ifb0"),
     );
 
     let (upload, mut upload_classes) = wan_upload;
@@ -154,6 +160,9 @@ async fn get_qos(_state: State<AppState>) -> ApiJson<QosResponse> {
             }
         }
     }
+
+    // Build bandwidth_limits from live tc HTB class state
+    let bandwidth_limits = build_bandwidth_limits(&upload_htb, &download_htb, &vlan_names);
 
     json_ok(QosResponse {
         configured,
@@ -176,40 +185,23 @@ async fn read_hcl_config() -> Option<Value> {
     hcl::from_str(&contents).ok()
 }
 
-/// Extract QoS configuration, VLAN name map, and bandwidth limits from parsed HCL.
+/// Extract QoS configuration and VLAN name map from parsed HCL.
 fn extract_qos_config(
     hcl: &Option<Value>,
     wan_iface: &str,
-) -> (Option<QosConfigInfo>, HashMap<String, String>, Vec<BandwidthLimit>) {
+) -> (Option<QosConfigInfo>, HashMap<String, String>) {
     let hcl = match hcl {
         Some(v) => v,
-        None => return (None, HashMap::new(), vec![]),
+        None => return (None, HashMap::new()),
     };
 
     // Build VLAN name map: vlan_id_str → name
     let mut vlan_names: HashMap<String, String> = HashMap::new();
-    let mut bandwidth_limits = Vec::new();
 
     if let Some(vlans) = hcl.get("vlan").and_then(|v| v.as_object()) {
-        let mut entries: Vec<_> = vlans.iter().collect();
-        entries.sort_by_key(|(_, v)| v.get("id").and_then(|id| id.as_u64()).unwrap_or(0));
-
-        for (name, vlan) in entries {
+        for (name, vlan) in vlans {
             if let Some(id) = vlan.get("id").and_then(|v| v.as_u64()) {
                 vlan_names.insert(id.to_string(), name.clone());
-
-                if let Some(bw) = vlan.get("bandwidth") {
-                    let upload_mbps = bw.get("upload_mbps").and_then(|v| v.as_u64());
-                    let download_mbps = bw.get("download_mbps").and_then(|v| v.as_u64());
-                    if upload_mbps.is_some() || download_mbps.is_some() {
-                        bandwidth_limits.push(BandwidthLimit {
-                            vlan_id: id,
-                            name: name.clone(),
-                            upload_mbps,
-                            download_mbps,
-                        });
-                    }
-                }
             }
         }
     }
@@ -217,7 +209,7 @@ fn extract_qos_config(
     // Parse QoS block
     let qos = match hcl.get("qos") {
         Some(q) => q,
-        None => return (None, vlan_names, bandwidth_limits),
+        None => return (None, vlan_names),
     };
 
     let upload_mbps = qos.get("upload_mbps").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -225,7 +217,7 @@ fn extract_qos_config(
     let shave_percent = qos.get("shave_percent").and_then(|v| v.as_u64()).unwrap_or(10);
 
     if upload_mbps == 0 || download_mbps == 0 {
-        return (None, vlan_names, bandwidth_limits);
+        return (None, vlan_names);
     }
 
     let effective_upload_kbit = upload_mbps * 1000 * (100 - shave_percent) / 100;
@@ -279,7 +271,7 @@ fn extract_qos_config(
         overrides,
     };
 
-    (Some(config), vlan_names, bandwidth_limits)
+    (Some(config), vlan_names)
 }
 
 /// Run `tc -s qdisc show dev <device>` and return stdout.
@@ -348,6 +340,116 @@ fn split_qdisc_sections(output: &str) -> Vec<String> {
         sections.push(current);
     }
     sections
+}
+
+/// Parsed HTB class info: classid minor → (rate, ceil).
+struct HtbClassInfo {
+    minor: String,
+    rate: String,
+    ceil: String,
+}
+
+/// Read HTB classes from `tc class show dev <device>`.
+/// Returns non-root, non-default classes (i.e., per-VLAN bandwidth classes).
+async fn read_htb_classes(device: &str) -> Vec<HtbClassInfo> {
+    if !device
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return vec![];
+    }
+
+    let output = Command::new("tc")
+        .args(["class", "show", "dev", device])
+        .output()
+        .await;
+
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return vec![],
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut classes = Vec::new();
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        // Match: "class htb 1:XX parent 1:1 rate NNNKbit ceil NNNKbit ..."
+        if !trimmed.starts_with("class htb ") || !trimmed.contains("parent ") {
+            continue;
+        }
+        // Skip root class (no parent) and the 1:1 class
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        // parts: ["class", "htb", "1:XX", "parent", "1:1", "rate", "NNNKbit", "ceil", "NNNKbit", ...]
+        if parts.len() < 9 {
+            continue;
+        }
+        let classid = parts[2];
+        let minor = classid.split(':').nth(1).unwrap_or("");
+        // Skip root (1:1) and default (1:ffff)
+        if minor == "1" || minor == "ffff" || minor.is_empty() {
+            continue;
+        }
+        // Find rate and ceil
+        let rate = parts.iter().position(|&p| p == "rate")
+            .and_then(|i| parts.get(i + 1))
+            .unwrap_or(&"");
+        let ceil = parts.iter().position(|&p| p == "ceil")
+            .and_then(|i| parts.get(i + 1))
+            .unwrap_or(&"");
+
+        classes.push(HtbClassInfo {
+            minor: minor.to_string(),
+            rate: rate.to_string(),
+            ceil: ceil.to_string(),
+        });
+    }
+
+    classes
+}
+
+/// Build bandwidth_limits from live tc HTB class state.
+fn build_bandwidth_limits(
+    upload_htb: &[HtbClassInfo],
+    download_htb: &[HtbClassInfo],
+    vlan_names: &HashMap<String, String>,
+) -> Vec<BandwidthLimit> {
+    // Collect all VLAN IDs that have any bandwidth limit
+    let mut seen: HashMap<String, BandwidthLimit> = HashMap::new();
+
+    for cls in upload_htb {
+        let name = vlan_names.get(&cls.minor).cloned().unwrap_or_else(|| format!("VLAN {}", cls.minor));
+        seen.entry(cls.minor.clone()).or_insert_with(|| BandwidthLimit {
+            vlan_id: cls.minor.clone(),
+            name,
+            upload_rate: None,
+            upload_ceil: None,
+            download_rate: None,
+            download_ceil: None,
+        });
+        let entry = seen.get_mut(&cls.minor).unwrap();
+        entry.upload_rate = Some(cls.rate.clone());
+        entry.upload_ceil = Some(cls.ceil.clone());
+    }
+
+    for cls in download_htb {
+        let name = vlan_names.get(&cls.minor).cloned().unwrap_or_else(|| format!("VLAN {}", cls.minor));
+        seen.entry(cls.minor.clone()).or_insert_with(|| BandwidthLimit {
+            vlan_id: cls.minor.clone(),
+            name,
+            upload_rate: None,
+            upload_ceil: None,
+            download_rate: None,
+            download_ceil: None,
+        });
+        let entry = seen.get_mut(&cls.minor).unwrap();
+        entry.download_rate = Some(cls.rate.clone());
+        entry.download_ceil = Some(cls.ceil.clone());
+    }
+
+    let mut limits: Vec<BandwidthLimit> = seen.into_values().collect();
+    limits.sort_by(|a, b| a.vlan_id.cmp(&b.vlan_id));
+    limits
 }
 
 /// Extract the minor classid from a `parent major:minor` in a qdisc line.
