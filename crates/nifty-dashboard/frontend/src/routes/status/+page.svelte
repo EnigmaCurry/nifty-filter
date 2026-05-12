@@ -655,7 +655,10 @@
     <!-- Object block: section header + children -->
     <div class="{'ml-' + (depth > 0 ? '4' : '0')} {depth > 0 ? 'border-l border-border/30 pl-3' : ''}">
       <div class="py-1.5 font-sans font-semibold text-sm {depth === 0 ? 'text-foreground border-b border-border/30 mb-1' : 'text-muted-foreground'}">{key}</div>
-      {#each Object.entries(val) as [k, v]}
+      {#each Object.entries(val).filter(([, v]) => v == null || typeof v !== "object" || Array.isArray(v)) as [k, v]}
+        {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
+      {/each}
+      {#each Object.entries(val).filter(([, v]) => v != null && typeof v === "object" && !Array.isArray(v)) as [k, v]}
         {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
       {/each}
     </div>
