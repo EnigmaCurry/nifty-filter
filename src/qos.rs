@@ -30,9 +30,15 @@ impl QosOverride {
     }
 }
 
-/// Per-VLAN bandwidth limit for HTB class shaping.
+/// Per-VLAN bandwidth limit for HTB class shaping (upload on WAN).
 pub struct QosVlanBandwidth {
     pub vlan_id: u16,
+    pub kbit: u32,
+}
+
+/// Per-VLAN download cap via CAKE on the VLAN interface egress.
+pub struct QosVlanDownload {
+    pub interface_name: String,
     pub kbit: u32,
 }
 

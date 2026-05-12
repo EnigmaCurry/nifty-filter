@@ -373,12 +373,12 @@ table inet mangle {
         {% endfor %}
 
         {% for vlan in vlans %}
-        {% if vlan.bandwidth_upload_kbit.is_some() || vlan.bandwidth_download_kbit.is_some() %}
+        {% if vlan.bandwidth_upload_kbit.is_some() %}
         {% if enable_ipv4 && vlan.subnet_ipv4 != "" %}
-        oif "{{ interface_wan }}" ip saddr {{ vlan.subnet_ipv4 }} meta mark set {{ vlan.id }} ct mark set {{ vlan.id }} comment "nf:Bandwidth VLAN {{ vlan.id }}"
+        oif "{{ interface_wan }}" ip saddr {{ vlan.subnet_ipv4 }} meta mark set {{ vlan.id }} comment "nf:Bandwidth VLAN {{ vlan.id }}"
         {% endif %}
         {% if enable_ipv6 && vlan.subnet_ipv6 != "" %}
-        oif "{{ interface_wan }}" ip6 saddr {{ vlan.subnet_ipv6 }} meta mark set {{ vlan.id }} ct mark set {{ vlan.id }} comment "nf:Bandwidth VLAN {{ vlan.id }} (IPv6)"
+        oif "{{ interface_wan }}" ip6 saddr {{ vlan.subnet_ipv6 }} meta mark set {{ vlan.id }} comment "nf:Bandwidth VLAN {{ vlan.id }} (IPv6)"
         {% endif %}
         {% endif %}
         {% endfor %}

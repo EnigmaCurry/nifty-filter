@@ -33,7 +33,7 @@ tc qdisc add dev "$WAN_INTERFACE" parent 1:ffff cake bandwidth {{ upload_kbit }}
 {% endif %}
 
 # =============================================================================
-# Download shaping (ingress via IFB)
+# Download shaping (ingress via IFB — global bufferbloat prevention)
 # =============================================================================
 modprobe ifb 2>/dev/null || true
 if ! ip link show ifb0 &>/dev/null; then
@@ -44,8 +44,15 @@ tc qdisc del dev "$WAN_INTERFACE" ingress 2>/dev/null || true
 tc qdisc add dev "$WAN_INTERFACE" handle ffff: ingress
 tc filter add dev "$WAN_INTERFACE" parent ffff: matchall action mirred egress redirect dev ifb0
 tc qdisc del dev ifb0 root 2>/dev/null || true
-# --- Flat CAKE for download ---
-# Per-VLAN download limits are configured but classification via conntrack marks
-# is not yet supported (act_ct interferes with normal packet flow on WAN ingress).
-# Download shaping applies globally; per-VLAN upload limits work as expected.
 tc qdisc add dev ifb0 root cake bandwidth {{ download_kbit }}kbit diffserv4 nat wash ingress
+{% if !vlan_downloads.is_empty() %}
+
+# =============================================================================
+# Per-VLAN download caps (CAKE on VLAN interface egress)
+# =============================================================================
+# Each VLAN interface gets its own CAKE qdisc to enforce the download bandwidth cap.
+# Packets are shaped as they exit toward the VLAN — no conntrack or IFB classification needed.
+{% for dl in vlan_downloads %}
+tc qdisc replace dev "{{ dl.interface_name }}" root cake bandwidth {{ dl.kbit }}kbit diffserv4 nat wash
+{% endfor %}
+{% endif %}

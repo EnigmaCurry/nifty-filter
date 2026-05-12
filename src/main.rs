@@ -585,9 +585,8 @@ struct QosTemplate {
     upload_kbit: u32,
     download_kbit: u32,
     vlan_upload_limits: Vec<qos::QosVlanBandwidth>,
-    vlan_download_limits: Vec<qos::QosVlanBandwidth>,
+    vlan_downloads: Vec<qos::QosVlanDownload>,
     default_upload_kbit: u32,
-    default_download_kbit: u32,
 }
 
 pub fn validate_nftables_config(config: &str) -> Result<(), String> {
@@ -694,7 +693,9 @@ fn app() {
                         Ok(qos_config) => {
                             // Collect per-VLAN bandwidth limits
                             let mut vlan_upload_limits = Vec::new();
-                            let mut vlan_download_limits = Vec::new();
+                            let mut vlan_downloads = Vec::new();
+                            let trunk_name = hcl_config.interfaces.trunk_name();
+                            let vlan_aware = hcl_config.vlan_aware_switch;
                             let mut entries: Vec<_> = hcl_config.vlan.iter().collect();
                             entries.sort_by_key(|(_, v)| v.id);
                             for (name, vhcl) in &entries {
@@ -713,8 +714,13 @@ fn app() {
                                         if down == 0 {
                                             errors.push(format!("vlan \"{}\".bandwidth.download_mbps must be greater than 0.", name));
                                         } else {
-                                            vlan_download_limits.push(qos::QosVlanBandwidth {
-                                                vlan_id: vhcl.id,
+                                            let iface = if vhcl.id == 1 && !vlan_aware {
+                                                trunk_name.to_string()
+                                            } else {
+                                                name.to_string()
+                                            };
+                                            vlan_downloads.push(qos::QosVlanDownload {
+                                                interface_name: iface,
                                                 kbit: down * 1000,
                                             });
                                         }
@@ -732,16 +738,6 @@ fn app() {
                                 qos_config.upload_kbit - upload_bw_sum
                             };
 
-                            let download_bw_sum: u32 = vlan_download_limits.iter().map(|v| v.kbit).sum();
-                            let default_download_kbit = if !vlan_download_limits.is_empty() && download_bw_sum >= qos_config.download_kbit {
-                                errors.push("Sum of per-VLAN bandwidth.download_mbps exceeds total qos.download_mbps (after shave).".to_string());
-                                0
-                            } else if vlan_download_limits.is_empty() {
-                                qos_config.download_kbit
-                            } else {
-                                qos_config.download_kbit - download_bw_sum
-                            };
-
                             if !errors.is_empty() {
                                 for err in errors {
                                     eprintln!("Error: {}", err);
@@ -753,9 +749,8 @@ fn app() {
                                 upload_kbit: qos_config.upload_kbit,
                                 download_kbit: qos_config.download_kbit,
                                 vlan_upload_limits,
-                                vlan_download_limits,
+                                vlan_downloads,
                                 default_upload_kbit,
-                                default_download_kbit,
                             };
                             println!("{}", tmpl.render().unwrap());
                         }
@@ -1375,9 +1370,8 @@ mod tests {
             upload_kbit: qos_config.upload_kbit,
             download_kbit: qos_config.download_kbit,
             vlan_upload_limits,
-            vlan_download_limits: vec![],
+            vlan_downloads: vec![],
             default_upload_kbit,
-            default_download_kbit: qos_config.download_kbit,
         };
         let rendered = tmpl.render().unwrap();
 
@@ -1419,9 +1413,8 @@ mod tests {
             upload_kbit: qos_config.upload_kbit,
             download_kbit: qos_config.download_kbit,
             vlan_upload_limits: vec![],
-            vlan_download_limits: vec![],
+            vlan_downloads: vec![],
             default_upload_kbit: qos_config.upload_kbit,
-            default_download_kbit: qos_config.download_kbit,
         };
         let rendered = tmpl.render().unwrap();
 
@@ -1432,7 +1425,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bandwidth_download_htb() {
+    fn test_bandwidth_download_vlan_cake() {
         let qos_hcl = crate::hcl_config::QosHclConfig {
             upload_mbps: 20,
             download_mbps: 300,
@@ -1446,18 +1439,19 @@ mod tests {
             upload_kbit: qos_config.upload_kbit,
             download_kbit: qos_config.download_kbit,
             vlan_upload_limits: vec![],
-            vlan_download_limits: vec![qos::QosVlanBandwidth {
-                vlan_id: 20,
+            vlan_downloads: vec![qos::QosVlanDownload {
+                interface_name: "iot".to_string(),
                 kbit: 10000,
             }],
             default_upload_kbit: qos_config.upload_kbit,
-            default_download_kbit: qos_config.download_kbit - 10000,
         };
         let rendered = tmpl.render().unwrap();
 
         // Upload should be flat CAKE
         assert!(rendered.contains("cake bandwidth 18000kbit diffserv4 nat wash\n"));
-        // Download is flat CAKE (per-VLAN download limiting not yet supported)
+        // Global download is flat CAKE on ifb0
         assert!(rendered.contains("cake bandwidth 270000kbit diffserv4 nat wash ingress"));
+        // Per-VLAN download cap via CAKE on VLAN interface
+        assert!(rendered.contains(r#"tc qdisc replace dev "iot" root cake bandwidth 10000kbit diffserv4 nat wash"#));
     }
 }
