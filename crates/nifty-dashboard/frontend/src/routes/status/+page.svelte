@@ -895,7 +895,7 @@
               {#if looseEntries.length > 0}
                 <Card.Root>
                   <Card.Header class="pb-1 pt-3 px-4">
-                    <Card.Title class="text-sm font-semibold">General</Card.Title>
+                    <Card.Title class="text-sm font-semibold">general</Card.Title>
                   </Card.Header>
                   <Card.Content class="pt-0 pb-3 px-4">
                     <div class="font-mono text-sm space-y-0">
