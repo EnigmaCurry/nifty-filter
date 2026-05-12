@@ -652,16 +652,35 @@
 
 {#snippet specNode(key: string, val: any, bootVal: any, depth: number)}
   {#if val != null && typeof val === "object" && !Array.isArray(val)}
-    <!-- Object block: section header + children -->
-    <div class="{'ml-' + (depth > 0 ? '4' : '0')} {depth > 0 ? 'border-l border-border/30 pl-3' : ''}">
-      <div class="py-1.5 font-sans font-semibold text-sm {depth === 0 ? 'text-foreground border-b border-border/30 mb-1' : 'text-muted-foreground'}">{key}</div>
-      {#each Object.entries(val).filter(([, v]) => v == null || typeof v !== "object" || Array.isArray(v)) as [k, v]}
-        {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
-      {/each}
-      {#each Object.entries(val).filter(([, v]) => v != null && typeof v === "object" && !Array.isArray(v)) as [k, v]}
-        {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
-      {/each}
-    </div>
+    {#if depth === 1}
+      <!-- Depth-1 object: render as a nested sub-card -->
+      <Card.Root class="mt-2">
+        <Card.Header class="pb-1 pt-2 px-3">
+          <Card.Title class="text-sm font-semibold text-muted-foreground">{key}</Card.Title>
+        </Card.Header>
+        <Card.Content class="pt-0 pb-2 px-3">
+          <div class="font-mono text-sm space-y-0">
+            {#each Object.entries(val).filter(([, v]) => v == null || typeof v !== "object" || Array.isArray(v)) as [k, v]}
+              {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
+            {/each}
+            {#each Object.entries(val).filter(([, v]) => v != null && typeof v === "object" && !Array.isArray(v)) as [k, v]}
+              {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
+            {/each}
+          </div>
+        </Card.Content>
+      </Card.Root>
+    {:else}
+      <!-- Object block: section header + children -->
+      <div class="{'ml-' + (depth > 0 ? '4' : '0')} {depth > 0 ? 'border-l border-border/30 pl-3' : ''}">
+        <div class="py-1.5 font-sans font-semibold text-sm {depth === 0 ? 'text-foreground border-b border-border/30 mb-1' : 'text-muted-foreground'}">{key}</div>
+        {#each Object.entries(val).filter(([, v]) => v == null || typeof v !== "object" || Array.isArray(v)) as [k, v]}
+          {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
+        {/each}
+        {#each Object.entries(val).filter(([, v]) => v != null && typeof v === "object" && !Array.isArray(v)) as [k, v]}
+          {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
+        {/each}
+      </div>
+    {/if}
   {:else if Array.isArray(val)}
     <!-- Array value -->
     {@const bootArr = Array.isArray(bootVal) ? bootVal : undefined}
