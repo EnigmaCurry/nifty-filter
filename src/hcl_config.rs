@@ -1,3 +1,4 @@
+use serde::de::{self, Deserializer};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -175,7 +176,7 @@ pub struct DhcpConfig {
     pub pool_end: String,
     pub router: String,
     pub dns: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "one_or_many")]
     pub host: Vec<DhcpHost>,
 }
 
@@ -186,6 +187,44 @@ pub struct DhcpHost {
     pub ip: String,
     #[serde(default)]
     pub hostname: Option<String>,
+}
+
+/// Deserialize a single item or a list of items into a Vec.
+/// HCL represents a single repeated block as a map, not a sequence.
+fn one_or_many<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    use serde::de::value::SeqAccessDeserializer;
+
+    struct OneOrManyVisitor<T>(std::marker::PhantomData<T>);
+
+    impl<'de, T: Deserialize<'de>> de::Visitor<'de> for OneOrManyVisitor<T> {
+        type Value = Vec<T>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a single item or a sequence of items")
+        }
+
+        fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            Vec::deserialize(SeqAccessDeserializer::new(seq))
+        }
+
+        fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+        where
+            M: de::MapAccess<'de>,
+        {
+            let item =
+                T::deserialize(de::value::MapAccessDeserializer::new(map))?;
+            Ok(vec![item])
+        }
+    }
+
+    deserializer.deserialize_any(OneOrManyVisitor(std::marker::PhantomData))
 }
 
 #[derive(Debug, Deserialize)]
