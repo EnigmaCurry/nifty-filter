@@ -5,9 +5,10 @@ use axum::http::StatusCode;
 use axum::Json;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use serde_json::Value;
 use std::path::PathBuf;
-use tokio::process::Command;
+
+use crate::util::state_files::{is_state_fresh, read_state_file};
 
 use crate::{
     errors::ErrorBody,
@@ -37,6 +38,7 @@ struct StatusResponse {
     interfaces: Vec<NetworkInterface>,
     nft_chains: Vec<NftChain>,
     switch: Option<SwitchState>,
+    stale: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -132,18 +134,23 @@ struct PortVlanSetting {
 ///
 /// Returns system uptime, network interfaces, nftables chains, and managed switch state.
 async fn get_status(_state: State<AppState>) -> ApiJson<StatusResponse> {
-    let (uptime, interfaces, nft_chains, switch) = tokio::join!(
+    let (uptime, interfaces, nft_chains, switch, nft_fresh, ip_fresh) = tokio::join!(
         read_uptime(),
         read_interfaces(),
         read_nft_chains(),
         read_switch_state(),
+        is_state_fresh("nft-ruleset.json"),
+        is_state_fresh("ip-addr.json"),
     );
+
+    let stale = !nft_fresh || !ip_fresh;
 
     json_ok(StatusResponse {
         uptime,
         interfaces,
         nft_chains,
         switch,
+        stale,
     })
 }
 
@@ -172,82 +179,78 @@ async fn get_about(_state: State<AppState>) -> ApiJson<AboutResponse> {
 }
 
 #[derive(Serialize, JsonSchema)]
-struct ConfigEntry {
-    key: String,
-    value: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    comment: Option<String>,
-    is_commented_out: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    boot_value: Option<String>,
-    /// True when this entry is not in the config file and shows the built-in default.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    is_default: bool,
-}
-
-#[derive(Serialize, JsonSchema)]
-struct ConfigSection {
-    name: String,
-    entries: Vec<ConfigEntry>,
-}
-
-#[derive(Serialize, JsonSchema)]
 struct ConfigResponse {
-    sections: Vec<ConfigSection>,
+    config: Value,
     reboot_needed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    boot_config: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_error: Option<String>,
 }
 
 const SENSITIVE_PATTERNS: &[&str] = &["PASS", "SECRET", "TOKEN", "KEY"];
 
-fn is_sensitive(key: &str) -> bool {
-    let upper = key.to_uppercase();
-    SENSITIVE_PATTERNS.iter().any(|p| upper.contains(p))
-}
-
-fn config_file_path() -> PathBuf {
-    std::env::var("NIFTY_CONFIG_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/var/nifty-filter/nifty-filter.env"))
-}
-
-/// Parse config text into a flat map of key → (value, is_commented_out).
-/// Used to snapshot boot config and compare against current.
-pub fn parse_config_values(contents: &str) -> HashMap<String, (String, bool)> {
-    let mut map = HashMap::new();
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Some(rest) = trimmed.strip_prefix('#') {
-            let rest = rest.trim();
-            if let Some(eq_pos) = rest.find('=') {
-                let key = rest[..eq_pos].trim();
-                if !key.is_empty()
-                    && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                    && key.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
-                {
-                    let value = rest[eq_pos + 1..].trim().trim_matches('"').to_string();
-                    let value = if is_sensitive(key) {
-                        "******".to_string()
-                    } else {
-                        value
-                    };
-                    map.insert(key.to_string(), (value, true));
+/// Recursively redact sensitive values in a JSON tree.
+/// Any object key containing PASS/SECRET/TOKEN/KEY (case-insensitive)
+/// has its value replaced with "******".
+fn redact_sensitive(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, val) in map.iter_mut() {
+                let upper = key.to_uppercase();
+                if SENSITIVE_PATTERNS.iter().any(|p| upper.contains(p)) {
+                    *val = Value::String("******".to_string());
+                } else {
+                    redact_sensitive(val);
                 }
             }
-        } else if let Some(eq_pos) = trimmed.find('=') {
-            let key = trimmed[..eq_pos].trim();
-            let value = trimmed[eq_pos + 1..].trim().trim_matches('"').to_string();
-            let value = if is_sensitive(key) {
-                "******".to_string()
-            } else {
-                value
-            };
-            map.insert(key.to_string(), (value, false));
+        }
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                redact_sensitive(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Parse HCL config file contents to generic JSON Value.
+pub fn parse_hcl_to_json(contents: &str) -> Result<Value, String> {
+    hcl::from_str(contents).map_err(|e| format!("HCL parse error: {e}"))
+}
+
+/// Check that configured interfaces exist on the system, or have a MAC address
+/// for renaming. Returns Some(error_message) if invalid.
+fn validate_interfaces(config: &Value) -> Option<String> {
+    let interfaces = config.get("interfaces")?;
+    let mut missing = Vec::new();
+
+    for key in &["wan", "trunk", "mgmt"] {
+        if let Some(iface) = interfaces.get(key) {
+            let has_mac = iface
+                .get("mac")
+                .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty()));
+            if has_mac {
+                continue;
+            }
+            if let Some(Value::String(name)) = iface.get("name") {
+                let sys_path = format!("/sys/class/net/{}", name);
+                if !std::path::Path::new(&sys_path).exists() {
+                    missing.push(name.clone());
+                }
+            }
         }
     }
-    map
+
+    if missing.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "Interface(s) {} not found and no mac address configured to create them. \
+             Add mac = \"...\" to each interface block in your config.",
+            missing.join(", ")
+        ))
+    }
 }
 
 #[api_doc(
@@ -258,15 +261,17 @@ pub fn parse_config_values(contents: &str) -> HashMap<String, (String, bool)> {
 )]
 /// Configuration
 ///
-/// Returns the nifty-filter configuration with sensitive values redacted.
+/// Returns the nifty-filter HCL configuration as JSON with sensitive values redacted.
 async fn get_config(state: State<AppState>) -> ApiJson<ConfigResponse> {
-    let path = config_file_path();
+    let path = crate::config_watcher::config_file_path();
     let contents = match tokio::fs::read_to_string(&path).await {
         Ok(c) => c,
-        Err(_) => {
+        Err(e) => {
             return json_ok(ConfigResponse {
-                sections: vec![],
+                config: Value::Null,
                 reboot_needed: false,
+                boot_config: None,
+                config_error: Some(format!("Cannot read config file: {e}")),
             });
         }
     };
@@ -277,402 +282,33 @@ async fn get_config(state: State<AppState>) -> ApiJson<ConfigResponse> {
     };
     let reboot_needed =
         !state.config_boot_sha.is_empty() && current_sha != state.config_boot_sha;
-    let boot_vals = &state.config_boot_values;
 
-    let mut sections: Vec<ConfigSection> = Vec::new();
-    let mut current_section = ConfigSection {
-        name: "General".to_string(),
-        entries: Vec::new(),
+    let (config, config_error) = match parse_hcl_to_json(&contents) {
+        Ok(v) => {
+            // Validate that configured interfaces exist or a links block is present
+            let validation_error = validate_interfaces(&v);
+            (v, validation_error)
+        }
+        Err(e) => (Value::Null, Some(e)),
     };
-    let mut pending_comment: Option<String> = None;
-    let mut pending_comment_first_line: Option<String> = None;
+    let mut config = config;
+    redact_sensitive(&mut config);
 
-    for line in contents.lines() {
-        let trimmed = line.trim();
-
-        if trimmed.is_empty() {
-            // Blank line: flush pending comment and possibly start new section
-            if !current_section.entries.is_empty() || pending_comment_first_line.is_some() {
-                if let Some(first_line) = pending_comment_first_line.take() {
-                    pending_comment = None;
-                    // Standalone comment block before a blank line = section header candidate
-                    if !current_section.entries.is_empty() {
-                        sections.push(current_section);
-                        current_section = ConfigSection {
-                            name: first_line,
-                            entries: Vec::new(),
-                        };
-                    } else {
-                        current_section.name = first_line;
-                    }
-                }
-            }
-            continue;
-        }
-
-        // Commented-out variable: #KEY=value
-        if let Some(rest) = trimmed.strip_prefix('#') {
-            let rest = rest.trim();
-            if let Some(eq_pos) = rest.find('=') {
-                let key = rest[..eq_pos].trim();
-                // Only treat as commented-out var if key looks like an env var name
-                if !key.is_empty()
-                    && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                    && key.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
-                {
-                    let value = rest[eq_pos + 1..].trim().trim_matches('"').to_string();
-                    let display_value = if is_sensitive(key) {
-                        "******".to_string()
-                    } else {
-                        value
-                    };
-                    // Show boot_value if the entry was different at boot
-                    let boot_value = if reboot_needed {
-                        match boot_vals.get(key) {
-                            Some((bv, bc)) => {
-                                if *bc != true || *bv != display_value {
-                                    Some(if *bc {
-                                        format!("#{bv}")
-                                    } else {
-                                        bv.clone()
-                                    })
-                                } else {
-                                    None
-                                }
-                            }
-                            // Key not in boot snapshot = new since boot
-                            None => Some("(new)".to_string()),
-                        }
-                    } else {
-                        None
-                    };
-                    current_section.entries.push(ConfigEntry {
-                        key: key.to_string(),
-                        value: display_value,
-                        comment: pending_comment.take(),
-                        is_commented_out: true,
-                        boot_value,
-                        is_default: false,
-                    });
-                    pending_comment_first_line = None;
-                    continue;
-                }
-            }
-            // Regular comment line — accumulate as pending comment
-            let comment_text = rest.to_string();
-            if !comment_text.is_empty() {
-                if pending_comment_first_line.is_none() {
-                    pending_comment_first_line = Some(comment_text.clone());
-                }
-                match &mut pending_comment {
-                    Some(existing) => {
-                        existing.push(' ');
-                        existing.push_str(&comment_text);
-                    }
-                    None => {
-                        pending_comment = Some(comment_text);
-                    }
-                }
-            }
-            continue;
-        }
-
-        // Active variable: KEY=value
-        if let Some(eq_pos) = trimmed.find('=') {
-            let key = trimmed[..eq_pos].trim();
-            let value = trimmed[eq_pos + 1..].trim().trim_matches('"').to_string();
-            let display_value = if is_sensitive(key) {
-                "******".to_string()
-            } else {
-                value
-            };
-            // Show boot_value if the entry was different at boot
-            let boot_value = if reboot_needed {
-                match boot_vals.get(key) {
-                    Some((bv, bc)) => {
-                        if *bc != false || *bv != display_value {
-                            Some(if *bc {
-                                format!("#{bv}")
-                            } else {
-                                bv.clone()
-                            })
-                        } else {
-                            None
-                        }
-                    }
-                    // Key not in boot snapshot = new since boot
-                    None => Some("(new)".to_string()),
-                }
-            } else {
-                None
-            };
-            current_section.entries.push(ConfigEntry {
-                key: key.to_string(),
-                value: display_value,
-                comment: pending_comment.take(),
-                is_commented_out: false,
-                boot_value,
-                is_default: false,
-            });
-            pending_comment_first_line = None;
-        }
-    }
-
-    if !current_section.entries.is_empty() {
-        sections.push(current_section);
-    }
-
-    // Show vars that existed at boot but were removed from the current config
-    if reboot_needed {
-        let current_keys: HashSet<&str> = sections
-            .iter()
-            .flat_map(|s| s.entries.iter())
-            .map(|e| e.key.as_str())
-            .collect();
-        let mut removed_entries: Vec<ConfigEntry> = boot_vals
-            .iter()
-            .filter(|(k, _)| !current_keys.contains(k.as_str()))
-            .map(|(k, (v, commented))| ConfigEntry {
-                key: k.clone(),
-                value: "(removed)".to_string(),
-                comment: None,
-                is_commented_out: *commented,
-                boot_value: Some(if *commented {
-                    format!("#{v}")
-                } else {
-                    v.clone()
-                }),
-                is_default: false,
-            })
-            .collect();
-        if !removed_entries.is_empty() {
-            removed_entries.sort_by(|a, b| a.key.cmp(&b.key));
-            sections.push(ConfigSection {
-                name: "Removed since boot".to_string(),
-                entries: removed_entries,
-            });
-        }
-    }
-
-    // Inject defaults for known vars not present in the config file
-    inject_defaults(&mut sections);
+    let boot_config = if reboot_needed {
+        state.config_boot_values.clone().map(|mut v| {
+            redact_sensitive(&mut v);
+            v
+        })
+    } else {
+        None
+    };
 
     json_ok(ConfigResponse {
-        sections,
+        config,
         reboot_needed,
+        boot_config,
+        config_error,
     })
-}
-
-/// Built-in defaults for known nifty-filter environment variables.
-/// Returns (key, default_value) pairs for static vars, plus generates
-/// per-VLAN defaults based on which VLANs are configured.
-fn known_defaults(sections: &[ConfigSection]) -> Vec<(&'static str, String)> {
-    // Collect all current keys for lookups
-    let vals: HashMap<&str, &str> = sections
-        .iter()
-        .flat_map(|s| s.entries.iter())
-        .filter(|e| !e.is_commented_out)
-        .map(|e| (e.key.as_str(), e.value.as_str()))
-        .collect();
-
-    let mut defaults: Vec<(&str, String)> = Vec::new();
-
-    // Static defaults
-    let static_defaults: &[(&str, &str)] = &[
-        ("WAN_ENABLE_IPV4", "true"),
-        ("WAN_ENABLE_IPV6", "false"),
-        ("VLAN_AWARE_SWITCH", "false"),
-        ("IPERF_PORT", "5201"),
-        ("WAN_QOS_SHAVE_PERCENT", "10"),
-        ("WAN_ICMP_ACCEPT", ""),
-        (
-            "WAN_ICMPV6_ACCEPT",
-            "nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,destination-unreachable,packet-too-big,time-exceeded",
-        ),
-        ("WAN_TCP_ACCEPT", ""),
-        ("WAN_UDP_ACCEPT", ""),
-        ("WAN_TCP_FORWARD", ""),
-        ("WAN_UDP_FORWARD", ""),
-        (
-            "WAN_BOGONS_IPV4",
-            "0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4",
-        ),
-        ("WAN_BOGONS_IPV6", "::/128, ::1/128, fc00::/7, ff00::/8"),
-    ];
-
-    for (key, val) in static_defaults {
-        if !vals.contains_key(key) {
-            defaults.push((key, val.to_string()));
-        }
-    }
-
-    // Per-VLAN defaults — only for VLANs already in the config
-    let vlans_str = vals.get("VLANS").copied().unwrap_or("");
-    if !vlans_str.is_empty() {
-        for id_str in vlans_str.split(',') {
-            let id_str = id_str.trim();
-            let vlan_id: u16 = match id_str.parse() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let is_vlan_1 = vlan_id == 1;
-
-            // We use a macro-like approach with a static list per VLAN
-            let vlan_defaults: Vec<(String, String)> = vec![
-                (format!("VLAN_{}_NAME", vlan_id), String::new()),
-                (format!("VLAN_{}_SUBNET_IPV6", vlan_id), String::new()),
-                (
-                    format!("VLAN_{}_EGRESS_ALLOWED_IPV4", vlan_id),
-                    if is_vlan_1 {
-                        "0.0.0.0/0".to_string()
-                    } else {
-                        String::new()
-                    },
-                ),
-                (
-                    format!("VLAN_{}_EGRESS_ALLOWED_IPV6", vlan_id),
-                    if is_vlan_1 {
-                        "::/0".to_string()
-                    } else {
-                        String::new()
-                    },
-                ),
-                (
-                    format!("VLAN_{}_ICMP_ACCEPT", vlan_id),
-                    if is_vlan_1 {
-                        "echo-request,echo-reply,destination-unreachable,time-exceeded".to_string()
-                    } else {
-                        "destination-unreachable".to_string()
-                    },
-                ),
-                (
-                    format!("VLAN_{}_ICMPV6_ACCEPT", vlan_id),
-                    if is_vlan_1 {
-                        "nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,echo-request,echo-reply".to_string()
-                    } else {
-                        "nd-neighbor-solicit,nd-neighbor-advert,destination-unreachable".to_string()
-                    },
-                ),
-                (
-                    format!("VLAN_{}_TCP_ACCEPT", vlan_id),
-                    if is_vlan_1 { "22".to_string() } else { String::new() },
-                ),
-                (
-                    format!("VLAN_{}_UDP_ACCEPT", vlan_id),
-                    "67,68".to_string(),
-                ),
-                (format!("VLAN_{}_TCP_FORWARD", vlan_id), String::new()),
-                (format!("VLAN_{}_UDP_FORWARD", vlan_id), String::new()),
-                (
-                    format!("VLAN_{}_DHCP_ENABLED", vlan_id),
-                    "true".to_string(),
-                ),
-                (format!("VLAN_{}_DHCP_POOL_START", vlan_id), String::new()),
-                (format!("VLAN_{}_DHCP_POOL_END", vlan_id), String::new()),
-                (format!("VLAN_{}_DHCP_ROUTER", vlan_id), String::new()),
-                (format!("VLAN_{}_DHCP_DNS", vlan_id), String::new()),
-                (
-                    format!("VLAN_{}_DHCPV6_ENABLED", vlan_id),
-                    "false".to_string(),
-                ),
-                (
-                    format!("VLAN_{}_DHCPV6_POOL_START", vlan_id),
-                    String::new(),
-                ),
-                (format!("VLAN_{}_DHCPV6_POOL_END", vlan_id), String::new()),
-                (
-                    format!("VLAN_{}_IPERF_ENABLED", vlan_id),
-                    "false".to_string(),
-                ),
-                (format!("VLAN_{}_QOS_CLASS", vlan_id), String::new()),
-                (format!("VLAN_{}_ALLOW_INBOUND_TCP", vlan_id), String::new()),
-                (format!("VLAN_{}_ALLOW_INBOUND_UDP", vlan_id), String::new()),
-            ];
-
-            for (key, val) in vlan_defaults {
-                if !vals.contains_key(key.as_str()) {
-                    // Leak the string so we can return &'static str — these are few and bounded
-                    defaults.push((Box::leak(key.into_boxed_str()), val));
-                }
-            }
-
-            // Inter-VLAN allow rules: VLAN_N_ALLOW_FROM_M_TCP/UDP for each other VLAN
-            for other_str in vlans_str.split(',') {
-                let other_str = other_str.trim();
-                let other_id: u16 = match other_str.parse() {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                if other_id == vlan_id {
-                    continue;
-                }
-                for suffix in ["TCP", "UDP"] {
-                    let key = format!("VLAN_{}_ALLOW_FROM_{}_{}", vlan_id, other_id, suffix);
-                    if !vals.contains_key(key.as_str()) {
-                        defaults.push((Box::leak(key.into_boxed_str()), String::new()));
-                    }
-                }
-            }
-        }
-    }
-
-    defaults
-}
-
-/// Inject default-value entries into the appropriate sections for vars not in the config file.
-fn inject_defaults(sections: &mut Vec<ConfigSection>) {
-    let defaults = known_defaults(sections);
-    if defaults.is_empty() {
-        return;
-    }
-
-    // Build a set of existing keys (owned to avoid borrow conflicts)
-    let existing: HashSet<String> = sections
-        .iter()
-        .flat_map(|s| s.entries.iter())
-        .map(|e| e.key.clone())
-        .collect();
-
-    // Collect entries to insert: (prefix, entry)
-    let to_insert: Vec<(String, ConfigEntry)> = defaults
-        .into_iter()
-        .filter(|(key, _)| !existing.contains(*key))
-        .map(|(key, value)| {
-            let parts: Vec<&str> = key.split('_').collect();
-            let prefix = if parts.first() == Some(&"VLAN") && parts.len() >= 2 {
-                format!("{}_{}", parts[0], parts[1])
-            } else {
-                parts[0].to_string()
-            };
-            (
-                prefix,
-                ConfigEntry {
-                    key: key.to_string(),
-                    value,
-                    comment: None,
-                    is_commented_out: false,
-                    boot_value: None,
-                    is_default: true,
-                },
-            )
-        })
-        .collect();
-
-    for (prefix, entry) in to_insert {
-        if let Some(section) = sections.iter_mut().find(|s| s.name == prefix) {
-            section.entries.push(entry);
-        } else if let Some(general) = sections.iter_mut().find(|s| s.name == "General") {
-            general.entries.push(entry);
-        } else {
-            sections.insert(
-                0,
-                ConfigSection {
-                    name: "General".to_string(),
-                    entries: vec![entry],
-                },
-            );
-        }
-    }
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -717,46 +353,29 @@ async fn get_nft_rules(
         return json_error(StatusCode::BAD_REQUEST, "invalid parameter characters");
     }
 
-    let output = Command::new("nft")
-        .args(["list", "chain", &q.family, &q.table, &q.chain])
-        .output()
-        .await;
-
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
+    let ruleset = match read_state_file("nft-ruleset.txt").await {
+        Some(c) => c,
+        None => {
             return json_error(
-                StatusCode::NOT_FOUND,
-                format!("chain not found: {}", stderr.trim()),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "network state data is unavailable or stale",
             );
-        }
-        Err(e) => {
-            return json_error(StatusCode::INTERNAL_SERVER_ERROR, format!("nft error: {e}"));
         }
     };
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Extract rules for the requested chain from the full ruleset dump.
+    // Format: `table <family> <table> { ... chain <chain> { ... } ... }`
+    let rules = extract_chain_rules(&ruleset, &q.family, &q.table, &q.chain);
 
-    let rules: Vec<NftRule> = stdout
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| {
-            !l.is_empty()
-                && !l.starts_with("table ")
-                && !l.starts_with("chain ")
-                && !l.starts_with("type ")
-                && *l != "}"
-        })
-        .map(|l| parse_nft_rule(l))
-        .collect();
-
-    json_ok(NftRulesResponse {
-        family: q.family,
-        table: q.table,
-        chain: q.chain,
-        rules,
-    })
+    match rules {
+        Some(rules) => json_ok(NftRulesResponse {
+            family: q.family,
+            table: q.table,
+            chain: q.chain,
+            rules,
+        }),
+        None => json_error(StatusCode::NOT_FOUND, "chain not found"),
+    }
 }
 
 /// Parse a rule line, extracting `comment "nf:..."` if present.
@@ -794,6 +413,61 @@ fn parse_nft_rule(rule: &str) -> NftRule {
     }
 }
 
+/// Extract rules for a specific chain from the full `nft list ruleset` text output.
+fn extract_chain_rules(ruleset: &str, family: &str, table: &str, chain: &str) -> Option<Vec<NftRule>> {
+    let chain_header = format!("chain {} {{", chain);
+
+    let mut in_table = false;
+    let mut in_chain = false;
+    let mut brace_depth = 0;
+    let mut rules = Vec::new();
+
+    for line in ruleset.lines() {
+        let trimmed = line.trim();
+
+        if !in_table {
+            if trimmed.starts_with(&format!("table {} {}", family, table)) && trimmed.ends_with('{') {
+                in_table = true;
+                brace_depth = 1;
+            }
+            continue;
+        }
+
+        // Track braces within the table
+        if trimmed.contains('{') {
+            if !in_chain && trimmed.starts_with("chain ") && trimmed.contains(&chain_header) {
+                in_chain = true;
+                continue;
+            }
+            if !in_chain {
+                brace_depth += 1;
+            }
+        }
+
+        if in_chain {
+            if trimmed == "}" {
+                // End of chain block
+                return Some(rules);
+            }
+            // Skip type/policy header line
+            if !trimmed.is_empty()
+                && !trimmed.starts_with("type ")
+                && trimmed != "}"
+            {
+                rules.push(parse_nft_rule(trimmed));
+            }
+        } else if trimmed == "}" {
+            brace_depth -= 1;
+            if brace_depth == 0 {
+                // End of table without finding the chain
+                return None;
+            }
+        }
+    }
+
+    None
+}
+
 // --- Data collectors ---
 
 async fn read_uptime() -> Option<UptimeInfo> {
@@ -804,17 +478,12 @@ async fn read_uptime() -> Option<UptimeInfo> {
 }
 
 async fn read_interfaces() -> Vec<NetworkInterface> {
-    let output = Command::new("ip")
-        .args(["-j", "addr", "show"])
-        .output()
-        .await;
-
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => return vec![],
+    let contents = match read_state_file("ip-addr.json").await {
+        Some(c) => c,
+        None => return vec![],
     };
 
-    let parsed: Vec<serde_json::Value> = match serde_json::from_slice(&output.stdout) {
+    let parsed: Vec<serde_json::Value> = match serde_json::from_str(&contents) {
         Ok(v) => v,
         Err(_) => return vec![],
     };
@@ -863,17 +532,12 @@ async fn read_interfaces() -> Vec<NetworkInterface> {
 }
 
 async fn read_nft_chains() -> Vec<NftChain> {
-    let output = Command::new("nft")
-        .args(["-j", "list", "chains"])
-        .output()
-        .await;
-
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => return vec![],
+    let contents = match read_state_file("nft-ruleset.json").await {
+        Some(c) => c,
+        None => return vec![],
     };
 
-    let parsed: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+    let parsed: serde_json::Value = match serde_json::from_str(&contents) {
         Ok(v) => v,
         Err(_) => return vec![],
     };

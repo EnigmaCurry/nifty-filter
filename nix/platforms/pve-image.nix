@@ -20,7 +20,7 @@ let
     };
     modules = [
       self.nixosModules.default
-      ./system.nix
+      ../system.nix
       # No filesystem.nix — PVE uses a two-disk layout managed by the disk-image module
       ./pve.nix
       # Native nixpkgs disk image module

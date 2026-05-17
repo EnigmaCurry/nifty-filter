@@ -29,6 +29,7 @@ pub mod healthz;
 pub mod hello;
 pub mod login;
 pub mod qos;
+pub mod services;
 pub mod status;
 pub mod updates;
 pub mod whoami;

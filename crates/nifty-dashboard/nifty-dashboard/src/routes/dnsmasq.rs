@@ -72,7 +72,7 @@ struct DhcpLease {
 )]
 /// Dnsmasq status
 ///
-/// Returns dnsmasq configuration (parsed from /run/dnsmasq.conf) and active DHCP leases.
+/// Returns dnsmasq configuration (parsed from /run/dnsmasq/dnsmasq.conf) and active DHCP leases.
 async fn get_dnsmasq(_state: State<AppState>) -> ApiJson<DnsmasqResponse> {
     let (config, leases) = tokio::join!(read_dnsmasq_config(), read_leases());
 
@@ -90,7 +90,7 @@ async fn get_dnsmasq(_state: State<AppState>) -> ApiJson<DnsmasqResponse> {
 // --- Data collectors ---
 
 async fn read_dnsmasq_config() -> Option<(bool, Vec<String>, Vec<DnsmasqInterface>, Vec<DhcpHost>)> {
-    let contents = match tokio::fs::read_to_string("/run/dnsmasq.conf").await {
+    let contents = match tokio::fs::read_to_string("/run/dnsmasq/dnsmasq.conf").await {
         Ok(c) => c,
         Err(_) => return Some((false, vec![], vec![], vec![])),
     };

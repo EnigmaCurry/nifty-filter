@@ -1,8 +1,8 @@
 # ISO image configuration for nifty-filter
 #
-# The ISO boots into a read-only system. The live environment
-# uses tmpfs for /var so edits to nifty-filter.env persist until reboot.
-# Install to disk for persistent configuration.
+# The ISO boots a live installer environment. It does NOT run the router
+# services — those are enabled on the installed system, which seeds its
+# own default HCL config on first boot via nifty-filter-init.
 #
 # Build with: nix build .#iso
 { config, pkgs, lib, modulesPath, version ? "unknown", installedToplevel, gitBranch ? "master", nifty-filter-pkg, ... }:
@@ -150,9 +150,6 @@
     usbutils
     dhcpcd
   ];
-
-  # Ship the default env file where the installer can find it
-  environment.etc."nifty-filter/default-nifty-filter.env".source = ./default-nifty-filter.env;
 
   # Make the installed system closure available to the installer.
   # This is the disk-based system (with filesystem.nix), not the live ISO system.

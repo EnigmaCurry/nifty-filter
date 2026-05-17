@@ -4,12 +4,14 @@ use axum::Json;
 use axum::extract::State;
 use schemars::JsonSchema;
 use serde::Serialize;
-use std::path::PathBuf;
-use tokio::process::Command;
+use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::{
+    config_watcher::config_file_path,
     errors::ErrorBody,
     response::{ApiJson, ApiResponse, json_ok},
+    util::state_files::read_state_file,
     AppState,
 };
 
@@ -26,14 +28,17 @@ struct QosResponse {
     config: Option<QosConfigInfo>,
     upload: Option<CakeStats>,
     download: Option<CakeStats>,
+    upload_classes: Vec<CakeClassStats>,
+    bandwidth_limits: Vec<BandwidthLimit>,
     dscp_rules: Vec<DscpRule>,
+    bandwidth_rules: Vec<DscpRule>,
 }
 
 #[derive(Serialize, JsonSchema)]
 struct QosConfigInfo {
-    upload_mbps: String,
-    download_mbps: String,
-    shave_percent: String,
+    upload_mbps: u64,
+    download_mbps: u64,
+    shave_percent: u64,
     effective_upload_kbit: u64,
     effective_download_kbit: u64,
     wan_interface: String,
@@ -43,7 +48,7 @@ struct QosConfigInfo {
 
 #[derive(Serialize, JsonSchema)]
 struct VlanQosClass {
-    vlan_id: String,
+    vlan_id: u64,
     name: String,
     qos_class: String,
 }
@@ -88,6 +93,29 @@ struct DscpRule {
     description: Option<String>,
 }
 
+/// Per-VLAN CAKE stats when HTB+CAKE is in use.
+#[derive(Serialize, JsonSchema)]
+struct CakeClassStats {
+    class_id: String,
+    label: String,
+    cake: CakeStats,
+}
+
+/// Per-VLAN bandwidth limit from live tc HTB class state.
+#[derive(Serialize, JsonSchema)]
+struct BandwidthLimit {
+    vlan_id: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upload_rate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upload_ceil: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_rate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_ceil: Option<String>,
+}
+
 // --- Handler ---
 
 #[api_doc(
@@ -100,118 +128,174 @@ struct DscpRule {
 ///
 /// Returns QoS configuration, CAKE qdisc statistics, and DSCP marking rules.
 async fn get_qos(_state: State<AppState>) -> ApiJson<QosResponse> {
-    let config = read_qos_config().await;
-    let wan_iface = config
-        .as_ref()
-        .map(|c| c.wan_interface.clone())
-        .unwrap_or_else(|| "wan".to_string());
+    let hcl = read_hcl_config().await;
+    let wan_iface = hcl.as_ref()
+        .and_then(|v| v.get("interfaces"))
+        .and_then(|v| v.get("wan"))
+        .and_then(|v| v.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("wan")
+        .to_string();
 
-    let configured = config.is_some();
+    let hcl_info = extract_qos_config(&hcl, &wan_iface);
+    let configured = hcl_info.config.is_some();
 
-    let (upload, download, dscp_rules) = tokio::join!(
-        read_cake_stats(&wan_iface),
-        read_cake_stats("ifb0"),
+    let (wan_upload, download, dscp_rules, bandwidth_rules, upload_htb) = tokio::join!(
+        read_wan_upload_stats(&wan_iface),
+        read_cake_stats_flat("ifb0"),
         read_dscp_rules(),
+        read_bandwidth_rules(),
+        read_htb_classes(&wan_iface),
     );
 
-    let active = upload.is_some();
+    // Read download caps from each VLAN interface that has download bandwidth
+    let mut vlan_download_caps: HashMap<String, HtbClassInfo> = HashMap::new();
+    for iface in &hcl_info.download_vlan_ifaces {
+        if let Some(cap) = read_vlan_download_cap(iface).await {
+            vlan_download_caps.insert(iface.clone(), cap);
+        }
+    }
+
+    let (upload, mut upload_classes) = wan_upload;
+    let active = upload.is_some() || !upload_classes.is_empty();
+
+    // Enrich upload_classes labels with VLAN names
+    for cls in &mut upload_classes {
+        if cls.label.starts_with("VLAN ") {
+            if let Some(name) = hcl_info.vlan_names.get(&cls.label[5..]) {
+                cls.label = format!("{} (VLAN {})", name, &cls.label[5..]);
+            }
+        }
+    }
+
+    // Build bandwidth_limits from live tc state
+    let bandwidth_limits = build_bandwidth_limits(&upload_htb, &vlan_download_caps, &hcl_info.vlan_names);
 
     json_ok(QosResponse {
         configured,
         active,
-        config,
+        config: hcl_info.config,
         upload,
         download,
+        upload_classes,
+        bandwidth_limits,
         dscp_rules,
+        bandwidth_rules,
     })
 }
 
 // --- Data collectors ---
 
-fn config_file_path() -> PathBuf {
-    std::env::var("NIFTY_CONFIG_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/var/nifty-filter/nifty-filter.env"))
+/// Read and parse the HCL config file.
+async fn read_hcl_config() -> Option<Value> {
+    let contents = tokio::fs::read_to_string(config_file_path()).await.ok()?;
+    hcl::from_str(&contents).ok()
 }
 
-async fn read_qos_config() -> Option<QosConfigInfo> {
-    let contents = tokio::fs::read_to_string(config_file_path()).await.ok()?;
+/// Extracted info from HCL config.
+struct HclQosInfo {
+    config: Option<QosConfigInfo>,
+    vlan_names: HashMap<String, String>,
+    /// VLAN interface names that have download bandwidth limits (for tc queries).
+    download_vlan_ifaces: Vec<String>,
+}
 
-    let get_val = |key: &str| -> Option<String> {
-        for line in contents.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('#') || trimmed.is_empty() {
-                continue;
-            }
-            if let Some(eq_pos) = trimmed.find('=') {
-                if trimmed[..eq_pos].trim() == key {
-                    let val = trimmed[eq_pos + 1..].trim().trim_matches('"').trim_matches('\'');
-                    return Some(val.to_string());
+/// Extract QoS configuration, VLAN name map, and download VLAN interfaces from parsed HCL.
+fn extract_qos_config(hcl: &Option<Value>, wan_iface: &str) -> HclQosInfo {
+    let hcl = match hcl {
+        Some(v) => v,
+        None => return HclQosInfo { config: None, vlan_names: HashMap::new(), download_vlan_ifaces: vec![] },
+    };
+
+    // Build VLAN name map: vlan_id_str → name
+    // Also collect interfaces with download bandwidth
+    let mut vlan_names: HashMap<String, String> = HashMap::new();
+    let mut download_vlan_ifaces: Vec<String> = Vec::new();
+
+    if let Some(vlans) = hcl.get("vlan").and_then(|v| v.as_object()) {
+        for (name, vlan) in vlans {
+            if let Some(id) = vlan.get("id").and_then(|v| v.as_u64()) {
+                vlan_names.insert(id.to_string(), name.clone());
+
+                if let Some(bw) = vlan.get("bandwidth") {
+                    if bw.get("download_mbps").and_then(|v| v.as_u64()).is_some() {
+                        download_vlan_ifaces.push(name.clone());
+                    }
                 }
             }
         }
-        None
+    }
+
+    // Parse QoS block
+    let qos = match hcl.get("qos") {
+        Some(q) => q,
+        None => return HclQosInfo { config: None, vlan_names, download_vlan_ifaces },
     };
 
-    let upload_mbps = get_val("WAN_QOS_UPLOAD_MBPS")?;
-    let download_mbps = get_val("WAN_QOS_DOWNLOAD_MBPS")?;
-    let wan_interface = get_val("WAN_INTERFACE").unwrap_or_else(|| "wan".to_string());
-    let shave_percent = get_val("WAN_QOS_SHAVE_PERCENT").unwrap_or_else(|| "10".to_string());
+    let upload_mbps = qos.get("upload_mbps").and_then(|v| v.as_u64()).unwrap_or(0);
+    let download_mbps = qos.get("download_mbps").and_then(|v| v.as_u64()).unwrap_or(0);
+    let shave_percent = qos.get("shave_percent").and_then(|v| v.as_u64()).unwrap_or(10);
 
-    let upload: u64 = upload_mbps.parse().ok()?;
-    let download: u64 = download_mbps.parse().ok()?;
-    let shave: u64 = shave_percent.parse().unwrap_or(10);
+    if upload_mbps == 0 || download_mbps == 0 {
+        return HclQosInfo { config: None, vlan_names, download_vlan_ifaces };
+    }
 
-    let effective_upload_kbit = upload * 1000 * (100 - shave) / 100;
-    let effective_download_kbit = download * 1000 * (100 - shave) / 100;
+    let effective_upload_kbit = upload_mbps * 1000 * (100 - shave_percent) / 100;
+    let effective_download_kbit = download_mbps * 1000 * (100 - shave_percent) / 100;
 
-    // Parse per-VLAN QoS classes
-    let vlans_str = get_val("VLANS").unwrap_or_default();
-    let vlan_ids: Vec<&str> = vlans_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    // Per-VLAN QoS classes
+    let mut vlan_classes = Vec::new();
+    if let Some(vlans) = hcl.get("vlan").and_then(|v| v.as_object()) {
+        let mut entries: Vec<_> = vlans.iter().collect();
+        entries.sort_by_key(|(_, v)| v.get("id").and_then(|id| id.as_u64()).unwrap_or(0));
 
-    let vlan_classes: Vec<VlanQosClass> = vlan_ids
-        .iter()
-        .filter_map(|id| {
-            let qos_class = get_val(&format!("VLAN_{}_QOS_CLASS", id))?;
-            let name = get_val(&format!("VLAN_{}_NAME", id)).unwrap_or_else(|| format!("VLAN {}", id));
-            Some(VlanQosClass {
-                vlan_id: id.to_string(),
-                name,
-                qos_class,
-            })
-        })
-        .collect();
-
-    // Parse QoS overrides
-    let override_classes = ["VOICE", "VIDEO", "BESTEFFORT", "BULK"];
-    let overrides: Vec<QosOverrideEntry> = override_classes
-        .iter()
-        .filter_map(|class| {
-            let cidrs = get_val(&format!("QOS_OVERRIDE_{}", class))?;
-            if cidrs.is_empty() {
-                return None;
+        for (name, vlan) in entries {
+            if let Some(qos_class) = vlan.get("qos_class").and_then(|v| v.as_str()) {
+                let id = vlan.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                vlan_classes.push(VlanQosClass {
+                    vlan_id: id,
+                    name: name.clone(),
+                    qos_class: qos_class.to_string(),
+                });
             }
-            Some(QosOverrideEntry {
-                class: class.to_lowercase(),
-                cidrs,
-            })
-        })
-        .collect();
+        }
+    }
 
-    Some(QosConfigInfo {
+    // QoS overrides
+    let mut overrides = Vec::new();
+    if let Some(ovr) = qos.get("overrides") {
+        for class in &["voice", "video", "besteffort", "bulk"] {
+            if let Some(cidrs) = ovr.get(*class).and_then(|v| v.as_array()) {
+                let cidr_strs: Vec<String> = cidrs
+                    .iter()
+                    .filter_map(|c| c.as_str().map(|s| s.to_string()))
+                    .collect();
+                if !cidr_strs.is_empty() {
+                    overrides.push(QosOverrideEntry {
+                        class: class.to_string(),
+                        cidrs: cidr_strs.join(", "),
+                    });
+                }
+            }
+        }
+    }
+
+    let config = QosConfigInfo {
         upload_mbps,
         download_mbps,
         shave_percent,
         effective_upload_kbit,
         effective_download_kbit,
-        wan_interface,
+        wan_interface: wan_iface.to_string(),
         vlan_classes,
         overrides,
-    })
+    };
+
+    HclQosInfo { config: Some(config), vlan_names, download_vlan_ifaces }
 }
 
-async fn read_cake_stats(device: &str) -> Option<CakeStats> {
-    // Validate device name
+/// Read tc qdisc state for a device from the state dump file.
+async fn run_tc_qdisc_show(device: &str) -> Option<String> {
     if !device
         .chars()
         .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
@@ -219,34 +303,261 @@ async fn read_cake_stats(device: &str) -> Option<CakeStats> {
         return None;
     }
 
-    let output = Command::new("tc")
-        .args(["-s", "qdisc", "show", "dev", device])
-        .output()
-        .await
-        .ok()?;
+    let all = read_state_file("tc-qdisc.txt").await?;
+    Some(extract_tc_device_sections(&all, device))
+}
 
-    if !output.status.success() {
-        return None;
+/// Extract all tc output lines belonging to a specific device.
+/// tc output format: "qdisc <type> <handle> dev <name> ..." followed by indented stats lines.
+fn extract_tc_device_sections(all: &str, device: &str) -> String {
+    let dev_marker = format!(" dev {} ", device);
+    let mut result = String::new();
+    let mut capturing = false;
+
+    for line in all.lines() {
+        if line.starts_with("qdisc ") {
+            capturing = line.contains(&dev_marker);
+        }
+        if capturing {
+            result.push_str(line);
+            result.push('\n');
+        }
     }
+    result
+}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+/// Extract tc class output lines belonging to a specific device.
+/// tc class output format: "class <type> <classid> dev <name> ..." one line per class.
+fn extract_tc_class_device_sections(all: &str, device: &str) -> String {
+    let dev_marker = format!(" dev {} ", device);
+    let mut result = String::new();
+    for line in all.lines() {
+        if line.contains(&dev_marker) {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result
+}
 
-    // Check this is a CAKE qdisc
+/// Read WAN upload stats. Returns (flat_cake, htb_classes).
+async fn read_wan_upload_stats(device: &str) -> (Option<CakeStats>, Vec<CakeClassStats>) {
+    let stdout = match run_tc_qdisc_show(device).await {
+        Some(s) => s,
+        None => return (None, vec![]),
+    };
+
+    if stdout.contains("qdisc htb") {
+        let classes = parse_htb_cake_sections(device, &stdout);
+        (None, classes)
+    } else if stdout.contains("cake") {
+        (parse_cake_section(device, &stdout), vec![])
+    } else {
+        (None, vec![])
+    }
+}
+
+/// Read a single flat CAKE qdisc (used for download/ifb0).
+async fn read_cake_stats_flat(device: &str) -> Option<CakeStats> {
+    let stdout = run_tc_qdisc_show(device).await?;
     if !stdout.contains("cake") {
         return None;
     }
-
-    parse_cake_output(device, &stdout)
+    parse_cake_section(device, &stdout)
 }
 
-fn parse_cake_output(device: &str, output: &str) -> Option<CakeStats> {
+/// Split tc output into per-qdisc sections.
+fn split_qdisc_sections(output: &str) -> Vec<String> {
+    let mut sections = Vec::new();
+    let mut current = String::new();
+    for line in output.lines() {
+        if line.trim_start().starts_with("qdisc ") && !current.is_empty() {
+            sections.push(current);
+            current = String::new();
+        }
+        if !current.is_empty() {
+            current.push('\n');
+        }
+        current.push_str(line);
+    }
+    if !current.is_empty() {
+        sections.push(current);
+    }
+    sections
+}
+
+/// Parsed HTB class info: classid minor → (rate, ceil).
+struct HtbClassInfo {
+    minor: String,
+    rate: String,
+    ceil: String,
+}
+
+/// Read HTB classes from the state dump for a device.
+/// Returns non-root, non-default classes (i.e., per-VLAN bandwidth classes).
+async fn read_htb_classes(device: &str) -> Vec<HtbClassInfo> {
+    if !device
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return vec![];
+    }
+
+    let all = match read_state_file("tc-class.txt").await {
+        Some(c) => c,
+        None => return vec![],
+    };
+
+    let stdout = extract_tc_class_device_sections(&all, device);
+    let mut classes = Vec::new();
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        // Match: "class htb 1:XX ..." (with "parent" or "root")
+        if !trimmed.starts_with("class htb ") {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        let classid = parts[2];
+        let minor = classid.split(':').nth(1).unwrap_or("");
+        // Skip root class (1:1) and default (1:ffff)
+        if minor == "1" || minor == "ffff" || minor.is_empty() {
+            continue;
+        }
+        // Find rate and ceil by keyword position (works regardless of "parent" vs "root")
+        let rate = parts.iter().position(|&p| p == "rate")
+            .and_then(|i| parts.get(i + 1))
+            .unwrap_or(&"");
+        let ceil = parts.iter().position(|&p| p == "ceil")
+            .and_then(|i| parts.get(i + 1))
+            .unwrap_or(&"");
+        if rate.is_empty() {
+            continue;
+        }
+
+        classes.push(HtbClassInfo {
+            minor: minor.to_string(),
+            rate: rate.to_string(),
+            ceil: ceil.to_string(),
+        });
+    }
+
+    classes
+}
+
+/// Read the download cap (HTB class 1:2) from a VLAN interface.
+async fn read_vlan_download_cap(interface: &str) -> Option<HtbClassInfo> {
+    let classes = read_htb_classes(interface).await;
+    // The download cap class is 1:2 (minor "2")
+    classes.into_iter().find(|c| c.minor == "2")
+}
+
+/// Build bandwidth_limits from live tc HTB class state.
+/// Upload comes from WAN HTB classes (keyed by VLAN ID in classid minor).
+/// Download comes from per-VLAN interface HTB (class 1:2).
+fn build_bandwidth_limits(
+    upload_htb: &[HtbClassInfo],
+    vlan_download_caps: &HashMap<String, HtbClassInfo>,
+    vlan_names: &HashMap<String, String>,
+) -> Vec<BandwidthLimit> {
+    let mut seen: HashMap<String, BandwidthLimit> = HashMap::new();
+
+    // Upload: WAN HTB classes keyed by VLAN ID (classid minor)
+    for cls in upload_htb {
+        let name = vlan_names.get(&cls.minor).cloned().unwrap_or_else(|| format!("VLAN {}", cls.minor));
+        let entry = seen.entry(cls.minor.clone()).or_insert_with(|| BandwidthLimit {
+            vlan_id: cls.minor.clone(),
+            name,
+            upload_rate: None,
+            upload_ceil: None,
+            download_rate: None,
+            download_ceil: None,
+        });
+        entry.upload_rate = Some(cls.rate.clone());
+        entry.upload_ceil = Some(cls.ceil.clone());
+    }
+
+    // Download: per-VLAN interface HTB, keyed by interface name (== VLAN name)
+    for (iface, cap) in vlan_download_caps {
+        // Find the VLAN ID for this interface name
+        let vlan_id = vlan_names.iter()
+            .find(|(_, name)| name.as_str() == iface)
+            .map(|(id, _)| id.clone())
+            .unwrap_or_else(|| iface.clone());
+        let name = iface.clone();
+
+        let entry = seen.entry(vlan_id.clone()).or_insert_with(|| BandwidthLimit {
+            vlan_id,
+            name: name.clone(),
+            upload_rate: None,
+            upload_ceil: None,
+            download_rate: None,
+            download_ceil: None,
+        });
+        entry.download_rate = Some(cap.rate.clone());
+        entry.download_ceil = Some(cap.ceil.clone());
+    }
+
+    let mut limits: Vec<BandwidthLimit> = seen.into_values().collect();
+    limits.sort_by(|a, b| a.vlan_id.cmp(&b.vlan_id));
+    limits
+}
+
+/// Extract the minor classid from a `parent major:minor` in a qdisc line.
+fn extract_parent_minor(line: &str) -> Option<String> {
+    let parent_idx = line.find("parent ")?;
+    let rest = &line[parent_idx + 7..];
+    let classid = rest.split_whitespace().next()?;
+    let minor = classid.split(':').nth(1)?;
+    Some(minor.to_string())
+}
+
+/// Parse HTB+CAKE output into per-class stats.
+fn parse_htb_cake_sections(device: &str, output: &str) -> Vec<CakeClassStats> {
+    let sections = split_qdisc_sections(output);
+    let mut classes = Vec::new();
+
+    for section in &sections {
+        let trimmed = section.trim_start();
+        if !trimmed.starts_with("qdisc cake") {
+            continue;
+        }
+
+        let first_line = trimmed.lines().next().unwrap_or("");
+        let parent_minor = match extract_parent_minor(first_line) {
+            Some(m) => m,
+            None => continue,
+        };
+
+        let label = if parent_minor == "ffff" {
+            "Default".to_string()
+        } else {
+            format!("VLAN {}", parent_minor)
+        };
+
+        if let Some(cake) = parse_cake_section(device, section) {
+            classes.push(CakeClassStats {
+                class_id: format!("1:{}", parent_minor),
+                label,
+                cake,
+            });
+        }
+    }
+
+    classes
+}
+
+/// Parse a single CAKE qdisc section into CakeStats.
+fn parse_cake_section(device: &str, output: &str) -> Option<CakeStats> {
     let mut bandwidth = String::new();
     let mut sent_bytes: u64 = 0;
     let mut sent_packets: u64 = 0;
     let mut dropped: u64 = 0;
     let mut overlimits: u64 = 0;
 
-    // Parse per-tin table data
     let tin_names = ["Bulk", "Best Effort", "Video", "Voice"];
     let mut tin_data: Vec<CakeTin> = tin_names
         .iter()
@@ -269,7 +580,6 @@ fn parse_cake_output(device: &str, output: &str) -> Option<CakeStats> {
     for line in output.lines() {
         let trimmed = line.trim();
 
-        // Extract bandwidth from first line
         if trimmed.starts_with("qdisc cake") {
             if let Some(bw_start) = trimmed.find("bandwidth ") {
                 let rest = &trimmed[bw_start + 10..];
@@ -277,7 +587,6 @@ fn parse_cake_output(device: &str, output: &str) -> Option<CakeStats> {
             }
         }
 
-        // Parse "Sent N bytes M pkt (dropped D, overlimits O requeues R)"
         if trimmed.starts_with("Sent ") {
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
             if parts.len() >= 4 {
@@ -304,7 +613,6 @@ fn parse_cake_output(device: &str, output: &str) -> Option<CakeStats> {
             }
         }
 
-        // Parse tin table rows — each row has a label and 4 values
         if let Some(label) = extract_tin_label(trimmed) {
             let values = extract_tin_values(trimmed);
             if values.len() == 4 {
@@ -339,30 +647,13 @@ fn parse_cake_output(device: &str, output: &str) -> Option<CakeStats> {
     })
 }
 
-/// Extract the label from a tc CAKE tin stats line (e.g., "thresh" from "  thresh  1125Kbit  18Mbit ...")
 fn extract_tin_label(line: &str) -> Option<&str> {
     let trimmed = line.trim();
     let labels = [
-        "thresh",
-        "target",
-        "interval",
-        "pk_delay",
-        "av_delay",
-        "sp_delay",
-        "backlog",
-        "pkts",
-        "bytes",
-        "way_inds",
-        "way_miss",
-        "way_cols",
-        "drops",
-        "marks",
-        "ack_drop",
-        "sp_flows",
-        "bk_flows",
-        "un_flows",
-        "max_len",
-        "quantum",
+        "thresh", "target", "interval", "pk_delay", "av_delay", "sp_delay",
+        "backlog", "pkts", "bytes", "way_inds", "way_miss", "way_cols",
+        "drops", "marks", "ack_drop", "sp_flows", "bk_flows", "un_flows",
+        "max_len", "quantum",
     ];
     for label in labels {
         if trimmed.starts_with(label) {
@@ -375,55 +666,100 @@ fn extract_tin_label(line: &str) -> Option<&str> {
     None
 }
 
-/// Extract the 4 tin values from a tc CAKE stats line
 fn extract_tin_values(line: &str) -> Vec<String> {
     let trimmed = line.trim();
-    // Skip the label, then collect remaining whitespace-separated values
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
     if parts.len() >= 5 {
-        // Label + 4 values
         parts[1..5].iter().map(|s| s.to_string()).collect()
     } else {
         vec![]
     }
 }
 
+/// Parse nftables mangle rules containing `dscp set` (priority marking).
 async fn read_dscp_rules() -> Vec<DscpRule> {
-    let output = Command::new("nft")
-        .args(["list", "table", "inet", "mangle"])
-        .output()
-        .await;
-
-    let output = match output {
-        Ok(o) if o.status.success() => o,
-        _ => return vec![],
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
+    let stdout = read_mangle_table().await;
     stdout
         .lines()
         .map(|l| l.trim())
         .filter(|l| l.contains("dscp set"))
-        .map(|l| {
-            // Extract nf: comment if present
-            let (text, description) = if let Some(comment_pos) = l.rfind(" comment \"") {
-                let after = &l[comment_pos + 10..];
-                if let Some(end_quote) = after.rfind('"') {
-                    let comment = &after[..end_quote];
-                    let rule_text = l[..comment_pos].to_string();
-                    let desc = comment
-                        .strip_prefix("nf:")
-                        .map(|d| if d.is_empty() { None } else { Some(d.to_string()) })
-                        .unwrap_or(None);
-                    (rule_text, desc)
-                } else {
-                    (l.to_string(), None)
-                }
-            } else {
-                (l.to_string(), None)
-            };
-            DscpRule { text, description }
-        })
+        .map(|l| parse_nft_rule(l))
         .collect()
+}
+
+/// Parse nftables mangle rules containing `meta mark set` (bandwidth marking).
+async fn read_bandwidth_rules() -> Vec<DscpRule> {
+    let stdout = read_mangle_table().await;
+    stdout
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| l.contains("meta mark set"))
+        .map(|l| parse_nft_rule(l))
+        .collect()
+}
+
+async fn read_mangle_table() -> String {
+    let ruleset = match read_state_file("nft-ruleset.txt").await {
+        Some(c) => c,
+        None => return String::new(),
+    };
+    // Extract the inet mangle table section from the full ruleset
+    extract_table_section(&ruleset, "inet", "mangle")
+}
+
+/// Extract a full table block from the nft ruleset text dump.
+fn extract_table_section(ruleset: &str, family: &str, table: &str) -> String {
+    let mut result = String::new();
+    let mut in_table = false;
+    let mut brace_depth = 0;
+
+    for line in ruleset.lines() {
+        let trimmed = line.trim();
+        if !in_table {
+            if trimmed.starts_with(&format!("table {} {}", family, table)) && trimmed.ends_with('{') {
+                in_table = true;
+                brace_depth = 1;
+                result.push_str(line);
+                result.push('\n');
+            }
+            continue;
+        }
+
+        result.push_str(line);
+        result.push('\n');
+
+        for ch in trimmed.chars() {
+            match ch {
+                '{' => brace_depth += 1,
+                '}' => {
+                    brace_depth -= 1;
+                    if brace_depth == 0 {
+                        return result;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    result
+}
+
+fn parse_nft_rule(l: &str) -> DscpRule {
+    let (text, description) = if let Some(comment_pos) = l.rfind(" comment \"") {
+        let after = &l[comment_pos + 10..];
+        if let Some(end_quote) = after.rfind('"') {
+            let comment = &after[..end_quote];
+            let rule_text = l[..comment_pos].to_string();
+            let desc = comment
+                .strip_prefix("nf:")
+                .map(|d| if d.is_empty() { None } else { Some(d.to_string()) })
+                .unwrap_or(None);
+            (rule_text, desc)
+        } else {
+            (l.to_string(), None)
+        }
+    } else {
+        (l.to_string(), None)
+    };
+    DscpRule { text, description }
 }

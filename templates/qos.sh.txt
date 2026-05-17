@@ -7,11 +7,34 @@ WAN_INTERFACE="{{ interface_wan }}"
 
 echo "QoS: upload {{ upload_kbit }}kbit, download {{ download_kbit }}kbit on $WAN_INTERFACE"
 
-# --- Upload shaping (egress on WAN) ---
+# =============================================================================
+# Upload shaping (egress on WAN)
+# =============================================================================
 tc qdisc del dev "$WAN_INTERFACE" root 2>/dev/null || true
+{% if vlan_upload_limits.is_empty() %}
+# --- Flat CAKE (no per-VLAN upload limits) ---
 tc qdisc add dev "$WAN_INTERFACE" root cake bandwidth {{ upload_kbit }}kbit diffserv4 nat wash
+{% else %}
+# --- HTB + CAKE (per-VLAN upload limits) ---
+# Packets classified via nftables fwmark (meta mark set).
+tc qdisc add dev "$WAN_INTERFACE" root handle 1: htb default ffff
+tc class add dev "$WAN_INTERFACE" parent 1: classid 1:1 htb rate {{ upload_kbit }}kbit ceil {{ upload_kbit }}kbit
+{% for vb in vlan_upload_limits %}
 
-# --- Download shaping (ingress via IFB) ---
+# VLAN {{ vb.vlan_id }} — hard cap {{ vb.kbit }}kbit (non-burstable: ceil == rate)
+tc class add dev "$WAN_INTERFACE" parent 1:1 classid 1:{{ vb.vlan_id }} htb rate {{ vb.kbit }}kbit ceil {{ vb.kbit }}kbit
+tc qdisc add dev "$WAN_INTERFACE" parent 1:{{ vb.vlan_id }} cake bandwidth {{ vb.kbit }}kbit diffserv4 nat wash
+tc filter add dev "$WAN_INTERFACE" parent 1: protocol all prio 1 handle {{ vb.vlan_id }} fw classid 1:{{ vb.vlan_id }}
+{% endfor %}
+
+# Default class — uncapped VLANs share remaining bandwidth, can burst to total
+tc class add dev "$WAN_INTERFACE" parent 1:1 classid 1:ffff htb rate {{ default_upload_kbit }}kbit ceil {{ upload_kbit }}kbit
+tc qdisc add dev "$WAN_INTERFACE" parent 1:ffff cake bandwidth {{ upload_kbit }}kbit diffserv4 nat wash
+{% endif %}
+
+# =============================================================================
+# Download shaping (ingress via IFB — global bufferbloat prevention)
+# =============================================================================
 modprobe ifb 2>/dev/null || true
 if ! ip link show ifb0 &>/dev/null; then
     ip link add ifb0 type ifb
@@ -22,3 +45,20 @@ tc qdisc add dev "$WAN_INTERFACE" handle ffff: ingress
 tc filter add dev "$WAN_INTERFACE" parent ffff: matchall action mirred egress redirect dev ifb0
 tc qdisc del dev ifb0 root 2>/dev/null || true
 tc qdisc add dev ifb0 root cake bandwidth {{ download_kbit }}kbit diffserv4 nat wash ingress
+{% if !vlan_downloads.is_empty() %}
+
+# =============================================================================
+# Per-VLAN download caps (HTB + CAKE on VLAN interface egress)
+# =============================================================================
+# WAN-sourced packets are marked 0x10000 by nftables (iif wan → meta mark set).
+# Only marked traffic is shaped; inter-VLAN and local traffic passes through uncapped.
+{% for dl in vlan_downloads %}
+
+# {{ dl.interface_name }} — WAN download cap {{ dl.kbit }}kbit
+tc qdisc replace dev "{{ dl.interface_name }}" root handle 1: htb default ffff
+tc class add dev "{{ dl.interface_name }}" parent 1: classid 1:2 htb rate {{ dl.kbit }}kbit ceil {{ dl.kbit }}kbit
+tc qdisc add dev "{{ dl.interface_name }}" parent 1:2 cake bandwidth {{ dl.kbit }}kbit diffserv4 nat wash
+tc filter add dev "{{ dl.interface_name }}" parent 1: protocol all prio 1 handle 0x10000 fw classid 1:2
+tc class add dev "{{ dl.interface_name }}" parent 1: classid 1:ffff htb rate 10gbit ceil 10gbit
+{% endfor %}
+{% endif %}

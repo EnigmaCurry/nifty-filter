@@ -18,7 +18,7 @@
         modules = [
           self.nixosModules.default
           ./nix/system.nix
-          ./nix/filesystem.nix
+          ./nix/platforms/filesystem.nix
         ];
       };
 
@@ -40,8 +40,8 @@
           modules = [
             self.nixosModules.default
             ./nix/system.nix
-            ./nix/pve-filesystem.nix
-            ./nix/pve.nix
+            ./nix/platforms/pve-filesystem.nix
+            ./nix/platforms/pve.nix
           ];
         };
 
@@ -61,7 +61,7 @@
           modules = [
             self.nixosModules.default
             ./nix/system.nix
-            ./nix/iso.nix
+            ./nix/platforms/iso.nix
           ] ++ extraModules;
         };
     in
@@ -69,92 +69,15 @@
       packages = forAllSystems (system:
         let
           pkgs = pkgsFor system;
-          lib = pkgs.lib;
         in {
-          nifty-filter = pkgs.rustPlatform.buildRustPackage {
-            pname = "nifty-filter";
-            version = "0.2.1";
-            src = ./.;
-            cargoLock.lockFile = ./Cargo.lock;
-            buildFeatures = [ "nixos" ];
-            cargoBuildFlags = [ "-p" "nifty-filter" ];
-            GIT_SHA = version;
-            meta = {
-              description = "A nifty tool to configure netfilter/nftables";
-              license = pkgs.lib.licenses.mit;
-              mainProgram = "nifty-filter";
-            };
-          };
-
-          sodola-switch = pkgs.rustPlatform.buildRustPackage {
-            pname = "sodola-switch";
-            version = "0.1.0";
-            src = ./.;
-            cargoLock.lockFile = ./Cargo.lock;
-            cargoBuildFlags = [ "-p" "sodola-switch" ];
-            meta = {
-              description = "Management client for Sodola SL-SWTGW218AS managed switch";
-              license = pkgs.lib.licenses.mit;
-              mainProgram = "sodola-switch";
-            };
-          };
-
-          nifty-dashboard =
-            let
-              frontend = pkgs.stdenv.mkDerivation {
-                pname = "nifty-dashboard-frontend";
-                version = "0.1.0";
-                src = ./crates/nifty-dashboard/frontend;
-                nativeBuildInputs = [
-                  pkgs.pnpm
-                  pkgs.pnpmConfigHook
-                  pkgs.nodejs
-                ];
-                pnpmDeps = pkgs.fetchPnpmDeps {
-                  pname = "nifty-dashboard-frontend";
-                  version = "0.1.0";
-                  src = ./crates/nifty-dashboard/frontend;
-                  hash = "sha256-PCIjOq4qHY/I/TvU+pdOBbWWdhETwsuxwaehbVm1hg8=";
-                  fetcherVersion = 2;
-                };
-                buildPhase = ''
-                  pnpm build
-                '';
-                installPhase = ''
-                  cp -r build $out
-                '';
-              };
-            in
-            pkgs.rustPlatform.buildRustPackage {
-              pname = "nifty-dashboard";
-              version = "0.1.0";
-              src = ./crates/nifty-dashboard;
-              cargoLock = {
-                lockFile = ./crates/nifty-dashboard/Cargo.lock;
-                outputHashes = {
-                  "conf-0.4.5" = "sha256-gxxB8t0bl8ZudylXe4edAIVjO4KNHZshUhifvpm1b5E=";
-                };
-              };
-              cargoBuildFlags = [ "-p" "nifty-dashboard" ];
-              GIT_SHA = version;
-              nativeBuildInputs = [ pkgs.pkg-config ];
-              buildInputs = [ pkgs.openssl ];
-              preBuild = ''
-                rm -rf frontend/build
-                ln -s ${frontend} frontend/build
-                cp ${./LICENSE.md} LICENSE.md
-              '';
-              meta = {
-                description = "Web dashboard for nifty-filter";
-                license = pkgs.lib.licenses.mit;
-                mainProgram = "nifty-dashboard";
-              };
-            };
+          nifty-filter = pkgs.callPackage ./nix/packages/nifty-filter.nix { inherit version; };
+          sodola-switch = pkgs.callPackage ./nix/packages/sodola-switch.nix {};
+          nifty-dashboard = pkgs.callPackage ./nix/packages/nifty-dashboard.nix { inherit version; };
 
           iso = (mkRouterIso { inherit system; }).config.system.build.isoImage;
-          iso-big = (mkRouterIso { inherit system; extraModules = [ ./nix/iso-big.nix ]; }).config.system.build.isoImage;
+          iso-big = (mkRouterIso { inherit system; extraModules = [ ./nix/platforms/iso-big.nix ]; }).config.system.build.isoImage;
 
-          pve-image = import ./nix/pve-image.nix {
+          pve-image = import ./nix/platforms/pve-image.nix {
             inherit nixpkgs system self sshKeys version gitBranch;
           };
 

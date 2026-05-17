@@ -75,19 +75,7 @@
     switch: SwitchState | null;
   }
 
-  interface ConfigEntry {
-    key: string;
-    value: string;
-    comment?: string;
-    is_commented_out: boolean;
-    boot_value?: string;
-    is_default?: boolean;
-  }
-
-  interface ConfigSection {
-    name: string;
-    entries: ConfigEntry[];
-  }
+  // Config is now a generic JSON tree from HCL parsing
 
   interface CakeTin {
     name: string;
@@ -115,7 +103,7 @@
   }
 
   interface VlanQosClass {
-    vlan_id: string;
+    vlan_id: number;
     name: string;
     qos_class: string;
   }
@@ -126,9 +114,9 @@
   }
 
   interface QosConfigInfo {
-    upload_mbps: string;
-    download_mbps: string;
-    shave_percent: string;
+    upload_mbps: number;
+    download_mbps: number;
+    shave_percent: number;
     effective_upload_kbit: number;
     effective_download_kbit: number;
     wan_interface: string;
@@ -141,13 +129,31 @@
     description?: string;
   }
 
+  interface CakeClassStats {
+    class_id: string;
+    label: string;
+    cake: CakeStats;
+  }
+
+  interface BandwidthLimit {
+    vlan_id: string;
+    name: string;
+    upload_rate?: string;
+    upload_ceil?: string;
+    download_rate?: string;
+    download_ceil?: string;
+  }
+
   interface QosData {
     configured: boolean;
     active: boolean;
     config: QosConfigInfo | null;
     upload: CakeStats | null;
     download: CakeStats | null;
+    upload_classes: CakeClassStats[];
+    bandwidth_limits: BandwidthLimit[];
     dscp_rules: DscpRule[];
+    bandwidth_rules: DscpRule[];
   }
 
   interface DnsmasqInterface {
@@ -197,7 +203,20 @@
   }
 
   type Tab = "config" | "state" | "updates" | "about";
-  type StateSubTab = "interfaces" | "nftables" | "qos" | "switch" | "dnsmasq";
+  type StateSubTab = "interfaces" | "nftables" | "qos" | "switch" | "dnsmasq" | "services";
+
+  interface ServiceInfo {
+    name: string;
+    active_state: string;
+    sub_state: string;
+    description: string;
+    since?: string;
+  }
+
+  interface ServicesData {
+    nifty: ServiceInfo[];
+    failed: ServiceInfo[];
+  }
 
   interface AboutData {
     version: string;
@@ -205,20 +224,29 @@
     license: string;
   }
 
-  type ConfigSubTab = "overview" | "environment";
+  type ConfigSubTab = "overview" | "spec";
 
   let data = $state<StatusData | null>(null);
-  let configData = $state<ConfigSection[]>([]);
+  let configJson = $state<Record<string, any> | null>(null);
+  let bootConfigJson = $state<Record<string, any> | null>(null);
   let rebootNeeded = $state(false);
+  let configError = $state<string | null>(null);
   let aboutData = $state<AboutData | null>(null);
   let qosData = $state<QosData | null>(null);
   let dnsmasqData = $state<DnsmasqData | null>(null);
+  let servicesData = $state<ServicesData | null>(null);
   let updatesData = $state<UpdatesData | null>(null);
   let loading = $state(true);
   let errorMsg = $state("");
+  let connected = $state(true);
   let activeTab = $state<Tab>("config");
   let configSubTab = $state<ConfigSubTab>("overview");
   let stateSubTab = $state<StateSubTab>("interfaces");
+
+  let failingServiceCount = $derived(
+    (servicesData?.failed.length ?? 0) +
+    (servicesData?.nifty.filter(s => s.active_state === "failed").length ?? 0)
+  );
 
   function updateHash() {
     let hash: string;
@@ -243,24 +271,15 @@
     const tab = parts[0];
     const validTabs: Tab[] = ["config", "state", "updates", "about"];
     if (validTabs.includes(tab as Tab)) {
-      const validStateSubs: StateSubTab[] = ["interfaces", "nftables", "dnsmasq", "qos", "switch"];
+      const validStateSubs: StateSubTab[] = ["interfaces", "nftables", "dnsmasq", "qos", "switch", "services"];
       return {
         tab: tab as Tab,
         hook: tab === "state" && parts[1] === "nftables" ? (parts[2] ?? "input") : "input",
-        configSub: tab === "config" && parts[1] === "environment" ? "environment" : "overview",
+        configSub: tab === "config" && parts[1] === "spec" ? "spec" : "overview",
         stateSub: tab === "state" && validStateSubs.includes(parts[1] as StateSubTab) ? parts[1] as StateSubTab : "interfaces",
       };
     }
     return null;
-  }
-
-  function cfgVal(key: string): string {
-    for (const section of configData) {
-      for (const entry of section.entries) {
-        if (entry.key === key && !entry.is_commented_out) return entry.value;
-      }
-    }
-    return "";
   }
 
   interface VlanOverview {
@@ -277,151 +296,23 @@
     iperf: boolean;
   }
 
-  const VALID_STATIC_KEYS = new Set([
-    "ENABLED", "HOSTNAME",
-    "TRUNK_INTERFACE", "LAN_INTERFACE", "WAN_INTERFACE", "MGMT_INTERFACE",
-    "MGMT_SUBNET",
-    "WAN_MAC", "TRUNK_MAC", "MGMT_MAC",
-    "VLAN_AWARE_SWITCH", "VLANS",
-    "WAN_ENABLE_IPV4", "WAN_ENABLE_IPV6",
-    "ENABLE_IPV4", "ENABLE_IPV6",
-    "WAN_ICMP_ACCEPT", "WAN_ICMPV6_ACCEPT",
-    "WAN_TCP_ACCEPT", "WAN_UDP_ACCEPT",
-    "WAN_TCP_FORWARD", "WAN_UDP_FORWARD",
-    "WAN_BOGONS_IPV4", "WAN_BOGONS_IPV6",
-    "WAN_QOS_UPLOAD_MBPS", "WAN_QOS_DOWNLOAD_MBPS", "WAN_QOS_SHAVE_PERCENT",
-    "QOS_OVERRIDE_VOICE", "QOS_OVERRIDE_VIDEO", "QOS_OVERRIDE_BESTEFFORT", "QOS_OVERRIDE_BULK",
-    "IPERF_PORT",
-    "DHCP_UPSTREAM_DNS",
-    // Legacy VLAN 1 aliases
-    "SUBNET_LAN_IPV4", "SUBNET_LAN", "SUBNET_LAN_IPV6",
-    "LAN_EGRESS_ALLOWED_IPV4", "LAN_EGRESS_ALLOWED_IPV6",
-    "ICMP_ACCEPT_LAN", "ICMPV6_ACCEPT_LAN",
-    "TCP_ACCEPT_LAN", "UDP_ACCEPT_LAN",
-    "TCP_FORWARD_LAN", "UDP_FORWARD_LAN",
-    "DHCP_POOL_START", "DHCP_POOL_END", "DHCP_ROUTER", "DHCP_DNS",
-    "DHCPV6_POOL_START", "DHCPV6_POOL_END",
-    "IPERF_ENABLED", "DHCP4_ENABLED", "DHCPV6_ENABLED",
-    // Sodola switch
-    "SODOLA_URL", "SODOLA_USER", "SODOLA_PASS",
-    "SODOLA_MGMT_IFACE", "SODOLA_ROUTER_IP",
-    "SODOLA_SWITCH_CONFIG", "SODOLA_STATE_FILE", "SODOLA_INTERVAL", "SODOLA_CONFIG_DIR",
-  ]);
-
-  const VALID_VLAN_SUFFIXES = new Set([
-    "NAME", "SUBNET_IPV4", "SUBNET_IPV6",
-    "EGRESS_ALLOWED_IPV4", "EGRESS_ALLOWED_IPV6",
-    "TCP_ACCEPT", "UDP_ACCEPT", "ICMP_ACCEPT", "ICMPV6_ACCEPT",
-    "TCP_FORWARD", "UDP_FORWARD",
-    "ALLOW_INBOUND_TCP", "ALLOW_INBOUND_UDP",
-    "DHCP_ENABLED", "DHCP_POOL_START", "DHCP_POOL_END", "DHCP_ROUTER", "DHCP_DNS",
-    "DHCPV6_ENABLED", "DHCPV6_POOL_START", "DHCPV6_POOL_END",
-    "QOS_CLASS", "IPERF_ENABLED",
-  ]);
-
-  const KNOWN_PREFIXES = ["SWITCH_", "NIFTY_DASHBOARD_"];
-
-  function isValidKey(key: string): boolean {
-    if (VALID_STATIC_KEYS.has(key)) return true;
-    const m = key.match(/^VLAN_(\d+)_(.+)$/);
-    if (m) {
-      const suffix = m[2];
-      if (VALID_VLAN_SUFFIXES.has(suffix)) return true;
-      // VLAN_N_ALLOW_FROM_M_TCP / VLAN_N_ALLOW_FROM_M_UDP
-      if (/^ALLOW_FROM_\d+_(TCP|UDP)$/.test(suffix)) return true;
-    }
-    return false;
-  }
-
-  function isKnownKey(key: string): boolean {
-    return KNOWN_PREFIXES.some(p => key.startsWith(p));
-  }
-
-  function groupPrefix(key: string): string {
-    const parts = key.split("_");
-    if (parts[0] === "VLAN" && parts.length >= 2) {
-      return `${parts[0]}_${parts[1]}`;
-    }
-    return parts[0];
-  }
-
-  function groupedEnvEntries(): ConfigSection[] {
-    const all: ConfigEntry[] = [];
-    for (const section of configData) {
-      for (const entry of section.entries) {
-        all.push(entry);
-      }
-    }
-    all.sort((a, b) => a.key.localeCompare(b.key));
-
-    const valid: ConfigEntry[] = [];
-    const known: ConfigEntry[] = [];
-    const invalid: ConfigEntry[] = [];
-    for (const entry of all) {
-      if (isValidKey(entry.key)) {
-        valid.push(entry);
-      } else if (isKnownKey(entry.key)) {
-        known.push(entry);
-      } else {
-        invalid.push(entry);
-      }
-    }
-
-    const groups = new Map<string, ConfigEntry[]>();
-    for (const entry of valid) {
-      const prefix = groupPrefix(entry.key);
-      if (!groups.has(prefix)) groups.set(prefix, []);
-      groups.get(prefix)!.push(entry);
-    }
-    const general: ConfigEntry[] = [];
-    const result: ConfigSection[] = [];
-    for (const [name, entries] of groups) {
-      if (entries.length === 1) {
-        general.push(...entries);
-      } else {
-        result.push({ name, entries });
-      }
-    }
-    if (general.length > 0) {
-      result.unshift({ name: "General", entries: general });
-    }
-
-    // Group known (non-nifty-filter) vars by prefix
-    const knownGroups = new Map<string, ConfigEntry[]>();
-    for (const entry of known) {
-      const prefix = groupPrefix(entry.key);
-      if (!knownGroups.has(prefix)) knownGroups.set(prefix, []);
-      knownGroups.get(prefix)!.push(entry);
-    }
-    for (const [name, entries] of knownGroups) {
-      result.push({ name, entries });
-    }
-
-    if (invalid.length > 0) {
-      result.push({ name: "Invalid", entries: invalid });
-    }
-    return result;
-  }
-
   function getVlanOverviews(): VlanOverview[] {
-    const vlansStr = cfgVal("VLANS");
-    if (!vlansStr) return [];
-    return vlansStr.split(",").map((id) => {
-      const v = id.trim();
-      return {
-        id: v,
-        name: cfgVal(`VLAN_${v}_NAME`) || `VLAN ${v}`,
-        subnet_ipv4: cfgVal(`VLAN_${v}_SUBNET_IPV4`),
-        subnet_ipv6: cfgVal(`VLAN_${v}_SUBNET_IPV6`),
-        egress_ipv4: cfgVal(`VLAN_${v}_EGRESS_ALLOWED_IPV4`),
-        egress_ipv6: cfgVal(`VLAN_${v}_EGRESS_ALLOWED_IPV6`),
-        tcp_accept: cfgVal(`VLAN_${v}_TCP_ACCEPT`),
-        udp_accept: cfgVal(`VLAN_${v}_UDP_ACCEPT`),
-        dhcp: cfgVal(`VLAN_${v}_DHCP_ENABLED`) === "true",
-        dhcpv6: cfgVal(`VLAN_${v}_DHCPV6_ENABLED`) === "true",
-        iperf: cfgVal(`VLAN_${v}_IPERF_ENABLED`) === "true",
-      };
-    });
+    if (!configJson?.vlan) return [];
+    return Object.entries(configJson.vlan as Record<string, any>)
+      .sort(([, a], [, b]) => (a.id ?? 0) - (b.id ?? 0))
+      .map(([name, v]: [string, any]) => ({
+        id: String(v.id ?? ""),
+        name,
+        subnet_ipv4: v.ipv4?.subnet ?? "",
+        subnet_ipv6: v.ipv6?.subnet ?? "",
+        egress_ipv4: (v.ipv4?.egress ?? []).join(", "),
+        egress_ipv6: (v.ipv6?.egress ?? []).join(", "),
+        tcp_accept: (v.firewall?.tcp_accept ?? []).join(", "),
+        udp_accept: (v.firewall?.udp_accept ?? []).join(", "),
+        dhcp: v.dhcp != null,
+        dhcpv6: v.dhcpv6 != null,
+        iperf: v.iperf_enabled === true,
+      }));
   }
 
   interface NftRule {
@@ -465,8 +356,8 @@
   }
 
   const tabs: { id: Tab; label: string; condition: () => boolean }[] = [
-    { id: "config", label: "Config", condition: () => configData.length > 0 },
-    { id: "state", label: "State", condition: () => (data?.interfaces.length ?? 0) > 0 || (data?.nft_chains.length ?? 0) > 0 || dnsmasqData != null || qosData != null || data?.switch != null },
+    { id: "config", label: "Config", condition: () => true },
+    { id: "state", label: "State", condition: () => (data?.interfaces.length ?? 0) > 0 || (data?.nft_chains.length ?? 0) > 0 || dnsmasqData != null || qosData != null || data?.switch != null || servicesData != null },
     { id: "updates", label: "Updates", condition: () => updatesData != null },
     { id: "about", label: "About", condition: () => aboutData != null },
   ];
@@ -477,6 +368,7 @@
     { id: "dnsmasq", label: "Dnsmasq", condition: () => dnsmasqData != null },
     { id: "qos", label: "QoS", condition: () => qosData != null },
     { id: "switch", label: "Switch", condition: () => data?.switch != null },
+    { id: "services", label: "Services", condition: () => servicesData != null },
   ];
 
   function formatUptime(seconds: number): string {
@@ -547,7 +439,7 @@
       // Set braces and contents
       .replace(/(\{[^}]+\})/g, '<span class="text-amber-300">$1</span>')
       // Protocol/field keywords
-      .replace(/\b(tcp|udp|icmp|icmpv6|ct state|ct status|meta nfproto|ip saddr|ip daddr|ip6 saddr|ip6 daddr|tcp dport|udp dport|udp sport|icmp type|icmpv6 type)\b/g, '<span class="text-sky-400">$1</span>')
+      .replace(/\b(tcp|udp|icmp|icmpv6|ct state|ct status|meta nfproto|meta mark set|ip saddr|ip daddr|ip6 saddr|ip6 daddr|ip dscp set|ip6 dscp set|tcp dport|udp dport|udp sport|icmp type|icmpv6 type)\b/g, '<span class="text-sky-400">$1</span>')
       // Log prefix strings
       .replace(/(log prefix &quot;[^&]*&quot;)/g, '<span class="text-zinc-500">$1</span>');
   }
@@ -616,6 +508,9 @@
         }
       }
     } catch (e) {
+      if (String(e).includes("NetworkError") || String(e).includes("fetch")) {
+        connected = false;
+      }
       errorMsg = String(e);
     } finally {
       loading = false;
@@ -627,8 +522,10 @@
       const res = await fetch("/api/status/config", { credentials: "include" });
       if (res.ok) {
         const body = await res.json();
-        configData = body.data?.sections ?? [];
+        configJson = body.data?.config ?? null;
+        bootConfigJson = body.data?.boot_config ?? null;
         rebootNeeded = body.data?.reboot_needed ?? false;
+        configError = body.data?.config_error ?? null;
       }
     } catch {}
   }
@@ -643,6 +540,22 @@
   function formatKbit(kbit: number): string {
     if (kbit < 1000) return `${kbit} kbit`;
     return `${(kbit / 1000).toFixed(0)} Mbit`;
+  }
+
+  /** Parse a tc bandwidth string (e.g. "15Mbit", "748800Kbit", "937496bit") and format as rounded Mbit. */
+  function formatBw(s: string): string {
+    if (!s) return "—";
+    const m = s.match(/^(\d+(?:\.\d+)?)\s*(bit|[KkMmGg]bit)$/);
+    if (!m) return s;
+    let val = parseFloat(m[1]);
+    const unit = m[2].toLowerCase();
+    if (unit === "bit") val /= 1_000_000;
+    else if (unit === "kbit") val /= 1000;
+    else if (unit === "gbit") val *= 1000;
+    // val is now in Mbit
+    if (val < 1) return `${(val * 1000).toFixed(0)} Kbit`;
+    if (val < 10) return `${val.toFixed(1)} Mbit`;
+    return `${Math.round(val)} Mbit`;
   }
 
   function tinColor(name: string): string {
@@ -675,6 +588,16 @@
     } catch {}
   }
 
+  async function fetchServices() {
+    try {
+      const res = await fetch("/api/services", { credentials: "include" });
+      if (res.ok) {
+        const body = await res.json();
+        servicesData = body.data ?? null;
+      }
+    } catch {}
+  }
+
   async function fetchUpdates() {
     try {
       const res = await fetch("/api/updates", { credentials: "include" });
@@ -700,19 +623,74 @@
     fetchAbout();
     fetchQos();
     fetchDnsmasq();
+    fetchServices();
     fetchUpdates();
     fetchStatus();
-    const interval = setInterval(() => { fetchStatus(); fetchQos(); fetchDnsmasq(); }, 15000);
+    const interval = setInterval(() => {
+      if (!connected) return;
+      fetchStatus(); fetchQos(); fetchDnsmasq(); fetchServices();
+    }, 15000);
 
-    // SSE: listen for config file changes and re-fetch config in realtime
-    const eventSource = new EventSource("/api/events", { withCredentials: true });
-    eventSource.addEventListener("config-changed", () => {
-      console.log("SSE: config-changed event received, re-fetching config");
-      fetchConfig();
-    });
-    eventSource.onerror = (e) => {
-      console.warn("SSE connection error", e);
-    };
+    // SSE with reconnection logic
+    let eventSource: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let destroyed = false;
+    let retryDelay = 2000;
+
+    function fetchAll() {
+      fetchStatus(); fetchConfig(); fetchQos(); fetchDnsmasq(); fetchServices(); fetchUpdates(); fetchAbout();
+    }
+
+    function scheduleReconnect(delay: number) {
+      if (destroyed) return;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connectSSE, delay);
+    }
+
+    function connectSSE() {
+      if (destroyed) return;
+      if (eventSource) { eventSource.close(); eventSource = null; }
+
+      // Probe the server with a fetch first — avoids EventSource firing
+      // onerror instantly when the server is still down
+      fetch("/api/status", { credentials: "include" }).then((res) => {
+        if (!res.ok || destroyed) { scheduleReconnect(retryDelay); return; }
+        // Server is up — restore UI immediately
+        retryDelay = 2000;
+        connected = true;
+        errorMsg = "";
+        fetchAll();
+
+        // Open the SSE stream for live events
+        const es = new EventSource("/api/events", { withCredentials: true });
+
+        es.addEventListener("config-changed", () => {
+          fetchConfig();
+        });
+
+        es.addEventListener("shutdown", () => {
+          connected = false;
+          es.close();
+          eventSource = null;
+          retryDelay = 5000;
+          scheduleReconnect(retryDelay);
+        });
+
+        es.onerror = () => {
+          connected = false;
+          es.close();
+          eventSource = null;
+          scheduleReconnect(retryDelay);
+        };
+
+        eventSource = es;
+      }).catch(() => {
+        connected = false;
+        scheduleReconnect(retryDelay);
+      });
+    }
+
+    connectSSE();
 
     function onPopState() {
       const saved = readHash();
@@ -728,23 +706,103 @@
     window.addEventListener("popstate", onPopState);
 
     return () => {
+      destroyed = true;
       clearInterval(interval);
-      eventSource.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      eventSource?.close();
       window.removeEventListener("popstate", onPopState);
     };
   });
 </script>
 
+{#snippet specNode(key: string, val: any, bootVal: any, depth: number)}
+  {#if val != null && typeof val === "object" && !Array.isArray(val)}
+    {#if depth === 1}
+      <!-- Depth-1 object: render as a nested sub-card -->
+      <Card.Root class="mt-2">
+        <Card.Header class="pb-1 pt-2 px-3">
+          <Card.Title class="text-sm font-semibold text-muted-foreground">{key}</Card.Title>
+        </Card.Header>
+        <Card.Content class="pt-0 pb-2 px-3">
+          <div class="font-mono text-sm space-y-0">
+            {#each Object.entries(val).filter(([, v]) => v == null || typeof v !== "object" || Array.isArray(v)) as [k, v]}
+              {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
+            {/each}
+            {#each Object.entries(val).filter(([, v]) => v != null && typeof v === "object" && !Array.isArray(v)) as [k, v]}
+              {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
+            {/each}
+          </div>
+        </Card.Content>
+      </Card.Root>
+    {:else}
+      <!-- Object block: section header + children -->
+      <div class="{'ml-' + (depth > 0 ? '4' : '0')} {depth > 0 ? 'border-l border-border/30 pl-3' : ''}">
+        <div class="py-1.5 font-sans font-semibold text-sm {depth === 0 ? 'text-foreground border-b border-border/30 mb-1' : 'text-muted-foreground'}">{key}</div>
+        {#each Object.entries(val).filter(([, v]) => v == null || typeof v !== "object" || Array.isArray(v)) as [k, v]}
+          {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
+        {/each}
+        {#each Object.entries(val).filter(([, v]) => v != null && typeof v === "object" && !Array.isArray(v)) as [k, v]}
+          {@render specNode(k, v, bootVal != null && typeof bootVal === "object" && !Array.isArray(bootVal) ? bootVal[k] : undefined, depth + 1)}
+        {/each}
+      </div>
+    {/if}
+  {:else if Array.isArray(val)}
+    <!-- Array value -->
+    {@const bootArr = Array.isArray(bootVal) ? bootVal : undefined}
+    {@const changed = bootArr !== undefined && JSON.stringify(val) !== JSON.stringify(bootArr)}
+    <div class="flex py-0.5 {'ml-' + (depth > 0 ? '4' : '0')}">
+      <span class="text-purple-400 w-48 shrink-0 truncate" title={key}>{key}:</span>
+      <span class="break-all">
+        {#if changed}
+          <span class="line-through text-muted-foreground mr-2">[{bootArr?.join(", ")}]</span>
+          <span class="text-orange-400">[{val.join(", ")}]</span>
+        {:else}
+          <span class="text-green-400">{val.length > 0 ? val.join(", ") : "[]"}</span>
+        {/if}
+      </span>
+    </div>
+  {:else}
+    <!-- Primitive value -->
+    {@const changed = bootVal !== undefined && bootVal !== val}
+    <div class="flex py-0.5 {'ml-' + (depth > 0 ? '4' : '0')}">
+      <span class="text-purple-400 w-48 shrink-0 truncate" title={key}>{key}:</span>
+      <span class="break-all">
+        {#if changed}
+          <span class="line-through text-muted-foreground mr-2">{String(bootVal)}</span>
+          <span class="text-orange-400">{String(val)}</span>
+        {:else if String(val) === "******"}
+          <span class="text-yellow-400">{val}</span>
+        {:else if typeof val === "boolean"}
+          <span class="{val ? 'text-green-400' : 'text-zinc-500'}">{String(val)}</span>
+        {:else if typeof val === "number"}
+          <span class="text-cyan-400">{val}</span>
+        {:else}
+          <span class="text-green-400">{String(val)}</span>
+        {/if}
+      </span>
+    </div>
+  {/if}
+{/snippet}
+
 <svelte:head>
   <title>Status</title>
 </svelte:head>
 
+{#if !connected}
+  <div class="min-h-screen flex flex-col items-center justify-center gap-4">
+    <svg class="animate-spin h-10 w-10 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+    <p class="text-muted-foreground text-sm">Connection lost. Reconnecting...</p>
+  </div>
+{:else}
 <div class="min-h-screen px-4 py-2 md:px-8 md:py-3 max-w-6xl mx-auto space-y-3">
   <!-- Title bar with uptime -->
   <div class="flex items-baseline justify-between">
     <h1 class="text-3xl font-bold tracking-tight">nifty-filter
-      {#if cfgVal("HOSTNAME")}
-        <span class="text-lg font-normal text-muted-foreground ml-2">{cfgVal("HOSTNAME")}</span>
+      {#if configJson?.hostname}
+        <span class="text-lg font-normal text-muted-foreground ml-2">{configJson.hostname}</span>
       {/if}
     </h1>
     <div class="flex items-baseline gap-3">
@@ -771,6 +829,11 @@
       </Card.Content>
     </Card.Root>
   {:else if data}
+    {#if data.stale}
+      <div class="rounded-md border border-yellow-600 bg-yellow-950/50 px-4 py-2 text-sm text-yellow-400">
+        State data is stale — the <span class="font-mono">nifty-state-dump</span> service may be stopped or failing.
+      </div>
+    {/if}
     <!-- Tab bar -->
     <div class="flex gap-1 border-b border-border">
       {#each tabs as tab}
@@ -782,6 +845,9 @@
             onclick={() => { activeTab = tab.id; updateHash(); }}
           >
             {tab.label}
+            {#if tab.id === "state" && failingServiceCount > 0}
+              <span class="ml-1.5 inline-flex items-center rounded-full bg-red-900/60 px-1.5 py-0.5 text-xs font-medium text-red-300">{failingServiceCount} failing</span>
+            {/if}
           </button>
         {/if}
       {/each}
@@ -790,6 +856,19 @@
     <!-- Tab content -->
     <div class="pt-2">
       {#if activeTab === "config"}
+        {#if configError}
+          <Card.Root>
+            <Card.Content class="pt-4">
+              <p class="text-red-400 text-sm font-mono">{configError}</p>
+            </Card.Content>
+          </Card.Root>
+        {:else if configJson == null}
+          <Card.Root>
+            <Card.Content class="pt-4">
+              <p class="text-muted-foreground text-sm">No configuration file found. Create <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.hcl</code> to get started.</p>
+            </Card.Content>
+          </Card.Root>
+        {:else}
         <div class="flex gap-1 border-b border-border/50 mb-4">
           <button
             class="px-3 py-1.5 text-sm font-medium transition-colors {configSubTab === 'overview'
@@ -798,22 +877,25 @@
             onclick={() => { configSubTab = "overview"; updateHash(); }}
           >Overview</button>
           <button
-            class="px-3 py-1.5 text-sm font-medium transition-colors {configSubTab === 'environment'
+            class="px-3 py-1.5 text-sm font-medium transition-colors {configSubTab === 'spec'
               ? 'border-b-2 border-primary text-foreground'
               : 'text-muted-foreground hover:text-foreground'}"
-            onclick={() => { configSubTab = "environment"; updateHash(); }}
-          >Environment</button>
+            onclick={() => { configSubTab = "spec"; updateHash(); }}
+          >Spec</button>
         </div>
 
         {#if configSubTab === "overview"}
-          {@const hostname = cfgVal("HOSTNAME") || "nifty-filter"}
-          {@const wanIface = cfgVal("WAN_INTERFACE")}
-          {@const trunkIface = cfgVal("TRUNK_INTERFACE")}
-          {@const mgmtIface = cfgVal("MGMT_INTERFACE")}
-          {@const mgmtSubnet = cfgVal("MGMT_SUBNET")}
-          {@const ipv4 = cfgVal("WAN_ENABLE_IPV4") === "true"}
-          {@const ipv6 = cfgVal("WAN_ENABLE_IPV6") === "true"}
-          {@const vlanSwitch = cfgVal("VLAN_AWARE_SWITCH") === "true"}
+          {@const hostname = configJson?.hostname ?? "nifty-filter"}
+          {@const wanRaw = configJson?.interfaces?.wan ?? ""}
+          {@const trunkRaw = configJson?.interfaces?.trunk ?? ""}
+          {@const mgmtRaw = configJson?.interfaces?.mgmt ?? ""}
+          {@const wanIface = typeof wanRaw === "object" ? wanRaw?.name ?? "" : wanRaw}
+          {@const trunkIface = typeof trunkRaw === "object" ? trunkRaw?.name ?? "" : trunkRaw}
+          {@const mgmtIface = typeof mgmtRaw === "object" ? mgmtRaw?.name ?? "" : mgmtRaw}
+          {@const mgmtSubnet = configJson?.interfaces?.mgmt_subnet ?? (typeof mgmtRaw === "object" ? mgmtRaw?.subnet ?? "" : "")}
+          {@const ipv4 = configJson?.wan?.enable_ipv4 === true}
+          {@const ipv6 = configJson?.wan?.enable_ipv6 === true}
+          {@const vlanSwitch = configJson?.vlan_aware_switch === true}
           {@const vlans = getVlanOverviews()}
 
           <div class="space-y-4">
@@ -908,44 +990,52 @@
             {/if}
           </div>
         {:else}
-          <!-- Environment sub-tab -->
-          {@const envGroups = groupedEnvEntries()}
-          <p class="text-sm text-muted-foreground mb-4">This page shows the comprehensive set of environment variables that nifty-filter accepts as its configuration. These variables represent your desired state, not necessarily the actual router state. Edit <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.env</code> and your changes will appear here immediately, but will not be applied until you reboot (or restart services). Any changes made since boot will be shown in <span class="text-orange-400">orange</span> and a <span class="font-semibold text-yellow-400">Reboot needed</span> notice will appear at the top.</p>
-          <Card.Root>
-            <Card.Content class="pt-2">
-              <table class="w-full text-sm" style="table-layout:fixed">
-                <colgroup>
-                  <col style="width: 18rem;" />
-                  <col />
-                </colgroup>
-                <tbody class="font-mono">
-                  {#each envGroups as section, sIdx}
-                    {@const isInvalid = section.name === "Invalid"}
-                    <tr class="bg-muted/30">
-                      <td colspan="2" class="py-2 px-2 font-sans font-semibold text-sm {sIdx > 0 ? 'pt-4' : ''} {isInvalid ? 'text-red-400' : ''}">{section.name}</td>
-                    </tr>
-                    {#each section.entries as entry}
-                      <tr class="{entry.is_default ? 'opacity-30' : (entry.is_commented_out && !entry.boot_value) || (!entry.value && !entry.boot_value && !entry.is_commented_out) ? 'opacity-30' : ''}" title={entry.is_default ? 'Default (not set in config file)' : entry.comment ?? ""}>
-                        <td class="py-0.5 pr-2 {isInvalid ? 'text-red-400' : 'text-purple-400'} whitespace-nowrap overflow-hidden text-ellipsis">{entry.key}</td>
-                        <td class="py-0.5 break-all">
-                          {#if entry.is_default}
-                            <span class="text-muted-foreground italic">{entry.value || '""'}</span>
-                          {:else if entry.boot_value != null}
-                            <span class="line-through text-muted-foreground mr-2">{entry.boot_value || '""'}</span>
-                            <span class="text-orange-400">{entry.is_commented_out ? "#" : ""}{entry.value || '""'}</span>
-                          {:else if !entry.value}
-                            <span class="text-muted-foreground">""</span>
-                          {:else}
-                            <span class="{entry.value === '******' ? 'text-yellow-400' : 'text-green-400'}">{entry.value}</span>
-                          {/if}
-                        </td>
-                      </tr>
-                    {/each}
-                  {/each}
-                </tbody>
-              </table>
-            </Card.Content>
-          </Card.Root>
+          <!-- Spec sub-tab: hierarchical HCL config view -->
+          <p class="text-sm text-muted-foreground mb-4">This page shows the HCL configuration spec for nifty-filter. Edit <code class="font-mono text-foreground bg-muted px-1 rounded">/var/nifty-filter/nifty-filter.hcl</code> and your changes will appear here immediately, but will not be applied until you reboot. Changes since boot are shown in <span class="text-orange-400">orange</span>.</p>
+          {#if configJson}
+            {@const looseEntries = Object.entries(configJson).filter(([, v]) => v == null || typeof v !== "object" || Array.isArray(v))}
+            {@const blockEntries = Object.entries(configJson).filter(([, v]) => v != null && typeof v === "object" && !Array.isArray(v))}
+            <div class="space-y-3">
+              {#if looseEntries.length > 0}
+                <Card.Root>
+                  <Card.Header class="pb-1 pt-3 px-4">
+                    <Card.Title class="text-sm font-semibold">general</Card.Title>
+                  </Card.Header>
+                  <Card.Content class="pt-0 pb-3 px-4">
+                    <div class="font-mono text-sm space-y-0">
+                      {#each looseEntries as [key, val]}
+                        {@render specNode(key, val, bootConfigJson?.[key], 0)}
+                      {/each}
+                    </div>
+                  </Card.Content>
+                </Card.Root>
+              {/if}
+              {#each blockEntries as [key, val]}
+                <Card.Root>
+                  <Card.Header class="pb-1 pt-3 px-4">
+                    <Card.Title class="text-sm font-semibold">{key}</Card.Title>
+                  </Card.Header>
+                  <Card.Content class="pt-0 pb-3 px-4">
+                    <div class="font-mono text-sm space-y-0">
+                      {#each Object.entries(val).filter(([, v]) => v == null || typeof v !== "object" || Array.isArray(v)) as [k, v]}
+                        {@render specNode(k, v, bootConfigJson?.[key] != null && typeof bootConfigJson[key] === "object" && !Array.isArray(bootConfigJson[key]) ? bootConfigJson[key][k] : undefined, 1)}
+                      {/each}
+                      {#each Object.entries(val).filter(([, v]) => v != null && typeof v === "object" && !Array.isArray(v)) as [k, v]}
+                        {@render specNode(k, v, bootConfigJson?.[key] != null && typeof bootConfigJson[key] === "object" && !Array.isArray(bootConfigJson[key]) ? bootConfigJson[key][k] : undefined, 1)}
+                      {/each}
+                    </div>
+                  </Card.Content>
+                </Card.Root>
+              {/each}
+            </div>
+          {:else}
+            <Card.Root>
+              <Card.Content class="pt-2">
+                <p class="text-muted-foreground text-sm">No configuration loaded.</p>
+              </Card.Content>
+            </Card.Root>
+          {/if}
+        {/if}
         {/if}
 
       {:else if activeTab === "state"}
@@ -959,6 +1049,9 @@
                 onclick={() => { stateSubTab = sub.id; updateHash(); }}
               >
                 {sub.label}
+                {#if sub.id === "services" && failingServiceCount > 0}
+                  <span class="ml-1 inline-flex items-center rounded-full bg-red-900/60 px-1.5 py-0.5 text-xs font-medium text-red-300">{failingServiceCount}</span>
+                {/if}
               </button>
             {/if}
           {/each}
@@ -1224,7 +1317,7 @@
           {#if !dnsmasqData.config_found}
           <Card.Root>
             <Card.Content class="py-4">
-              <p class="text-muted-foreground text-sm">dnsmasq configuration not found at /run/dnsmasq.conf</p>
+              <p class="text-muted-foreground text-sm">dnsmasq configuration not found at /run/dnsmasq/dnsmasq.conf</p>
             </Card.Content>
           </Card.Root>
           {/if}
@@ -1397,14 +1490,65 @@
             </Card.Root>
           {/if}
 
-          <!-- CAKE Stats -->
+          <!-- CAKE Stats: HTB+CAKE per-VLAN upload -->
+          {#if qosData.upload_classes.length > 0}
+            {#each qosData.upload_classes as cls}
+              <Card.Root>
+                <Card.Header class="pb-2">
+                  <Card.Title>Upload — {cls.label}</Card.Title>
+                  <Card.Description>
+                    CAKE {formatBw(cls.cake.bandwidth)} &middot;
+                    {cls.cake.sent_packets.toLocaleString()} pkts ({formatBytes(cls.cake.sent_bytes)}) &middot;
+                    {cls.cake.dropped} dropped &middot;
+                    {cls.cake.overlimits} overlimits
+                  </Card.Description>
+                </Card.Header>
+                <Card.Content>
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                      <thead>
+                        <tr class="border-b border-border text-left text-muted-foreground">
+                          <th class="py-2 pr-4">Tin</th>
+                          <th class="py-2 pr-4">Threshold</th>
+                          <th class="py-2 pr-4">Packets</th>
+                          <th class="py-2 pr-4">Bytes</th>
+                          <th class="py-2 pr-4">Drops</th>
+                          <th class="py-2 pr-4">Marks</th>
+                          <th class="py-2 pr-4">Peak Delay</th>
+                          <th class="py-2 pr-4">Avg Delay</th>
+                          <th class="py-2">Flows</th>
+                        </tr>
+                      </thead>
+                      <tbody class="font-mono">
+                        {#each cls.cake.tins as tin}
+                          <tr class="border-b border-border/50">
+                            <td class="py-2 pr-4 font-semibold {tinColor(tin.name)}">{tin.name}</td>
+                            <td class="py-2 pr-4">{formatBw(tin.threshold)}</td>
+                            <td class="py-2 pr-4">{tin.packets.toLocaleString()}</td>
+                            <td class="py-2 pr-4">{formatBytes(tin.bytes)}</td>
+                            <td class="py-2 pr-4 {tin.drops > 0 ? 'text-red-400' : ''}">{tin.drops}</td>
+                            <td class="py-2 pr-4 {tin.marks > 0 ? 'text-yellow-400' : ''}">{tin.marks}</td>
+                            <td class="py-2 pr-4">{tin.peak_delay}</td>
+                            <td class="py-2 pr-4">{tin.avg_delay}</td>
+                            <td class="py-2">{tin.sp_flows + tin.bk_flows}</td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card.Content>
+              </Card.Root>
+            {/each}
+          {/if}
+
+          <!-- CAKE Stats: flat mode (upload + download) -->
           {#each [{ label: "Upload", stats: qosData.upload, direction: "egress" }, { label: "Download", stats: qosData.download, direction: "ingress" }] as side}
             {#if side.stats}
               <Card.Root>
                 <Card.Header class="pb-2">
                   <Card.Title>{side.label} — {side.stats.device}</Card.Title>
                   <Card.Description>
-                    CAKE {side.stats.bandwidth} &middot;
+                    CAKE {formatBw(side.stats.bandwidth)} &middot;
                     {side.stats.sent_packets.toLocaleString()} pkts ({formatBytes(side.stats.sent_bytes)}) &middot;
                     {side.stats.dropped} dropped &middot;
                     {side.stats.overlimits} overlimits
@@ -1430,7 +1574,7 @@
                         {#each side.stats.tins as tin}
                           <tr class="border-b border-border/50">
                             <td class="py-2 pr-4 font-semibold {tinColor(tin.name)}">{tin.name}</td>
-                            <td class="py-2 pr-4">{tin.threshold}</td>
+                            <td class="py-2 pr-4">{formatBw(tin.threshold)}</td>
                             <td class="py-2 pr-4">{tin.packets.toLocaleString()}</td>
                             <td class="py-2 pr-4">{formatBytes(tin.bytes)}</td>
                             <td class="py-2 pr-4 {tin.drops > 0 ? 'text-red-400' : ''}">{tin.drops}</td>
@@ -1482,6 +1626,42 @@
             </Card.Root>
           {/if}
 
+          <!-- Per-VLAN Bandwidth Limits -->
+          {#if qosData.bandwidth_limits.length > 0}
+            <Card.Root>
+              <Card.Header class="pb-2">
+                <Card.Title>Per-VLAN Bandwidth Limits</Card.Title>
+                <Card.Description>Active HTB class state from tc (live system)</Card.Description>
+              </Card.Header>
+              <Card.Content>
+                <div class="overflow-x-auto">
+                  <table class="w-full text-sm">
+                    <thead>
+                      <tr class="border-b border-border text-left text-muted-foreground">
+                        <th class="py-2 pr-4">VLAN</th>
+                        <th class="py-2 pr-4">Name</th>
+                        <th class="py-2 pr-4">Upload</th>
+                        <th class="py-2 pr-4">Download</th>
+                        <th class="py-2">Type</th>
+                      </tr>
+                    </thead>
+                    <tbody class="font-mono">
+                      {#each qosData.bandwidth_limits as bw}
+                        <tr class="border-b border-border/50">
+                          <td class="py-2 pr-4 font-semibold">{bw.vlan_id}</td>
+                          <td class="py-2 pr-4 text-purple-400">{bw.name}</td>
+                          <td class="py-2 pr-4 text-amber-400">{bw.upload_ceil ? formatBw(bw.upload_ceil) : "—"}</td>
+                          <td class="py-2 pr-4 text-amber-400">{bw.download_ceil ? formatBw(bw.download_ceil) : "—"}</td>
+                          <td class="py-2 text-muted-foreground text-xs">{(bw.upload_rate === bw.upload_ceil) || (bw.download_rate === bw.download_ceil) ? "non-burstable" : "burstable"}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              </Card.Content>
+            </Card.Root>
+          {/if}
+
           <!-- How it works -->
           <Card.Root>
             <Card.Header class="pb-2">
@@ -1504,6 +1684,36 @@
                       <tr><td class="py-0.5 pr-3 text-blue-400">video</td><td class="text-muted-foreground">Video calls, streaming, cameras. (DSCP AF41)</td></tr>
                       <tr><td class="py-0.5 pr-3 text-green-400">besteffort</td><td class="text-muted-foreground">General web traffic. This is the default. (DSCP CS0)</td></tr>
                       <tr><td class="py-0.5 pr-3 text-zinc-400">bulk</td><td class="text-muted-foreground">Lowest priority. IoT, backups, large downloads. (DSCP CS1)</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div>
+                  <h4 class="text-xs font-semibold mb-2">CAKE statistics columns</h4>
+                  <table class="w-full text-xs">
+                    <tbody class="text-muted-foreground">
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Tin</td><td>The priority tier (Bulk, Best Effort, Video, Voice). CAKE sorts packets into tins based on their DSCP marking.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Threshold</td><td>Bandwidth allocation for this tin. This is not a hard cap — when other tins are idle, any tin can burst up to the full link speed. Higher-priority tins (Voice, Video) have lower thresholds because they need low latency, not high bandwidth. Best Effort gets the largest share since it carries general web traffic. Priority determines scheduling order (who gets sent first), while threshold limits how much bandwidth each tier can sustain.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Packets</td><td>Total number of packets processed by this tin since QoS was activated.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Bytes</td><td>Total bytes processed by this tin.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Drops</td><td>Packets dropped by CAKE to manage congestion. Some drops are normal under heavy load — CAKE intentionally drops to signal TCP senders to slow down.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Marks</td><td>Packets marked with ECN (Explicit Congestion Notification) instead of being dropped. ECN is a gentler alternative to dropping — the sender is notified of congestion without losing data.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Peak Delay</td><td>Maximum time a packet waited in the queue. High peak delays indicate momentary bursts that filled the queue.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Avg Delay</td><td>Average queuing delay. This is the key bufferbloat metric — lower is better. Under 5ms is excellent, under 20ms is good.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Flows</td><td>Number of active network flows (connections) in this tin. CAKE tracks flows to ensure fair sharing — one greedy connection can't starve others.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div>
+                  <h4 class="text-xs font-semibold mb-2">Bandwidth limits columns</h4>
+                  <table class="w-full text-xs">
+                    <tbody class="text-muted-foreground">
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">VLAN</td><td>The VLAN ID that has a bandwidth limit configured.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Name</td><td>Human-readable name of the VLAN from the HCL config.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Upload</td><td>Maximum upload speed (WAN egress) for this VLAN, enforced by an HTB class. Traffic is classified via nftables fwmark.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Download</td><td>Maximum download speed (WAN ingress) for this VLAN, enforced by an HTB class on the IFB device. Traffic is classified via conntrack marks.</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-mono text-foreground">Type</td><td>Non-burstable means rate equals ceil — the VLAN can never exceed its cap, even when the link is idle. Burstable means the VLAN has a guaranteed minimum but can burst higher.</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -1639,6 +1849,80 @@
             </div>
           </Card.Content>
         </Card.Root>
+        {:else if stateSubTab === "services" && servicesData}
+        <div class="space-y-4">
+          {#if servicesData.nifty.length > 0}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>Nifty Services</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="py-2 pr-4">Service</th>
+                      <th class="py-2 pr-4">State</th>
+                      <th class="py-2">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody class="font-mono">
+                    {#each servicesData.nifty as svc}
+                      <tr class="border-b border-border/50">
+                        <td class="py-2 pr-4 font-semibold">{svc.name}</td>
+                        <td class="py-2 pr-4">
+                          <span class="{svc.active_state === 'active' ? 'text-green-400' : svc.active_state === 'failed' ? 'text-red-400' : 'text-yellow-400'}">
+                            {svc.active_state}
+                          </span>
+                          <span class="text-muted-foreground ml-1">({svc.sub_state})</span>
+                        </td>
+                        <td class="py-2 text-muted-foreground">{svc.description}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+
+          {#if servicesData.failed.length > 0}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title class="text-red-400">Failed Services</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="py-2 pr-4">Service</th>
+                      <th class="py-2 pr-4">State</th>
+                      <th class="py-2">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody class="font-mono">
+                    {#each servicesData.failed as svc}
+                      <tr class="border-b border-border/50">
+                        <td class="py-2 pr-4 font-semibold">{svc.name}</td>
+                        <td class="py-2 pr-4">
+                          <span class="text-red-400">{svc.active_state}</span>
+                          <span class="text-muted-foreground ml-1">({svc.sub_state})</span>
+                        </td>
+                        <td class="py-2 text-muted-foreground">{svc.description}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+
+          {#if servicesData.nifty.length === 0 && servicesData.failed.length === 0}
+          <p class="text-muted-foreground text-sm">No services found.</p>
+          {/if}
+        </div>
         {/if}
 
       {:else if activeTab === "updates" && updatesData}
@@ -1753,3 +2037,4 @@
     </div>
   {/if}
 </div>
+{/if}

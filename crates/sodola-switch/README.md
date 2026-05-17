@@ -2,7 +2,7 @@
 
 CLI and library for managing a Sodola SL-SWTGW218AS 2.5G managed Ethernet switch (8x 2.5GbE RJ45 + 1x 10G SFP+).
 
-The switch has no documented API. This crate reverse-engineers the CGI-based web interface to provide programmatic access.
+The switch has no documented API. This crate reverse-engineers the CGI-based web interface to provide programmatic access. Tested with firmware V1.9 (Jan 03 2024).
 
 ## Provisioning a switch
 

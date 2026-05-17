@@ -109,7 +109,7 @@
       echo "  Upgrade system:  nifty-upgrade"
       echo "  Return to normal: systemctl reboot"
       echo ""
-    elif ! grep -q '^ENABLED=true' /var/nifty-filter/nifty-filter.env 2>/dev/null; then
+    elif ! [ -f /var/nifty-filter/nifty-filter.hcl ]; then
       echo ""
       echo -e "\e[1;33m  nifty-filter PVE image — not yet configured\e[0m"
       echo ""
