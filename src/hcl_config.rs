@@ -112,6 +112,11 @@ pub struct DnsConfig {
 #[serde(deny_unknown_fields)]
 pub struct VlanHclConfig {
     pub id: u16,
+    /// Optional dedicated interface for this VLAN (instead of trunk subinterface).
+    /// When set, the VLAN uses this NIC directly rather than creating a VLAN
+    /// subinterface on the trunk.
+    #[serde(default)]
+    pub interface: Option<InterfaceEntry>,
     #[serde(default)]
     pub ipv4: Option<Ipv4Config>,
     #[serde(default)]
@@ -672,7 +677,7 @@ wan {}
     fn test_parse_full_example() {
         let input = include_str!("../examples/vlan_router.hcl");
         let config = parse_hcl(input).unwrap();
-        assert_eq!(config.vlan.len(), 4);
+        assert_eq!(config.vlan.len(), 5);
         assert!(config.wan.tcp_forward.is_empty());
         // qos block exists but with upload/download commented out (defaulting to 0)
         let qos = config.qos.as_ref().unwrap();

@@ -481,12 +481,16 @@ pve-install pve_host:
         "${REMOTE}:${UPLOAD_PATH}"
     echo "Image uploaded."
 
-    # --- Create mgmt bridge (always) and any user-specified bridges ---
-    ALL_BRIDGES=("mgmt" "${BRIDGES[@]}")
-    for bridge in "${ALL_BRIDGES[@]}"; do
+    # --- Create mgmt bridge (always, with static IP) and any user-specified bridges ---
+    if ! ssh ${SSH_OPTS} ${REMOTE} "ip link show mgmt" &>/dev/null; then
+        echo "Creating mgmt bridge with ${PVE_MGMT_IP} on ${PVE_HOST}..."
+        ssh ${SSH_OPTS} ${REMOTE} "printf '\nauto mgmt\niface mgmt inet static\n    address %s\n    bridge-ports none\n    bridge-stp off\n    bridge-fd 0\n' '${PVE_MGMT_IP}' >> /etc/network/interfaces && ifup mgmt"
+        echo "  mgmt created."
+    fi
+    for bridge in "${BRIDGES[@]}"; do
         if ! ssh ${SSH_OPTS} ${REMOTE} "ip link show ${bridge}" &>/dev/null; then
             echo "Creating isolated bridge ${bridge} on ${PVE_HOST}..."
-            ssh ${SSH_OPTS} ${REMOTE} "printf '\nauto %s\niface %s inet manual\n    bridge-ports none\n    bridge-stp off\n    bridge-fd 0\n' '${bridge}' '${bridge}' >> /etc/network/interfaces && ifreload -a"
+            ssh ${SSH_OPTS} ${REMOTE} "printf '\nauto %s\niface %s inet manual\n    bridge-ports none\n    bridge-stp off\n    bridge-fd 0\n' '${bridge}' '${bridge}' >> /etc/network/interfaces && ifup ${bridge}"
             echo "  ${bridge} created."
         fi
     done
@@ -579,10 +583,6 @@ pve-install pve_host:
     done
 
     ssh ${SSH_OPTS} ${REMOTE} "qm set ${VMID} --args '${FW_CFG_ARGS}'"
-
-    # --- Add PVE host IP to mgmt bridge ---
-    echo "Adding ${PVE_MGMT_IP} to mgmt bridge on ${PVE_HOST}..."
-    ssh ${SSH_OPTS} ${REMOTE} "ip addr add ${PVE_MGMT_IP} dev mgmt 2>/dev/null || true"
 
     # --- Start VM ---
     echo ""
@@ -908,6 +908,96 @@ pve-snapshot-prune pve_host vmid vm_name:
     echo "  Snapshot: ${NEW_SNAP}"
     echo "  Description: ${DESC}"
     echo "  Rollback: ssh ${REMOTE} qm rollback ${VMID} ${NEW_SNAP}"
+
+# Set up infra bridge and router NIC for the services VM, then create it via nixos-vm-template.
+# The services VM is managed by nixos-vm-template; this target handles the network plumbing.
+pve-install-services pve_host bridge="vmbr2" vm_name="infra-services" router_vmid="100" ip="10.99.2.10/24" gateway="10.99.2.1" pve_storage="local-lvm" pve_vmid="201":
+    #!/usr/bin/env bash
+    set -eo pipefail
+
+    PVE_HOST="{{pve_host}}"
+    REMOTE="root@${PVE_HOST}"
+    VM_NAME="{{vm_name}}"
+    ROUTER_VMID="{{router_vmid}}"
+    BRIDGE="{{bridge}}"
+    STATIC_IP="{{ip}}"
+    GATEWAY="{{gateway}}"
+
+    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
+    if [ ! -f "${VM_TEMPLATE_DIR}/Justfile" ]; then
+        echo "ERROR: nixos-vm-template not found at ${VM_TEMPLATE_DIR}"
+        echo "Set NIXOS_VM_TEMPLATE to the correct path."
+        exit 1
+    fi
+
+    SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/nifty-services-%C -o ControlPersist=60"
+
+    echo "Connecting to ${PVE_HOST}..."
+    ssh ${SSH_OPTS} -fN ${REMOTE}
+    trap 'ssh ${SSH_OPTS} -O exit ${REMOTE} 2>/dev/null || true' EXIT
+
+    # --- Create isolated bridge (no PVE IP — all access goes through router) ---
+    if ! ssh ${SSH_OPTS} ${REMOTE} "ip link show ${BRIDGE}" &>/dev/null; then
+        echo "Creating isolated bridge ${BRIDGE} on ${PVE_HOST}..."
+        ssh ${SSH_OPTS} ${REMOTE} "printf '\nauto %s\niface %s inet manual\n    bridge-ports none\n    bridge-stp off\n    bridge-fd 0\n' '${BRIDGE}' '${BRIDGE}' >> /etc/network/interfaces && ifup ${BRIDGE}"
+        echo "  ${BRIDGE} created."
+    else
+        echo "Bridge ${BRIDGE} already exists."
+    fi
+
+    # --- Add a NIC to the router VM on this bridge (if not already present) ---
+    ROUTER_CONFIG=$(ssh ${SSH_OPTS} ${REMOTE} "qm config ${ROUTER_VMID}")
+    if ! echo "${ROUTER_CONFIG}" | grep -q "bridge=${BRIDGE}"; then
+        NEXT_NET=1
+        while echo "${ROUTER_CONFIG}" | grep -q "^net${NEXT_NET}:"; do
+            NEXT_NET=$((NEXT_NET + 1))
+        done
+        echo "Adding net${NEXT_NET} (bridge=${BRIDGE}) to router VM ${ROUTER_VMID}..."
+        ssh ${SSH_OPTS} ${REMOTE} "qm set ${ROUTER_VMID} --net${NEXT_NET} virtio,bridge=${BRIDGE}"
+        INFRA_MAC=$(ssh ${SSH_OPTS} ${REMOTE} "qm config ${ROUTER_VMID}" | grep "^net${NEXT_NET}:" | grep -oP 'virtio=\K[^,]+')
+        echo "  Router NIC added (MAC: ${INFRA_MAC})."
+        echo "  Add this to your nifty-filter.hcl:"
+        echo ""
+        echo "    vlan \"infra\" {"
+        echo "      id = 2"
+        echo "      interface {"
+        echo "        mac  = \"${INFRA_MAC}\""
+        echo "        name = \"infra\""
+        echo "      }"
+        echo "      ..."
+        echo "    }"
+        echo ""
+    else
+        echo "Router VM ${ROUTER_VMID} already has a NIC on ${BRIDGE}."
+    fi
+
+    # Close PVE SSH before handing off to nixos-vm-template
+    ssh ${SSH_OPTS} -O exit ${REMOTE} 2>/dev/null || true
+    trap - EXIT
+
+    # --- Create the services VM via nixos-vm-template (proxmox backend) ---
+    echo ""
+    echo "Creating services VM via nixos-vm-template..."
+    cd "${VM_TEMPLATE_DIR}"
+    # Pre-set VMID so proxmox backend doesn't prompt
+    mkdir -p "${VM_TEMPLATE_DIR}/machines/${VM_NAME}"
+    echo "{{pve_vmid}}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/vmid"
+
+    BACKEND=proxmox PVE_HOST="${PVE_HOST}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw \
+        just create-batch "${VM_NAME}" "podman,nifty-services" "2048" "2" "8G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
+
+# Upgrade infra-services VM (delegates to nixos-vm-template proxmox backend)
+pve-upgrade-services pve_host vm_name="infra-services":
+    #!/usr/bin/env bash
+    set -eo pipefail
+    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
+    if [ ! -f "${VM_TEMPLATE_DIR}/Justfile" ]; then
+        echo "ERROR: nixos-vm-template not found at ${VM_TEMPLATE_DIR}"
+        echo "Set NIXOS_VM_TEMPLATE to the correct path."
+        exit 1
+    fi
+    cd "${VM_TEMPLATE_DIR}"
+    BACKEND=proxmox PVE_HOST="{{pve_host}}" just upgrade "{{vm_name}}"
 
 # Clean all artifacts
 clean *args: clean-profile

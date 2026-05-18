@@ -248,6 +248,16 @@ fn write_vlan(w: &mut HclWriter, name: &str, vlan: &VlanHclConfig) {
     w.open_labeled("vlan", name);
     w.num_attr("id", vlan.id);
 
+    if let Some(ref iface) = vlan.interface {
+        w.blank();
+        w.open("interface");
+        w.str_attr("name", &iface.name);
+        if let Some(ref mac) = iface.mac {
+            w.str_attr("mac", mac);
+        }
+        w.close();
+    }
+
     if let Some(ref bw) = vlan.bandwidth {
         w.blank();
         w.open("bandwidth");
@@ -522,7 +532,7 @@ vlan "iot" {
         let config = parse_hcl(hcl).unwrap();
         let output = format_hcl(&config);
         let reparsed = parse_hcl(&output).unwrap();
-        assert_eq!(reparsed.vlan.len(), 4);
+        assert_eq!(reparsed.vlan.len(), 5);
         assert!(reparsed.vlan_aware_switch);
         assert!(reparsed.wan.enable_ipv6);
         assert!(reparsed.qos.is_some());

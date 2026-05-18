@@ -92,6 +92,7 @@
       };
 
       nixosModules.default = import ./nix/module.nix self;
+      nixosModules.services = import ./nix/services/containers/default.nix;
 
       devShells = forAllSystems (system:
         let pkgs = pkgsFor system;

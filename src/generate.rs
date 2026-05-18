@@ -19,20 +19,28 @@ pub fn generate_linkfiles(config: &HclConfig, output_dir: &str) -> Result<(), St
     // Check if any interface has a MAC (needs .link file generation)
     let has_any_mac = config.interfaces.wan.mac.is_some()
         || config.interfaces.trunk.mac.is_some()
-        || config.interfaces.mgmt.as_ref().and_then(|m| m.mac.as_ref()).is_some();
+        || config.interfaces.mgmt.as_ref().and_then(|m| m.mac.as_ref()).is_some()
+        || config.vlan.values().any(|v| v.interface.as_ref().and_then(|i| i.mac.as_ref()).is_some());
 
     if !has_any_mac {
         // No MACs configured — verify all required interfaces already exist
         let mut missing = Vec::new();
         if !interface_exists(config.interfaces.wan_name()) {
-            missing.push(config.interfaces.wan_name());
+            missing.push(config.interfaces.wan_name().to_string());
         }
         if !interface_exists(config.interfaces.trunk_name()) {
-            missing.push(config.interfaces.trunk_name());
+            missing.push(config.interfaces.trunk_name().to_string());
         }
         if let Some(mgmt_name) = config.interfaces.mgmt_name() {
             if !interface_exists(mgmt_name) {
-                missing.push(mgmt_name);
+                missing.push(mgmt_name.to_string());
+            }
+        }
+        for vlan in config.vlan.values() {
+            if let Some(ref iface) = vlan.interface {
+                if !interface_exists(&iface.name) {
+                    missing.push(iface.name.clone());
+                }
             }
         }
         if missing.is_empty() {
@@ -56,6 +64,13 @@ pub fn generate_linkfiles(config: &HclConfig, output_dir: &str) -> Result<(), St
     if let Some(mgmt) = &config.interfaces.mgmt {
         if let Some(mac) = &mgmt.mac {
             write_link_file(dir, &mgmt.name, mac)?;
+        }
+    }
+    for vlan in config.vlan.values() {
+        if let Some(ref iface) = vlan.interface {
+            if let Some(ref mac) = iface.mac {
+                write_link_file(dir, &iface.name, mac)?;
+            }
         }
     }
 
@@ -108,48 +123,69 @@ pub fn generate_networkd(config: &HclConfig, output_dir: &str) -> Result<(), Str
         let mut trunk_vlan_lines = String::new();
 
         for (name, vlan) in &vlans_sorted {
-            let iface = name.to_string();
-            let vid = vlan.id;
+            let has_dedicated_iface = vlan.interface.is_some();
+            let iface = if let Some(ref dedicated) = vlan.interface {
+                dedicated.name.clone()
+            } else {
+                name.to_string()
+            };
 
-            // .netdev for this VLAN
-            let netdev = format!(
-                "[NetDev]\nName={}\nKind=vlan\n\n[VLAN]\nId={}\n",
-                iface, vid
-            );
-            write_file(dir, &format!("20-{}.netdev", iface), &netdev)?;
-
-            // .network for this VLAN
-            let mut vlan_net = String::from("[Match]\n");
-            vlan_net.push_str(&format!("Name={}\n\n[Network]\n", iface));
-
-            if let Some(ipv4) = &vlan.ipv4 {
-                if config.wan.enable_ipv4 {
-                    vlan_net.push_str(&format!("Address={}\n", ipv4.subnet));
+            if has_dedicated_iface {
+                // Dedicated interface: static .network file, no .netdev, not on trunk
+                let mut net = format!(
+                    "[Match]\nName={}\n\n[Network]\n",
+                    iface
+                );
+                if let Some(ipv4) = &vlan.ipv4 {
+                    if config.wan.enable_ipv4 {
+                        net.push_str(&format!("Address={}\n", ipv4.subnet));
+                    }
                 }
-            }
-            if let Some(ipv6) = &vlan.ipv6 {
-                vlan_net.push_str(&format!("Address={}\nIPv6SendRA=yes\n", ipv6.subnet));
-            }
+                if let Some(ipv6) = &vlan.ipv6 {
+                    net.push_str(&format!("Address={}\nIPv6SendRA=yes\n", ipv6.subnet));
+                }
+                write_file(dir, &format!("10-{}.network", iface), &net)?;
+            } else {
+                // Trunk subinterface: .netdev + .network
+                let vid = vlan.id;
+                let netdev = format!(
+                    "[NetDev]\nName={}\nKind=vlan\n\n[VLAN]\nId={}\n",
+                    iface, vid
+                );
+                write_file(dir, &format!("20-{}.netdev", iface), &netdev)?;
 
-            // IPv6 RA settings
-            if vlan.ipv6.is_some() {
-                let has_dhcpv6 = vlan.dhcpv6.is_some();
-                let (managed, other, autonomous) = if has_dhcpv6 {
-                    ("yes", "yes", "no")
-                } else {
-                    ("no", "no", "yes")
-                };
-                vlan_net.push_str(&format!(
-                    "\n[IPv6SendRA]\nManaged={}\nOtherInformation={}\n\n[IPv6Prefix]\nPrefix={}\nAutonomous={}\n",
-                    managed, other,
-                    vlan.ipv6.as_ref().unwrap().subnet,
-                    autonomous
-                ));
+                let mut vlan_net = String::from("[Match]\n");
+                vlan_net.push_str(&format!("Name={}\n\n[Network]\n", iface));
+
+                if let Some(ipv4) = &vlan.ipv4 {
+                    if config.wan.enable_ipv4 {
+                        vlan_net.push_str(&format!("Address={}\n", ipv4.subnet));
+                    }
+                }
+                if let Some(ipv6) = &vlan.ipv6 {
+                    vlan_net.push_str(&format!("Address={}\nIPv6SendRA=yes\n", ipv6.subnet));
+                }
+
+                // IPv6 RA settings
+                if vlan.ipv6.is_some() {
+                    let has_dhcpv6 = vlan.dhcpv6.is_some();
+                    let (managed, other, autonomous) = if has_dhcpv6 {
+                        ("yes", "yes", "no")
+                    } else {
+                        ("no", "no", "yes")
+                    };
+                    vlan_net.push_str(&format!(
+                        "\n[IPv6SendRA]\nManaged={}\nOtherInformation={}\n\n[IPv6Prefix]\nPrefix={}\nAutonomous={}\n",
+                        managed, other,
+                        vlan.ipv6.as_ref().unwrap().subnet,
+                        autonomous
+                    ));
+                }
+
+                write_file(dir, &format!("20-{}.network", iface), &vlan_net)?;
+
+                trunk_vlan_lines.push_str(&format!("VLAN={}\n", iface));
             }
-
-            write_file(dir, &format!("20-{}.network", iface), &vlan_net)?;
-
-            trunk_vlan_lines.push_str(&format!("VLAN={}\n", iface));
         }
 
         // Trunk .network: no address, just VLAN membership

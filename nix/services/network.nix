@@ -34,10 +34,16 @@
       MGMT_INTERFACE=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} mgmt-name 2>/dev/null || true)
       ENABLE_IPV6=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} enable-ipv6)
 
+      # Dedicated VLAN interfaces (not on trunk)
+      VLAN_INTERFACES=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} vlan-interfaces 2>/dev/null || true)
+
       # Bring up interfaces
       [ -n "$WAN_INTERFACE" ] && ip link set "$WAN_INTERFACE" up
       [ -n "$TRUNK_INTERFACE" ] && ip link set "$TRUNK_INTERFACE" up
       [ -n "$MGMT_INTERFACE" ] && ip link set "$MGMT_INTERFACE" up
+      for iface in $VLAN_INTERFACES; do
+        ip link set "$iface" up
+      done
 
       # Generate networkd config files
       mkdir -p /run/systemd/network

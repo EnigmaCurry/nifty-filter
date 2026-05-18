@@ -402,7 +402,10 @@ impl RouterTemplate {
 
         // Build name -> (id, interface_name) lookup for inter-VLAN rules
         let name_lookup: HashMap<&str, (u16, String)> = entries.iter().map(|(name, v)| {
-            let iface = if v.id == 1 && !config.vlan_aware_switch {
+            let iface = if let Some(ref dedicated) = v.interface {
+                // VLAN has a dedicated interface (not on trunk)
+                dedicated.name.clone()
+            } else if v.id == 1 && !config.vlan_aware_switch {
                 trunk_name.to_string()
             } else {
                 name.to_string()
@@ -827,6 +830,12 @@ fn app() {
                 "enable-ipv6" => Some(hcl_config.wan.enable_ipv6.to_string()),
                 "dashboard-port" => Some(hcl_config.dashboard_port.unwrap_or(3000).to_string()),
                 "iperf-port" => Some(hcl_config.iperf_port.unwrap_or(5201).to_string()),
+                "vlan-interfaces" => {
+                    let names: Vec<String> = hcl_config.vlan.values()
+                        .filter_map(|v| v.interface.as_ref().map(|i| i.name.clone()))
+                        .collect();
+                    if names.is_empty() { None } else { Some(names.join(" ")) }
+                },
                 "switch-router-ip" => hcl_config.switch.as_ref().and_then(|s| s.router_ip.clone()),
                 "switch-mgmt-iface" => hcl_config.switch.as_ref().and_then(|s| s.mgmt_iface.clone()),
                 _ => {

@@ -59,6 +59,39 @@ dns {
   upstream = ["1.1.1.1", "1.0.0.1"]
 }
 
+# --- VLAN 2: Infrastructure ---
+# Services VM (NTP, mDNS, monitoring, etc.) lives here.
+# Uses a dedicated interface (virtual NIC on an isolated bridge) instead of
+# a trunk subinterface, so the services VM is self-contained on the hypervisor.
+vlan "infra" {
+  id = 2
+
+  # Dedicated interface — not on the trunk/switch.
+  # The router gets a virtual NIC on the same bridge as the services VM.
+  interface {
+    mac  = "aa:bb:cc:dd:ee:10"
+    name = "infra"
+  }
+
+  ipv4 {
+    subnet = "10.99.2.1/24"
+    egress = ["0.0.0.0/0"]
+  }
+
+  firewall {
+    icmp_accept = ["echo-request", "echo-reply", "destination-unreachable"]
+    tcp_accept  = [22]
+    udp_accept  = [53, 67, 68]
+  }
+
+  dhcp {
+    pool_start = "10.99.2.100"
+    pool_end   = "10.99.2.250"
+    router     = "10.99.2.1"
+    dns        = "10.99.2.1"
+  }
+}
+
 # --- VLAN 10: Trusted ---
 # Full internet access + SSH to router
 vlan "trusted" {
