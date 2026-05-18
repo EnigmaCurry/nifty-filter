@@ -324,6 +324,16 @@ pub fn generate_dnsmasq(config: &HclConfig, output: &str) -> Result<(), String> 
             )
             .ok();
 
+            // NTP server
+            if let Some(ntp) = &dhcp.ntp {
+                writeln!(
+                    out,
+                    "dhcp-option=interface:{},option:ntp-server,{}",
+                    iface, ntp
+                )
+                .ok();
+            }
+
             // Static hosts
             for host in &dhcp.host {
                 if let Some(hostname) = &host.hostname {
@@ -699,6 +709,65 @@ vlan "lab" {
         assert!(content.contains("dhcp-range=interface:lab,fd00:40::100,fd00:40::1ff,64,24h"));
         assert!(content.contains("enable-ra"));
         assert!(content.contains("ra-param=lab,60,600"));
+    }
+
+    #[test]
+    fn test_generate_dnsmasq_ntp_option() {
+        let config = parse_test_config(r#"
+interfaces {
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
+}
+wan {}
+vlan_aware_switch = true
+vlan "trusted" {
+  id = 10
+  ipv4 {
+    subnet = "10.99.10.1/24"
+    egress = ["0.0.0.0/0"]
+  }
+  dhcp {
+    pool_start = "10.99.10.100"
+    pool_end   = "10.99.10.250"
+    router     = "10.99.10.1"
+    dns        = "10.99.10.1"
+    ntp        = "10.99.2.10"
+  }
+}
+"#);
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("dnsmasq.conf");
+        generate_dnsmasq(&config, output.to_str().unwrap()).unwrap();
+
+        let content = fs::read_to_string(&output).unwrap();
+        assert!(content.contains("dhcp-option=interface:trusted,option:ntp-server,10.99.2.10"));
+    }
+
+    #[test]
+    fn test_generate_dnsmasq_no_ntp_option() {
+        let config = parse_test_config(r#"
+interfaces {
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
+}
+wan {}
+vlan_aware_switch = true
+vlan "trusted" {
+  id = 10
+  dhcp {
+    pool_start = "10.99.10.100"
+    pool_end   = "10.99.10.250"
+    router     = "10.99.10.1"
+    dns        = "10.99.10.1"
+  }
+}
+"#);
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("dnsmasq.conf");
+        generate_dnsmasq(&config, output.to_str().unwrap()).unwrap();
+
+        let content = fs::read_to_string(&output).unwrap();
+        assert!(!content.contains("ntp-server"));
     }
 
     #[test]

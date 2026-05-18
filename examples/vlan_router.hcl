@@ -90,6 +90,20 @@ vlan "infra" {
     router     = "10.99.2.1"
     dns        = "10.99.2.1"
   }
+
+  # Allow NTP (chrony) access from all VLANs
+  allow_from "trusted" {
+    udp = ["10.99.2.10:123"]
+  }
+  allow_from "iot" {
+    udp = ["10.99.2.10:123"]
+  }
+  allow_from "guest" {
+    udp = ["10.99.2.10:123"]
+  }
+  allow_from "lab" {
+    udp = ["10.99.2.10:123"]
+  }
 }
 
 # --- VLAN 10: Trusted ---
@@ -121,6 +135,7 @@ vlan "trusted" {
     pool_end   = "10.99.10.250"
     router     = "10.99.10.1"
     dns        = "10.99.10.1"
+    ntp        = "10.99.2.10"
 
     # host {
     #   mac      = "aa:bb:cc:dd:ee:01"
@@ -163,6 +178,7 @@ vlan "iot" {
     pool_end   = "10.99.20.250"
     router     = "10.99.20.1"
     dns        = "10.99.20.1"
+    ntp        = "10.99.2.10"
   }
 }
 
@@ -187,6 +203,7 @@ vlan "guest" {
     pool_end   = "10.99.30.250"
     router     = "10.99.30.1"
     dns        = "10.99.30.1"
+    ntp        = "10.99.2.10"
   }
 }
 
@@ -216,6 +233,7 @@ vlan "lab" {
     pool_end   = "10.99.40.250"
     router     = "10.99.40.1"
     dns        = "10.99.40.1"
+    ntp        = "10.99.2.10"
   }
 
   dhcpv6 {

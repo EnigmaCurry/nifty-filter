@@ -983,6 +983,10 @@ pve-install-services pve_host bridge="vmbr2" vm_name="infra-services" router_vmi
     mkdir -p "${VM_TEMPLATE_DIR}/machines/${VM_NAME}"
     echo "{{pve_vmid}}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/vmid"
 
+    # Firewall ports for the Proxmox VM-level firewall
+    printf '22\n' > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/tcp_ports"
+    printf '123\n' > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/udp_ports"
+
     BACKEND=proxmox PVE_HOST="${PVE_HOST}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw \
         just create-batch "${VM_NAME}" "podman,nifty-services" "2048" "2" "8G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
 

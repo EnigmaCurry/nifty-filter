@@ -181,6 +181,8 @@ pub struct DhcpConfig {
     pub pool_end: String,
     pub router: String,
     pub dns: String,
+    #[serde(default)]
+    pub ntp: Option<String>,
     #[serde(default, deserialize_with = "one_or_many")]
     pub host: Vec<DhcpHost>,
 }

@@ -558,6 +558,7 @@ fn toggle_vlan_dhcp4(config: &mut HclConfig, vlan_name: &str) {
             pool_end: format!("{network_base}.250"),
             router: router_ip.clone(),
             dns: router_ip,
+            ntp: None,
             host: vec![],
         });
         // Add DHCP ports to firewall
