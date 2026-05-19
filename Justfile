@@ -821,6 +821,29 @@ pve-manage-dashboard pve_host target_ip="10.99.0.1" dashboard_port="3000" local_
         sleep 5
     done
 
+# Open SSH tunnel to Technitium DNS web admin UI on the services VM
+pve-manage-technitium pve_host services_ip="10.99.2.10" router_ip="10.99.0.1" web_port="5380" local_port="5380":
+    #!/usr/bin/env bash
+    set -eo pipefail
+    REMOTE="admin@{{router_ip}}"
+    PROXY="-J root@{{pve_host}}"
+    SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/nifty-technitium-%C -o ControlPersist=60"
+
+    echo "Connecting to {{router_ip}} via {{pve_host}}..."
+    ssh ${SSH_OPTS} ${PROXY} -fN ${REMOTE}
+    trap 'ssh ${SSH_OPTS} ${PROXY} -O exit ${REMOTE} 2>/dev/null || true' EXIT
+
+    URL="http://localhost:{{local_port}}"
+    echo ""
+    echo "Technitium DNS admin UI available at: ${URL}"
+    echo "Press Ctrl-C to close the tunnel."
+    echo ""
+    if command -v xdg-open &>/dev/null; then
+        (sleep 2 && xdg-open "${URL}") &
+    fi
+    ssh ${SSH_OPTS} ${PROXY} -L {{local_port}}:{{services_ip}}:{{web_port}} -N ${REMOTE} || true
+    echo "Done."
+
 # Create a named snapshot of a Proxmox VM
 pve-snapshot pve_host vmid vm_name comment="":
     #!/usr/bin/env bash
@@ -983,15 +1006,15 @@ pve-install-services pve_host bridge="vmbr2" vm_name="infra-services" router_vmi
     mkdir -p "${VM_TEMPLATE_DIR}/machines/${VM_NAME}"
     echo "{{pve_vmid}}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/vmid"
 
-    # Firewall ports for the Proxmox VM-level firewall
-    printf '22\n' > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/tcp_ports"
-    printf '123\n' > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/udp_ports"
+    # PVE firewall: allow only the ports needed by infra services
+    printf '%s\n' 22 53 80 443 > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/tcp_ports"
+    printf '%s\n' 53 123 > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/udp_ports"
 
     BACKEND=proxmox PVE_HOST="${PVE_HOST}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw \
         just create-batch "${VM_NAME}" "podman,nifty-services" "2048" "2" "8G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
 
 # Upgrade infra-services VM (delegates to nixos-vm-template proxmox backend)
-pve-upgrade-services pve_host vm_name="infra-services":
+pve-upgrade-services pve_host vm_name="infra-services" pve_storage="local-lvm":
     #!/usr/bin/env bash
     set -eo pipefail
     VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
@@ -1001,7 +1024,7 @@ pve-upgrade-services pve_host vm_name="infra-services":
         exit 1
     fi
     cd "${VM_TEMPLATE_DIR}"
-    BACKEND=proxmox PVE_HOST="{{pve_host}}" just upgrade "{{vm_name}}"
+    BACKEND=proxmox PVE_HOST="{{pve_host}}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw just upgrade "{{vm_name}}"
 
 # Clean all artifacts
 clean *args: clean-profile

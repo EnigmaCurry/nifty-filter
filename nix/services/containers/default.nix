@@ -12,6 +12,8 @@ in
 {
   imports = [
     ./chrony.nix
+    ./technitium.nix
+    ./traefik.nix
   ];
 
   options.services.nifty-services = {

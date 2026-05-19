@@ -54,13 +54,18 @@ wan {
   #]
 }
 
-# DNS resolver forwarded to upstream servers (used by dnsmasq, not VLAN clients).
+# DNS resolver: dnsmasq forwards queries to Technitium on the infra VLAN.
+# Technitium serves as the primary recursive/authoritative DNS server.
+# Fallback upstream (1.1.1.1) is used when Technitium is unavailable (e.g. during boot).
+# Web admin UI: https://10.99.2.10 (via Traefik)
 dns {
-  upstream = ["1.1.1.1", "1.0.0.1"]
+  upstream = ["10.99.2.10", "1.1.1.1"]
 }
 
 # --- VLAN 2: Infrastructure ---
-# Services VM (NTP, mDNS, monitoring, etc.) lives here.
+# Services VM (NTP, DNS, monitoring, etc.) lives here.
+# Runs Technitium DNS (10.99.2.10:53) and Chrony NTP (10.99.2.10:123).
+# dnsmasq on the router forwards DNS queries to Technitium.
 # Uses a dedicated interface (virtual NIC on an isolated bridge) instead of
 # a trunk subinterface, so the services VM is self-contained on the hypervisor.
 vlan "infra" {
@@ -80,7 +85,7 @@ vlan "infra" {
 
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable"]
-    tcp_accept  = [22]
+    tcp_accept  = [22, 53, 80, 443]
     udp_accept  = [53, 67, 68]
   }
 
@@ -88,20 +93,24 @@ vlan "infra" {
     pool_start = "10.99.2.100"
     pool_end   = "10.99.2.250"
     router     = "10.99.2.1"
-    dns        = "10.99.2.1"
+    dns        = "10.99.2.10"
   }
 
-  # Allow NTP (chrony) access from all VLANs
+  # Allow NTP (chrony) and Traefik (HTTP/HTTPS) access from all VLANs
   allow_from "trusted" {
+    tcp = ["10.99.2.10:80", "10.99.2.10:443"]
     udp = ["10.99.2.10:123"]
   }
   allow_from "iot" {
+    tcp = ["10.99.2.10:80", "10.99.2.10:443"]
     udp = ["10.99.2.10:123"]
   }
   allow_from "guest" {
+    tcp = ["10.99.2.10:80", "10.99.2.10:443"]
     udp = ["10.99.2.10:123"]
   }
   allow_from "lab" {
+    tcp = ["10.99.2.10:80", "10.99.2.10:443"]
     udp = ["10.99.2.10:123"]
   }
 }
