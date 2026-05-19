@@ -1,17 +1,23 @@
 [workspace]
-members = [".", "crates/sodola-switch"]
+members = [".", "crates/sodola-switch", "crates/nifty-service-monitor"]
+
+[workspace.package]
+version = "0.3.0"
+edition = "2021"
+license = "MIT"
+authors = ["EnigmaCurry <ryan@enigmacurry.com>"]
 
 [package]
 name = "nifty-filter"
-version = "0.3.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
 description = "A nifty tool to configure netfilter/nftables"
-license = "MIT"
 repository = "https://github.com/EnigmaCurry/nifty-filter"
 readme = "README.md"
 keywords = ["network", "filter", "rust"]
 categories = ["network-programming", "command-line-utilities"]
-authors = ["EnigmaCurry <ryan@enigmacurry.com>"]
 
 [dependencies]
 askama = "0.12.1"
@@ -24,6 +30,7 @@ libc = "0.2"
 log = "0.4.22"
 regex = "1.11.1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 strum = { version = "0.26.3", features = ["derive"] }
 strum_macros = "0.26.4"
 

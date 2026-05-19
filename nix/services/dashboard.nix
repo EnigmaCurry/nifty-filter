@@ -89,8 +89,10 @@ in
     };
   };
 
-  # nifty-dashboard web UI
-  # Binds to the management interface IP only.
+  # nifty-dashboard web UI (HTTPS with self-signed TLS)
+  # Certs are generated on first start and cached in /var/lib/private/nifty-dashboard/tls-cache/.
+  # Binds to 0.0.0.0; access is controlled by nftables firewall rules
+  # (mgmt and per-VLAN tcp_accept) and the dashboard's own subnet middleware.
   systemd.services.nifty-dashboard = mkIf cfg.packages.nifty-dashboard.enable {
     description = "nifty-dashboard web UI";
     wantedBy = [ "multi-user.target" ];
@@ -105,7 +107,7 @@ in
     serviceConfig = {
       Type = "simple";
       StateDirectory = "nifty-dashboard";
-      ExecStart = "${pkgs.bash}/bin/bash -c 'MGMT_SUBNET=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} mgmt-subnet 2>/dev/null || true); MGMT_IP=$(echo \"$MGMT_SUBNET\" | cut -d/ -f1); [ -z \"$MGMT_IP\" ] && MGMT_IP=\"0.0.0.0\"; DASH_PORT=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} dashboard-port); exec ${nifty-dashboard}/bin/nifty-dashboard serve --net-listen-ip $MGMT_IP --net-listen-port $DASH_PORT'";
+      ExecStart = "${pkgs.bash}/bin/bash -c 'DASH_PORT=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} dashboard-port); exec ${nifty-dashboard}/bin/nifty-dashboard serve --net-listen-ip 0.0.0.0 --net-listen-port $DASH_PORT --tls-mode self-signed'";
       Restart = "on-failure";
       RestartSec = "5s";
 

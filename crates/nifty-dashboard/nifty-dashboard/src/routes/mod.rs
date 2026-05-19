@@ -30,6 +30,7 @@ pub mod hello;
 pub mod login;
 pub mod qos;
 pub mod services;
+pub mod services_config;
 pub mod status;
 pub mod updates;
 pub mod whoami;

@@ -179,6 +179,9 @@ struct RouterTemplate {
     tcp_forward_wan: ForwardRouteList,
     udp_forward_wan: ForwardRouteList,
 
+    // Dashboard port (for mgmt firewall rule)
+    dashboard_port: u16,
+
     // iperf3 server port
     iperf_port: u16,
 
@@ -272,6 +275,7 @@ impl RouterTemplate {
         let udp_forward_wan = ForwardRouteList::new(&config.wan.udp_forward.join(", "))
             .unwrap_or_else(|e| { errors.push(format!("wan.udp_forward: {}", e)); ForwardRouteList::new("").unwrap() });
 
+        let dashboard_port = config.dashboard_port.unwrap_or(3000);
         let iperf_port = config.iperf_port.unwrap_or(5201);
 
         // Bogons (hardcoded defaults)
@@ -353,6 +357,7 @@ impl RouterTemplate {
             enable_ipv6,
             vlan_aware_switch,
             vlans,
+            dashboard_port,
             icmp_accept_wan,
             icmpv6_accept_wan,
             tcp_accept_wan,

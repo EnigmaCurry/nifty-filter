@@ -1,11 +1,11 @@
 [package]
 name = "nifty-dashboard"
 description = "nifty-dashboard"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 repository = "https://github.com/enigmacurry/nifty-dashboard"
 homepage = "https://github.com/enigmacurry/nifty-dashboard"
-license = "MIT"
 keywords = []
 categories = ["command-line-utilities"]
 readme = "README.md"
@@ -27,6 +27,7 @@ dirs = "5.0.1"
 env_logger = "0.11.5"
 hcl-rs = "0.19"
 indexmap = { version = "2.12.1", features = ["serde"] }
+ipnetwork = "0.20.0"
 log = "0.4.22"
 mime = "0.3.17"
 mime_guess = "2.0.5"

@@ -14,6 +14,7 @@ in
     ./chrony.nix
     ./technitium.nix
     ./traefik.nix
+    ./service-monitor.nix
   ];
 
   options.services.nifty-services = {

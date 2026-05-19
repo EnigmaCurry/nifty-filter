@@ -16,8 +16,8 @@ let
       pname = "nifty-dashboard-frontend";
       version = "0.1.0";
       src = ../../crates/nifty-dashboard/frontend;
-      hash = "sha256-PCIjOq4qHY/I/TvU+pdOBbWWdhETwsuxwaehbVm1hg8=";
-      fetcherVersion = 2;
+      hash = "sha256-mP9B4dpPYYci9LSejgz5jrkx85F4YKe06F9pm5gQD3U=";
+      fetcherVersion = 3;
     };
     buildPhase = ''
       pnpm build

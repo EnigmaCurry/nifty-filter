@@ -73,6 +73,7 @@
           nifty-filter = pkgs.callPackage ./nix/packages/nifty-filter.nix { inherit version; };
           sodola-switch = pkgs.callPackage ./nix/packages/sodola-switch.nix {};
           nifty-dashboard = pkgs.callPackage ./nix/packages/nifty-dashboard.nix { inherit version; };
+          nifty-service-monitor = pkgs.callPackage ./nix/packages/nifty-service-monitor.nix {};
 
           iso = (mkRouterIso { inherit system; }).config.system.build.isoImage;
           iso-big = (mkRouterIso { inherit system; extraModules = [ ./nix/platforms/iso-big.nix ]; }).config.system.build.isoImage;

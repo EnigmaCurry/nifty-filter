@@ -62,6 +62,16 @@ dns {
   upstream = ["10.99.2.10", "1.1.1.1"]
 }
 
+# Services configuration for the infrastructure VM (nifty-service-monitor).
+# The service monitor polls /api/services-config and applies these settings.
+services {
+  technitium {
+    domain         = "dns.infra.lan"
+    address        = "10.99.2.10"  # default if omitted
+    admin_password = "changeme"
+  }
+}
+
 # --- VLAN 2: Infrastructure ---
 # Services VM (NTP, DNS, monitoring, etc.) lives here.
 # Runs Technitium DNS (10.99.2.10:53) and Chrony NTP (10.99.2.10:123).
@@ -85,7 +95,7 @@ vlan "infra" {
 
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable"]
-    tcp_accept  = [22, 53, 80, 443]
+    tcp_accept  = [22, 53, 80, 443, 3000] # 3000 = dashboard (services-config API)
     udp_accept  = [53, 67, 68]
   }
 
@@ -133,7 +143,7 @@ vlan "trusted" {
   #    - [67, 68] DHCP requests handled by the router.
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable", "time-exceeded"]
-    tcp_accept  = [22]
+    tcp_accept  = [22, 3000] # 3000 = dashboard web UI
     udp_accept  = [53, 67, 68]
   }
 

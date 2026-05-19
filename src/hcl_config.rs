@@ -24,6 +24,8 @@ pub struct HclConfig {
     pub switch: Option<SwitchConfig>,
     #[serde(default)]
     pub vlan: HashMap<String, VlanHclConfig>,
+    #[serde(default)]
+    pub services: Option<serde_json::Value>,
 }
 
 /// Interface configuration: each interface is a labeled block with a name
@@ -868,6 +870,34 @@ vlan "trusted" {
 }
 "#);
         assert!(config.vlan.get("trusted").unwrap().iperf_enabled);
+    }
+
+    #[test]
+    fn test_parse_services_block() {
+        let config = parse_with_prefix(r#"
+services {
+  technitium {
+    domain = "dns.infra.local"
+    admin_password = "changeme"
+  }
+  traefik {
+    dashboard = true
+  }
+}
+"#);
+        let services = config.services.as_ref().unwrap();
+        assert!(services.get("technitium").is_some());
+        assert_eq!(
+            services["technitium"]["domain"].as_str(),
+            Some("dns.infra.local")
+        );
+        assert_eq!(services["traefik"]["dashboard"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_no_services_is_ok() {
+        let config = parse_with_prefix("");
+        assert!(config.services.is_none());
     }
 
     #[test]

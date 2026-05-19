@@ -268,6 +268,7 @@ pub fn generate_dnsmasq(config: &HclConfig, output: &str) -> Result<(), String> 
     for dns in &dns_servers {
         writeln!(out, "server={}", dns).ok();
     }
+    writeln!(out, "strict-order").ok();
     writeln!(out, "domain-needed").ok();
     writeln!(out, "bogus-priv").ok();
     writeln!(out, "cache-size=1000").ok();

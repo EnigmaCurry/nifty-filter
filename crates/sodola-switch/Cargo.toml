@@ -1,10 +1,10 @@
 [package]
 name = "sodola-switch"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
 description = "Management client for Sodola SL-SWTGW218AS managed switch"
-license = "MIT"
-authors = ["EnigmaCurry <ryan@enigmacurry.com>"]
 
 [dependencies]
 ureq = { version = "2", default-features = false }

@@ -41,7 +41,7 @@ table inet filter {
 
         {% if interface_mgmt != "" %}
         iif "{{ interface_mgmt }}" icmp type { echo-request, echo-reply } accept comment "nf:Allow ICMP ping on mgmt"
-        iif "{{ interface_mgmt }}" tcp dport 22 accept comment "nf:Allow SSH on mgmt"
+        iif "{{ interface_mgmt }}" tcp dport { 22, {{ dashboard_port }} } accept comment "nf:Allow SSH and dashboard on mgmt"
         {% endif %}
 
         limit rate 5/minute log prefix "(sample) Dropped input: " comment "nf:Log dropped input (rate-limited)"
