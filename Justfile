@@ -238,6 +238,33 @@ upgrade host:
     echo ""
     echo "Upgrade applied. {{host}} is rebooting..."
 
+# Interactive upgrade menu for PVE environment
+pve-upgrade-menu pve_host:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    CHOICE=$(script-wizard choose "What to upgrade?" \
+        "Router VM (full rebuild + reboot)" \
+        "Services VM (including technitium)" \
+        "Dashboard only (no reboot)")
+    case "${CHOICE}" in
+        "Router VM"*)
+            echo "Pulling latest nifty-filter..."
+            git pull
+            just pve-upgrade "{{pve_host}}" 101 nifty-filter
+            ;;
+        "Services VM"*)
+            echo "Pulling latest nifty-filter..."
+            git pull
+            VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
+            echo "Pulling latest nixos-vm-template..."
+            git -C "${VM_TEMPLATE_DIR}" pull
+            just pve-upgrade-services "{{pve_host}}"
+            ;;
+        "Dashboard only"*)
+            just pve-deploy-dashboard "{{pve_host}}"
+            ;;
+    esac
+
 # Upgrade a remote router VM via PVE jump host (builds locally, stages for next reboot)
 pve-upgrade pve_host vmid vm_name target_ip="10.99.0.1":
     #!/usr/bin/env bash
@@ -405,8 +432,8 @@ pve-install pve_host:
 
     # --- Interactive setup via Rust binary ---
     echo "Building setup wizard..."
-    cargo build --quiet --features nixos 2>/dev/null
-    SETUP_OUTPUT=$(cargo run --quiet --features nixos -- pve-setup "${PVE_HOST}")
+    nix develop --command cargo build --quiet --features nixos 2>/dev/null
+    SETUP_OUTPUT=$(nix develop --command cargo run --quiet --features nixos -- pve-setup "${PVE_HOST}")
     eval "${SETUP_OUTPUT}"
 
     REMOTE="root@${PVE_HOST}"
@@ -462,6 +489,7 @@ pve-install pve_host:
 
     # --- Build PVE disk image ---
     echo "Building PVE disk image..."
+    nix flake update
     NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" \
         nix build .#pve-image --impure
     IMAGE_PATH="$(find result/ -maxdepth 1 -type f \( -name '*.raw' -o -name '*.img' \) | head -1)"
@@ -606,8 +634,8 @@ pve-install pve_host:
     echo "SSH keys are pre-installed. Connect directly:"
     echo "  just pve-ssh ${PVE_HOST} ${ROUTER_MGMT_IP}"
     echo ""
-    echo "Then run the configuration wizard:"
-    echo "  nifty-install"
+    echo "Then run the configuration wizard (inside the VM):"
+    echo "  nifty-config"
 
 # Copy SSH key to a VM via PVE jump host (password: nifty)
 pve-ssh-copy-id pve_host target_ip user="admin":
@@ -822,7 +850,7 @@ pve-manage-dashboard pve_host target_ip="10.99.0.1" dashboard_port="3000" local_
     done
 
 # Open SSH tunnel to Technitium DNS web admin UI on the services VM
-pve-manage-technitium pve_host services_ip="10.99.2.10" router_ip="10.99.0.1" web_port="5380" local_port="5380":
+pve-manage-technitium pve_host services_ip="10.99.2.2" router_ip="10.99.0.1" web_port="5380" local_port="5380":
     #!/usr/bin/env bash
     set -eo pipefail
     REMOTE="admin@{{router_ip}}"
@@ -934,7 +962,7 @@ pve-snapshot-prune pve_host vmid vm_name:
 
 # Set up infra bridge and router NIC for the services VM, then create it via nixos-vm-template.
 # The services VM is managed by nixos-vm-template; this target handles the network plumbing.
-pve-install-services pve_host bridge="vmbr2" vm_name="infra-services" router_vmid="100" ip="10.99.2.10/24" gateway="10.99.2.1" pve_storage="local-lvm" pve_vmid="201":
+pve-install-services pve_host ip bridge="vmbr2" vm_name="infra-services" router_vmid="101" pve_storage="local-lvm" pve_vmid="202":
     #!/usr/bin/env bash
     set -eo pipefail
 
@@ -943,8 +971,12 @@ pve-install-services pve_host bridge="vmbr2" vm_name="infra-services" router_vmi
     VM_NAME="{{vm_name}}"
     ROUTER_VMID="{{router_vmid}}"
     BRIDGE="{{bridge}}"
-    STATIC_IP="{{ip}}"
-    GATEWAY="{{gateway}}"
+    # Accept bare IP or CIDR; default to /24
+    IP_RAW="{{ip}}"
+    IP_ADDR="${IP_RAW%%/*}"
+    STATIC_IP="${IP_ADDR}/24"
+    # Derive gateway as .1 of the /24 subnet
+    GATEWAY="$(echo "${IP_ADDR}" | sed 's/\.[0-9]*$/.1/')"
 
     VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
     if [ ! -f "${VM_TEMPLATE_DIR}/Justfile" ]; then

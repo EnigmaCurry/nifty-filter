@@ -98,7 +98,7 @@ enum Commands {
         config: String,
     },
 
-    /// Print a config value by key (wan-name, trunk-name, mgmt-name, mgmt-subnet, enable-ipv6, dashboard-port, iperf-port)
+    /// Print a config value by key (wan-name, trunk-name, mgmt-name, wan-mac, trunk-mac, mgmt-mac, mgmt-subnet, enable-ipv6, dashboard-port, iperf-port)
     Get {
         /// Path to the HCL config file
         #[arg(long, short)]
@@ -831,6 +831,9 @@ fn app() {
                 "wan-name" => Some(hcl_config.interfaces.wan_name().to_string()),
                 "trunk-name" => Some(hcl_config.interfaces.trunk_name().to_string()),
                 "mgmt-name" => hcl_config.interfaces.mgmt_name().map(|s| s.to_string()),
+                "wan-mac" => hcl_config.interfaces.wan.mac.clone(),
+                "trunk-mac" => hcl_config.interfaces.trunk.mac.clone(),
+                "mgmt-mac" => hcl_config.interfaces.mgmt.as_ref().and_then(|m| m.mac.clone()),
                 "mgmt-subnet" => hcl_config.interfaces.mgmt_subnet().map(|s| s.to_string()),
                 "enable-ipv6" => Some(hcl_config.wan.enable_ipv6.to_string()),
                 "dashboard-port" => Some(hcl_config.dashboard_port.unwrap_or(3000).to_string()),
@@ -838,6 +841,21 @@ fn app() {
                 "vlan-interfaces" => {
                     let names: Vec<String> = hcl_config.vlan.values()
                         .filter_map(|v| v.interface.as_ref().map(|i| i.name.clone()))
+                        .collect();
+                    if names.is_empty() { None } else { Some(names.join(" ")) }
+                },
+                "vlan-interface-macs" => {
+                    let pairs: Vec<String> = hcl_config.vlan.values()
+                        .filter_map(|v| v.interface.as_ref().and_then(|i|
+                            i.mac.as_ref().map(|m| format!("{}={}", i.name, m))
+                        ))
+                        .collect();
+                    if pairs.is_empty() { None } else { Some(pairs.join(" ")) }
+                },
+                "trunk-vlan-names" => {
+                    let names: Vec<String> = hcl_config.vlan.iter()
+                        .filter(|(_, v)| v.interface.is_none())
+                        .map(|(name, _)| name.clone())
                         .collect();
                     if names.is_empty() { None } else { Some(names.join(" ")) }
                 },
@@ -947,7 +965,7 @@ mod tests {
         let rendered = tmpl.render().unwrap();
 
         // VLAN 1 uses bare trunk interface
-        assert!(rendered.contains(r#"iif "trunk""#));
+        assert!(rendered.contains(r#"iifname "trunk""#));
         assert!(!rendered.contains("trunk.1"));
         // Egress rule
         assert!(rendered.contains("ip saddr 192.168.10.1/24 ip daddr { 0.0.0.0/0 }"));
@@ -992,15 +1010,15 @@ mod tests {
         let rendered = tmpl.render().unwrap();
 
         // VLAN sub-interfaces use names from HCL keys
-        assert!(rendered.contains(r#"iif "trusted""#));
-        assert!(rendered.contains(r#"iif "iot""#));
+        assert!(rendered.contains(r#"iifname "trusted""#));
+        assert!(rendered.contains(r#"iifname "iot""#));
         // Trusted has egress
         assert!(rendered.contains("ip saddr 10.10.0.1/24 ip daddr { 0.0.0.0/0 }"));
         // IoT has no egress
         assert!(!rendered.contains("ip saddr 10.20.0.1/24 ip daddr"));
         // Per-VLAN input chains
-        assert!(rendered.contains(r#"iif "trusted" jump input_vlan_10"#));
-        assert!(rendered.contains(r#"iif "iot" jump input_vlan_20"#));
+        assert!(rendered.contains(r#"iifname "trusted" jump input_vlan_10"#));
+        assert!(rendered.contains(r#"iifname "iot" jump input_vlan_20"#));
         // SSH in trusted chain
         assert!(rendered.contains(r#"ip saddr 10.10.0.1/24 tcp dport { 22 }"#));
         // Switch-aware: untagged trunk drop
@@ -1069,8 +1087,8 @@ mod tests {
         let rendered = tmpl.render().unwrap();
 
         // Custom names from HCL keys
-        assert!(rendered.contains(r#"iif "trusted""#));
-        assert!(rendered.contains(r#"iif "iot""#));
+        assert!(rendered.contains(r#"iifname "trusted""#));
+        assert!(rendered.contains(r#"iifname "iot""#));
         assert!(!rendered.contains("trunk.10"));
         assert!(!rendered.contains("trunk.20"));
     }
@@ -1107,9 +1125,9 @@ mod tests {
         let tmpl = RouterTemplate::from_hcl(&config).unwrap();
         let rendered = tmpl.render().unwrap();
 
-        assert!(rendered.contains(r#"iif "trusted" jump input_vlan_10"#));
+        assert!(rendered.contains(r#"iifname "trusted" jump input_vlan_10"#));
         assert!(rendered.contains(r#"ip saddr 10.10.0.1/24 tcp dport { 22 }"#));
-        assert!(rendered.contains(r#"iif "iot" jump input_vlan_20"#));
+        assert!(rendered.contains(r#"iifname "iot" jump input_vlan_20"#));
         assert!(rendered.contains(r#"ip saddr 10.10.0.1/24 icmp type { echo-request, echo-reply, destination-unreachable, time-exceeded }"#));
         assert!(rendered.contains(r#"ip saddr 10.20.0.1/24 icmp type { destination-unreachable }"#));
     }
@@ -1153,15 +1171,15 @@ mod tests {
 
         // 2-tuple: no saddr filter
         assert!(rendered.contains(
-            r#"iif "trusted" oif "lab" ip daddr 10.99.40.5 tcp dport 80 accept"#
+            r#"iifname "trusted" oifname "lab" ip daddr 10.99.40.5 tcp dport 80 accept"#
         ));
         // 3-tuple: saddr filter
         assert!(rendered.contains(
-            r#"iif "trusted" oif "lab" ip saddr 10.99.10.50 ip daddr 10.99.40.5 tcp dport 443 accept"#
+            r#"iifname "trusted" oifname "lab" ip saddr 10.99.10.50 ip daddr 10.99.40.5 tcp dport 443 accept"#
         ));
         // UDP rule
         assert!(rendered.contains(
-            r#"iif "trusted" oif "lab" ip daddr 10.99.40.5 udp dport 53 accept"#
+            r#"iifname "trusted" oifname "lab" ip daddr 10.99.40.5 udp dport 53 accept"#
         ));
         // Comments
         assert!(rendered.contains("Allow inter-VLAN TCP from VLAN 10 to VLAN 40"));
@@ -1231,9 +1249,9 @@ mod tests {
 
         assert!(rendered.contains("table inet mangle"));
         // VLAN 10 marked as voice (EF)
-        assert!(rendered.contains(r#"oif "wan" ip saddr 10.10.0.1/24 ip dscp set ef"#));
+        assert!(rendered.contains(r#"oifname "wan" ip saddr 10.10.0.1/24 ip dscp set ef"#));
         // VLAN 20 marked as bulk (CS1)
-        assert!(rendered.contains(r#"oif "wan" ip saddr 10.20.0.1/24 ip dscp set cs1"#));
+        assert!(rendered.contains(r#"oifname "wan" ip saddr 10.20.0.1/24 ip dscp set cs1"#));
     }
 
     #[test]
@@ -1329,7 +1347,7 @@ mod tests {
         let rendered = tmpl.render().unwrap();
 
         // VLAN 20 should get a fwmark rule
-        assert!(rendered.contains(r#"oif "wan" ip saddr 10.20.0.1/24 meta mark set 20"#));
+        assert!(rendered.contains(r#"oifname "wan" ip saddr 10.20.0.1/24 meta mark set 20"#));
         // VLAN 10 should NOT get a fwmark rule (no bandwidth limit)
         assert!(!rendered.contains("meta mark set 10"));
     }

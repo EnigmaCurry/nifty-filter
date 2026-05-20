@@ -1,13 +1,27 @@
-# Service monitor: polls router API for services config and applies it
-# to infrastructure services (Technitium password, etc.).
+# Service monitor container
 #
-# This is a native systemd service (not a container) that runs alongside
-# the containerised infrastructure services on the services VM.
+# Polls the router API for services config and declaratively applies it
+# to infrastructure services (Technitium DNS zones, records, forwarders,
+# user accounts, etc.).
+#
+# Runs as a podman container with host networking so it can reach both
+# the router API and Technitium on localhost:5380.
+# A named volume persists the TOFU certificate pin and admin password.
 
 { config, lib, pkgs, ... }:
 
 let
   cfg = config.services.nifty-services;
+
+  # Build a minimal container image from the Nix package.
+  image = pkgs.dockerTools.streamLayeredImage {
+    name = "nifty-service-monitor";
+    tag = "latest";
+    contents = [ cfg.service-monitor.package pkgs.cacert ];
+    config = {
+      Entrypoint = [ "${cfg.service-monitor.package}/bin/nifty-service-monitor" ];
+    };
+  };
 in
 {
   options.services.nifty-services.service-monitor = {
@@ -15,7 +29,7 @@ in
 
     routerUrl = lib.mkOption {
       type = lib.types.str;
-      description = "Base URL of the router's nifty-dashboard API (e.g. http://10.99.2.1:3000)";
+      description = "Base URL of the router's nifty-dashboard API (e.g. https://10.99.2.1:3000)";
     };
 
     pollInterval = lib.mkOption {
@@ -31,37 +45,44 @@ in
   };
 
   config = lib.mkIf (cfg.enable && cfg.service-monitor.enable) {
-    systemd.services.nifty-service-monitor = {
-      description = "Nifty service configuration monitor";
+    # Load the Nix-built image into podman before the container starts.
+    systemd.services.load-service-monitor-image = {
+      description = "Load nifty-service-monitor container image";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" "podman-technitium.service" ];
-      wants = [ "network-online.target" ];
-
+      before = [ "podman-service-monitor.service" ];
       serviceConfig = {
-        Type = "simple";
-        ExecStart = lib.concatStringsSep " " [
-          "${cfg.service-monitor.package}/bin/nifty-service-monitor"
-          "--router-url" cfg.service-monitor.routerUrl
-          "--poll-interval" (toString cfg.service-monitor.pollInterval)
-        ];
-        DynamicUser = true;
-        StateDirectory = "nifty-service-monitor";
-        Restart = "always";
-        RestartSec = 5;
-
-        # Security hardening
-        NoNewPrivileges = true;
-        ProtectSystem = "strict";
-        ProtectHome = true;
-        PrivateTmp = true;
-        ProtectKernelTunables = true;
-        ProtectKernelModules = true;
-        ProtectControlGroups = true;
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.bash}/bin/bash -c '${image} | ${pkgs.podman}/bin/podman load'";
       };
+    };
 
+    virtualisation.oci-containers.backend = "podman";
+    virtualisation.oci-containers.containers.service-monitor = {
+      image = "nifty-service-monitor:latest";
       environment = {
         RUST_LOG = "info";
       };
+      cmd = [
+        "--router-url" cfg.service-monitor.routerUrl
+        "--poll-interval" (toString cfg.service-monitor.pollInterval)
+        "--state-dir" "/data"
+        "--traefik-dynamic-dir" "/traefik-dynamic"
+      ];
+      volumes = [
+        "service-monitor-data:/data"
+        "traefik-dynamic:/traefik-dynamic"
+      ];
+      extraOptions = [
+        "--network=host"
+      ];
+      dependsOn = [];
+    };
+
+    # Soft dependency: start after technitium but don't fail if it's slow.
+    # The service-monitor polls and handles technitium being unavailable.
+    systemd.services.podman-service-monitor = {
+      after = [ "podman-technitium.service" ];
     };
   };
 }

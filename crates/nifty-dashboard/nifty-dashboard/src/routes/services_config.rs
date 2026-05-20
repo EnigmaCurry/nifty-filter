@@ -3,9 +3,15 @@ use api_doc_macros::{api_doc, get_with_docs};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::sse::{Event, Sse};
+use axum::routing::get;
+use futures_util::stream::{Stream, StreamExt};
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::Value;
+use std::convert::Infallible;
+use std::time::Duration;
+use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
     errors::ErrorBody,
@@ -14,7 +20,9 @@ use crate::{
 };
 
 pub fn router() -> ApiRouter<AppState> {
-    ApiRouter::<AppState>::new().api_route("/", get_with_docs!(get_services_config))
+    ApiRouter::<AppState>::new()
+        .api_route("/", get_with_docs!(get_services_config))
+        .route("/events", get(sse_handler))
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -57,4 +65,28 @@ async fn get_services_config(_state: State<AppState>) -> ApiJson<ServicesConfigR
         }),
         None => json_error(StatusCode::NOT_FOUND, "no services block in config"),
     }
+}
+
+/// SSE endpoint for services-config change notifications.
+///
+/// Emits a `config-changed` event whenever the HCL config file is modified.
+/// Protected by the same `require_subnet` middleware as the GET endpoint.
+pub async fn sse_handler(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    tracing::info!("SSE client connected to /api/services-config/events");
+    let config_rx = state.config_changed_tx.subscribe();
+
+    let stream = BroadcastStream::new(config_rx).filter_map(|result| async move {
+        match result {
+            Ok(()) => Some(Ok(Event::default().event("config-changed").data("reload"))),
+            Err(_) => None,
+        }
+    });
+
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(Duration::from_secs(30))
+            .text(""),
+    )
 }

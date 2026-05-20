@@ -15,7 +15,7 @@
 # This separation ensures the dashboard cannot modify firewall rules,
 # interfaces, or traffic shaping even if fully compromised.
 
-{ lib, pkgs, cfg, nifty-filter, nifty-dashboard, hclFile, ... }:
+{ lib, pkgs, cfg, nifty-filter, nifty-dashboard, configDir, hclFile, ... }:
 
 let
   inherit (lib) mkIf;
@@ -113,6 +113,7 @@ in
 
       # Privilege dropping — zero capabilities, all data comes from state dump files
       DynamicUser = true;
+      SupplementaryGroups = [ "nifty-config" ];
       CapabilityBoundingSet = "";
 
       # Filesystem hardening

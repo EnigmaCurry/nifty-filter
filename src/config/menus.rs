@@ -1194,8 +1194,10 @@ wan {{
   udp_accept  = []
 }}
 
-dns {{
-  upstream = [{dns_list}]
+services {{
+  dns {{
+    upstream = [{dns_list}]
+  }}
 }}
 
 vlan "{vlan_name}" {{

@@ -276,13 +276,6 @@ async fn get_config(state: State<AppState>) -> ApiJson<ConfigResponse> {
         }
     };
 
-    let current_sha = {
-        use sha2::{Digest, Sha256};
-        format!("{:x}", Sha256::digest(contents.as_bytes()))
-    };
-    let reboot_needed =
-        !state.config_boot_sha.is_empty() && current_sha != state.config_boot_sha;
-
     let (config, config_error) = match parse_hcl_to_json(&contents) {
         Ok(v) => {
             // Validate that configured interfaces exist or a links block is present
@@ -290,6 +283,22 @@ async fn get_config(state: State<AppState>) -> ApiJson<ConfigResponse> {
             (v, validation_error)
         }
         Err(e) => (Value::Null, Some(e)),
+    };
+
+    // Compare current config against boot config, ignoring the "services" block
+    // which is read by other VMs and doesn't affect this router's runtime.
+    let reboot_needed = if let Some(boot_values) = &state.config_boot_values {
+        let mut current = config.clone();
+        let mut boot = boot_values.clone();
+        if let Some(obj) = current.as_object_mut() {
+            obj.remove("services");
+        }
+        if let Some(obj) = boot.as_object_mut() {
+            obj.remove("services");
+        }
+        current != boot
+    } else {
+        false
     };
     let mut config = config;
     redact_sensitive(&mut config);

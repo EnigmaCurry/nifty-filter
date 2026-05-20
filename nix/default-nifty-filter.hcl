@@ -32,8 +32,10 @@ wan {
 }
 
 # DNS resolver (used by dnsmasq).
-dns {
-  upstream = ["1.1.1.1", "1.0.0.1"]
+services {
+  dns {
+    upstream = ["1.1.1.1", "1.0.0.1"]
+  }
 }
 
 # For a VLAN-aware router, uncomment and configure:

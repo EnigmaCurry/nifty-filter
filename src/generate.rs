@@ -253,25 +253,21 @@ pub fn generate_dnsmasq(config: &HclConfig, output: &str) -> Result<(), String> 
     let mut out = fs::File::create(path)
         .map_err(|e| format!("Cannot create {}: {}", output, e))?;
 
-    // Upstream DNS servers
-    let dns_servers: Vec<&str> = config
-        .dns
-        .as_ref()
-        .map(|d| d.upstream.iter().map(|s| s.as_str()).collect())
-        .unwrap_or_else(|| vec!["1.1.1.1", "1.0.0.1"]);
+    // Upstream DNS servers (from services.dns.upstream)
+    let dns_servers = config.dns_upstream();
 
     writeln!(out, "# Generated from nifty-filter HCL config").ok();
     writeln!(out, "pid-file=/run/dnsmasq/dnsmasq.pid").ok();
     writeln!(out).ok();
     writeln!(out, "# DNS").ok();
     writeln!(out, "no-resolv").ok();
-    for dns in &dns_servers {
-        writeln!(out, "server={}", dns).ok();
+    for server in &dns_servers {
+        writeln!(out, "server={server}").ok();
     }
     writeln!(out, "strict-order").ok();
     writeln!(out, "domain-needed").ok();
     writeln!(out, "bogus-priv").ok();
-    writeln!(out, "cache-size=1000").ok();
+    writeln!(out, "cache-size=0").ok();
     writeln!(out).ok();
     writeln!(out, "# Localhost listeners").ok();
     writeln!(out, "listen-address=::1").ok();
@@ -609,7 +605,9 @@ interfaces {
   wan   { name = "wan" }
 }
 wan {}
-dns { upstream = ["8.8.8.8", "8.8.4.4"] }
+services {
+  dns { upstream = ["8.8.8.8", "8.8.4.4"] }
+}
 vlan_aware_switch = true
 vlan "trusted" {
   id = 10
@@ -732,7 +730,7 @@ vlan "trusted" {
     pool_end   = "10.99.10.250"
     router     = "10.99.10.1"
     dns        = "10.99.10.1"
-    ntp        = "10.99.2.10"
+    ntp        = "10.99.2.2"
   }
 }
 "#);
@@ -741,7 +739,7 @@ vlan "trusted" {
         generate_dnsmasq(&config, output.to_str().unwrap()).unwrap();
 
         let content = fs::read_to_string(&output).unwrap();
-        assert!(content.contains("dhcp-option=interface:trusted,option:ntp-server,10.99.2.10"));
+        assert!(content.contains("dhcp-option=interface:trusted,option:ntp-server,10.99.2.2"));
     }
 
     #[test]

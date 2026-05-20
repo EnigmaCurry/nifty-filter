@@ -26,6 +26,7 @@ chrono = { version = "0.4.42", features = ["serde"] }
 dirs = "5.0.1"
 env_logger = "0.11.5"
 hcl-rs = "0.19"
+hex = "0.4"
 indexmap = { version = "2.12.1", features = ["serde"] }
 ipnetwork = "0.20.0"
 log = "0.4.22"
@@ -71,6 +72,7 @@ axum-oidc = "0.6.0"
 strum = { version = "0.27.2", features = ["strum_macros"] }
 strum_macros = "0.27.2"
 notify = { version = "7", default-features = false, features = ["macos_kqueue"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
 shell-words = "1.1.0"

@@ -29,7 +29,6 @@ use tower_sessions::{
     session_store::ExpiredDeletion,
 };
 use tower_sessions_sqlx_store::SqliteStore;
-use tracing::warn;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -37,7 +36,6 @@ pub struct AppState {
     pub auth_config: AuthConfig,
     pub config_changed_tx: tokio::sync::broadcast::Sender<()>,
     pub shutdown_tx: tokio::sync::broadcast::Sender<()>,
-    pub config_boot_sha: String,
     pub config_boot_values: Option<serde_json::Value>,
 }
 
@@ -115,8 +113,6 @@ pub async fn run(
 
     // Config file watcher
     let (config_changed_tx, _) = tokio::sync::broadcast::channel::<()>(16);
-    let config_boot_sha = crate::config_watcher::read_boot_sha().await;
-    info!("config boot SHA: {}", config_boot_sha);
     let config_boot_values = {
         // Read the boot-time config snapshot from /run/ (written by nifty-config-sha.service).
         // Falls back to current config file if snapshot doesn't exist (dev/non-NixOS).
@@ -151,7 +147,6 @@ pub async fn run(
         auth_config,
         config_changed_tx,
         shutdown_tx: shutdown_tx.clone(),
-        config_boot_sha,
         config_boot_values,
     };
     let app = build_app(
@@ -263,7 +258,7 @@ async fn init_db(db_url: &str) -> anyhow::Result<SqlitePool> {
         .log_statements(tracing::log::LevelFilter::Trace)
         .log_slow_statements(
             tracing::log::LevelFilter::Warn,
-            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(1),
         );
 
     let db: SqlitePool = SqlitePool::connect_with(connect_opts).await?;

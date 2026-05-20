@@ -19,8 +19,10 @@ wan {
   # tcp_forward = ["8080:192.168.10.50:80", "2222:192.168.10.10:22"]
 }
 
-dns {
-  upstream = ["1.1.1.1", "1.0.0.1"]
+services {
+  dns {
+    upstream = ["1.1.1.1", "1.0.0.1"]
+  }
 }
 
 # QoS: Bufferbloat mitigation (CAKE)

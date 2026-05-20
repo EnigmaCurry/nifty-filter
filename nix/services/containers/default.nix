@@ -19,5 +19,11 @@ in
 
   options.services.nifty-services = {
     enable = mkEnableOption "nifty infrastructure services (containerized)";
+
+    domain = mkOption {
+      type = types.str;
+      default = "nifty.internal";
+      description = "Base domain for infrastructure services (e.g. Technitium becomes dns.<domain>).";
+    };
   };
 }

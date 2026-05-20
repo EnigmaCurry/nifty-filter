@@ -17,8 +17,6 @@ pub struct HclConfig {
     #[serde(default)]
     pub iperf_port: Option<u16>,
     #[serde(default)]
-    pub dns: Option<DnsConfig>,
-    #[serde(default)]
     pub qos: Option<QosHclConfig>,
     #[serde(default)]
     pub switch: Option<SwitchConfig>,
@@ -26,6 +24,23 @@ pub struct HclConfig {
     pub vlan: HashMap<String, VlanHclConfig>,
     #[serde(default)]
     pub services: Option<serde_json::Value>,
+}
+
+impl HclConfig {
+    /// Extract DNS upstream servers from services.dns.upstream, with defaults.
+    pub fn dns_upstream(&self) -> Vec<String> {
+        self.services
+            .as_ref()
+            .and_then(|s| s.get("dns"))
+            .and_then(|d| d.get("upstream"))
+            .and_then(|u| u.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_else(|| vec!["1.1.1.1".to_string(), "1.0.0.1".to_string()])
+    }
 }
 
 /// Interface configuration: each interface is a labeled block with a name
@@ -101,12 +116,6 @@ pub struct WanConfig {
 
 fn default_true() -> bool {
     true
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DnsConfig {
-    pub upstream: Vec<String>,
 }
 
 /// Per-VLAN configuration block.
@@ -629,17 +638,19 @@ qos {
     }
 
     #[test]
-    fn test_parse_dns() {
+    fn test_parse_dns_upstream() {
         let config = parse_with_prefix(r#"
-dns { upstream = ["1.1.1.1", "1.0.0.1"] }
+services {
+  dns { upstream = ["1.1.1.1", "1.0.0.1"] }
+}
 "#);
-        assert_eq!(config.dns.unwrap().upstream, vec!["1.1.1.1", "1.0.0.1"]);
+        assert_eq!(config.dns_upstream(), vec!["1.1.1.1", "1.0.0.1"]);
     }
 
     #[test]
-    fn test_parse_no_dns() {
+    fn test_parse_no_dns_defaults() {
         let config = parse_with_prefix("");
-        assert!(config.dns.is_none());
+        assert_eq!(config.dns_upstream(), vec!["1.1.1.1", "1.0.0.1"]);
     }
 
     #[test]
@@ -876,9 +887,11 @@ vlan "trusted" {
     fn test_parse_services_block() {
         let config = parse_with_prefix(r#"
 services {
+  host {
+    ip_address = "10.99.2.2"
+  }
   technitium {
     domain = "dns.infra.local"
-    admin_password = "changeme"
   }
   traefik {
     dashboard = true
@@ -886,12 +899,49 @@ services {
 }
 "#);
         let services = config.services.as_ref().unwrap();
+        assert_eq!(
+            services["host"]["ip_address"].as_str(),
+            Some("10.99.2.2")
+        );
         assert!(services.get("technitium").is_some());
         assert_eq!(
             services["technitium"]["domain"].as_str(),
             Some("dns.infra.local")
         );
         assert_eq!(services["traefik"]["dashboard"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn test_parse_services_zone_typed_records() {
+        let config = parse_with_prefix(r#"
+services {
+  dns {
+    viewer_password = "changeme"
+    zone "nifty.internal" {
+      A = {
+        "@"       = "10.99.2.2"
+        dns       = "10.99.2.2"
+        ntp       = "10.99.2.2"
+        "app.dev" = "10.99.2.20"
+      }
+      CNAME = {
+        www = "nifty.internal"
+      }
+    }
+  }
+}
+"#);
+        let services = config.services.as_ref().unwrap();
+        let dns = services.get("dns").unwrap();
+        let zone = dns.get("zone").unwrap().get("nifty.internal").unwrap();
+        // Verify HCL parses type-grouped records correctly
+        let a_records = zone.get("A").unwrap();
+        assert_eq!(a_records.get("@").unwrap().as_str(), Some("10.99.2.2"));
+        assert_eq!(a_records.get("dns").unwrap().as_str(), Some("10.99.2.2"));
+        assert_eq!(a_records.get("ntp").unwrap().as_str(), Some("10.99.2.2"));
+        assert_eq!(a_records.get("app.dev").unwrap().as_str(), Some("10.99.2.20"));
+        let cname_records = zone.get("CNAME").unwrap();
+        assert_eq!(cname_records.get("www").unwrap().as_str(), Some("nifty.internal"));
     }
 
     #[test]

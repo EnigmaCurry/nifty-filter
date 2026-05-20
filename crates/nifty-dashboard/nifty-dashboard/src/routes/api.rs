@@ -1,7 +1,7 @@
 use aide::axum::ApiRouter;
 use axum::middleware;
 
-use super::{config, dnsmasq, healthz, hello, qos, services, services_config, status, updates, whoami};
+use super::{config, dnsmasq, healthz, hello, qos, services, services_config, status, technitium, updates, whoami};
 use crate::middleware::require_subnet;
 use crate::prelude::*;
 
@@ -19,6 +19,7 @@ pub fn router(state: AppState) -> ApiRouter<AppState> {
                 .layer(middleware::from_fn(require_subnet::require_subnet)),
         )
         .nest("/status", status::router())
+        .nest("/technitium", technitium::router())
         .nest("/updates", updates::router())
         .nest("/whoami", whoami::router())
 }

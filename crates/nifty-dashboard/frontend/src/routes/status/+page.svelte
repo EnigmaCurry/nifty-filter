@@ -203,7 +203,34 @@
   }
 
   type Tab = "config" | "state" | "updates" | "about";
-  type StateSubTab = "interfaces" | "nftables" | "qos" | "switch" | "dnsmasq" | "services";
+  type StateSubTab = "interfaces" | "nftables" | "dns" | "qos" | "switch" | "services";
+  type DnsSubTab = "dnsmasq" | "technitium";
+
+  interface TechnitiumForwarderInfo {
+    forwarders: string[];
+    forwarder_protocol: string;
+    forwarderConcurrency: number;
+    concurrentForwarding: boolean;
+  }
+
+  interface TechnitiumRecordInfo {
+    name: string;
+    type: string;
+    ttl: number;
+    value: string;
+  }
+
+  interface TechnitiumZoneInfo {
+    name: string;
+    type: string;
+    records: TechnitiumRecordInfo[];
+  }
+
+  interface TechnitiumData {
+    forwarders: TechnitiumForwarderInfo | null;
+    zones: TechnitiumZoneInfo[];
+    error?: string;
+  }
 
   interface ServiceInfo {
     name: string;
@@ -234,6 +261,8 @@
   let aboutData = $state<AboutData | null>(null);
   let qosData = $state<QosData | null>(null);
   let dnsmasqData = $state<DnsmasqData | null>(null);
+  let technitiumData = $state<TechnitiumData | null>(null);
+  let technitiumError = $state<string | null>(null);
   let servicesData = $state<ServicesData | null>(null);
   let updatesData = $state<UpdatesData | null>(null);
   let loading = $state(true);
@@ -242,6 +271,7 @@
   let activeTab = $state<Tab>("config");
   let configSubTab = $state<ConfigSubTab>("overview");
   let stateSubTab = $state<StateSubTab>("interfaces");
+  let dnsSubTab = $state<DnsSubTab>("dnsmasq");
 
   let failingServiceCount = $derived(
     (servicesData?.failed.length ?? 0) +
@@ -255,6 +285,8 @@
     } else if (activeTab === "state") {
       if (stateSubTab === "nftables") {
         hash = `#state/nftables/${activeHook}`;
+      } else if (stateSubTab === "dns") {
+        hash = `#state/dns/${dnsSubTab}`;
       } else {
         hash = `#state/${stateSubTab}`;
       }
@@ -264,19 +296,38 @@
     history.pushState(null, "", hash);
   }
 
-  function readHash(): { tab: Tab; hook: string; configSub: ConfigSubTab; stateSub: StateSubTab } | null {
+  function readHash(): { tab: Tab; hook: string; configSub: ConfigSubTab; stateSub: StateSubTab; dnsSub: DnsSubTab } | null {
     const hash = window.location.hash.slice(1);
     if (!hash) return null;
     const parts = hash.split("/");
     const tab = parts[0];
     const validTabs: Tab[] = ["config", "state", "updates", "about"];
     if (validTabs.includes(tab as Tab)) {
-      const validStateSubs: StateSubTab[] = ["interfaces", "nftables", "dnsmasq", "qos", "switch", "services"];
+      const validStateSubs: StateSubTab[] = ["interfaces", "nftables", "dns", "qos", "switch", "services"];
+      // Support legacy dnsmasq/technitium hash routes
+      let stateSub: StateSubTab = "interfaces";
+      let dnsSub: DnsSubTab = "dnsmasq";
+      if (tab === "state" && parts[1]) {
+        if (parts[1] === "dnsmasq") {
+          stateSub = "dns";
+          dnsSub = "dnsmasq";
+        } else if (parts[1] === "technitium") {
+          stateSub = "dns";
+          dnsSub = "technitium";
+        } else if (parts[1] === "dns") {
+          stateSub = "dns";
+          const validDnsSubs: DnsSubTab[] = ["dnsmasq", "technitium"];
+          dnsSub = validDnsSubs.includes(parts[2] as DnsSubTab) ? parts[2] as DnsSubTab : "dnsmasq";
+        } else if (validStateSubs.includes(parts[1] as StateSubTab)) {
+          stateSub = parts[1] as StateSubTab;
+        }
+      }
       return {
         tab: tab as Tab,
         hook: tab === "state" && parts[1] === "nftables" ? (parts[2] ?? "input") : "input",
         configSub: tab === "config" && parts[1] === "spec" ? "spec" : "overview",
-        stateSub: tab === "state" && validStateSubs.includes(parts[1] as StateSubTab) ? parts[1] as StateSubTab : "interfaces",
+        stateSub,
+        dnsSub,
       };
     }
     return null;
@@ -289,11 +340,51 @@
     subnet_ipv6: string;
     egress_ipv4: string;
     egress_ipv6: string;
-    tcp_accept: string;
-    udp_accept: string;
+    tcp_accept: number[];
+    udp_accept: number[];
     dhcp: boolean;
     dhcpv6: boolean;
     iperf: boolean;
+  }
+
+  // Map well-known port+protocol combos to friendly service names
+  // Each entry is checked independently; use implicit name for the common protocol
+  const KNOWN_SERVICES: { label: string; port: number; proto: "tcp" | "udp" }[] = [
+    { label: "SSH",      port: 22,  proto: "tcp" },
+    { label: "DNS",      port: 53,  proto: "udp" },
+    { label: "DNS/tcp",  port: 53,  proto: "tcp" },
+    { label: "HTTP",     port: 80,  proto: "tcp" },
+    { label: "HTTPS",    port: 443, proto: "tcp" },
+  ];
+
+  function classifyPorts(tcpPorts: number[], udpPorts: number[], dhcp: boolean, dhcpv6: boolean, iperf: boolean): { services: string[]; remainingTcp: number[]; remainingUdp: number[] } {
+    const usedTcp = new Set<number>();
+    const usedUdp = new Set<number>();
+    const services: string[] = [];
+
+    // DHCP ports are already represented by the dhcp/dhcpv6 flags
+    if (dhcp) { usedUdp.add(67); usedUdp.add(68); }
+    if (dhcpv6) { usedUdp.add(546); usedUdp.add(547); }
+    if (iperf) { usedTcp.add(5201); usedUdp.add(5201); }
+
+    if (dhcp) services.push("DHCPv4");
+    if (dhcpv6) services.push("DHCPv6");
+    if (iperf) services.push("iperf3");
+
+    for (const svc of KNOWN_SERVICES) {
+      const present = svc.proto === "tcp" ? tcpPorts.includes(svc.port) : udpPorts.includes(svc.port);
+      if (present) {
+        services.push(svc.label);
+        if (svc.proto === "tcp") usedTcp.add(svc.port);
+        else usedUdp.add(svc.port);
+      }
+    }
+
+    return {
+      services,
+      remainingTcp: tcpPorts.filter((p) => !usedTcp.has(p)),
+      remainingUdp: udpPorts.filter((p) => !usedUdp.has(p)),
+    };
   }
 
   function getVlanOverviews(): VlanOverview[] {
@@ -307,8 +398,8 @@
         subnet_ipv6: v.ipv6?.subnet ?? "",
         egress_ipv4: (v.ipv4?.egress ?? []).join(", "),
         egress_ipv6: (v.ipv6?.egress ?? []).join(", "),
-        tcp_accept: (v.firewall?.tcp_accept ?? []).join(", "),
-        udp_accept: (v.firewall?.udp_accept ?? []).join(", "),
+        tcp_accept: (v.firewall?.tcp_accept ?? []) as number[],
+        udp_accept: (v.firewall?.udp_accept ?? []) as number[],
         dhcp: v.dhcp != null,
         dhcpv6: v.dhcpv6 != null,
         iperf: v.iperf_enabled === true,
@@ -357,7 +448,7 @@
 
   const tabs: { id: Tab; label: string; condition: () => boolean }[] = [
     { id: "config", label: "Config", condition: () => true },
-    { id: "state", label: "State", condition: () => (data?.interfaces.length ?? 0) > 0 || (data?.nft_chains.length ?? 0) > 0 || dnsmasqData != null || qosData != null || data?.switch != null || servicesData != null },
+    { id: "state", label: "State", condition: () => (data?.interfaces.length ?? 0) > 0 || (data?.nft_chains.length ?? 0) > 0 || dnsmasqData != null || technitiumData != null || technitiumError != null || qosData != null || data?.switch != null || servicesData != null },
     { id: "updates", label: "Updates", condition: () => updatesData != null },
     { id: "about", label: "About", condition: () => aboutData != null },
   ];
@@ -365,10 +456,15 @@
   const stateSubTabs: { id: StateSubTab; label: string; condition: () => boolean }[] = [
     { id: "interfaces", label: "Interfaces", condition: () => (data?.interfaces.length ?? 0) > 0 },
     { id: "nftables", label: "Netfilter", condition: () => (data?.nft_chains.length ?? 0) > 0 },
-    { id: "dnsmasq", label: "Dnsmasq", condition: () => dnsmasqData != null },
+    { id: "dns", label: "DNS", condition: () => dnsmasqData != null || technitiumData != null || technitiumError != null },
     { id: "qos", label: "QoS", condition: () => qosData != null },
     { id: "switch", label: "Switch", condition: () => data?.switch != null },
     { id: "services", label: "Services", condition: () => servicesData != null },
+  ];
+
+  const dnsSubTabs: { id: DnsSubTab; label: string; condition: () => boolean }[] = [
+    { id: "dnsmasq", label: "Dnsmasq", condition: () => dnsmasqData != null },
+    { id: "technitium", label: "Technitium", condition: () => technitiumData != null || technitiumError != null },
   ];
 
   function formatUptime(seconds: number): string {
@@ -497,6 +593,7 @@
           activeTab = saved.tab;
           configSubTab = saved.configSub;
           stateSubTab = saved.stateSub;
+          dnsSubTab = saved.dnsSub;
           if (saved.tab === "state" && saved.stateSub === "nftables") {
             selectHook(saved.hook);
           } else {
@@ -588,6 +685,32 @@
     } catch {}
   }
 
+  async function fetchTechnitium() {
+    try {
+      const res = await fetch("/api/technitium", { credentials: "include" });
+      if (res.ok) {
+        const body = await res.json();
+        const d = body.data ?? null;
+        if (d?.error) {
+          technitiumError = d.error;
+          technitiumData = null;
+        } else if (d) {
+          technitiumData = d;
+          technitiumError = null;
+        } else {
+          technitiumError = "no data returned";
+          technitiumData = null;
+        }
+      } else {
+        technitiumError = `HTTP ${res.status}`;
+        technitiumData = null;
+      }
+    } catch (e) {
+      technitiumError = String(e);
+      technitiumData = null;
+    }
+  }
+
   async function fetchServices() {
     try {
       const res = await fetch("/api/services", { credentials: "include" });
@@ -623,12 +746,13 @@
     fetchAbout();
     fetchQos();
     fetchDnsmasq();
+    fetchTechnitium();
     fetchServices();
     fetchUpdates();
     fetchStatus();
     const interval = setInterval(() => {
       if (!connected) return;
-      fetchStatus(); fetchQos(); fetchDnsmasq(); fetchServices();
+      fetchStatus(); fetchQos(); fetchDnsmasq(); fetchTechnitium(); fetchServices();
     }, 15000);
 
     // SSE with reconnection logic
@@ -638,7 +762,7 @@
     let retryDelay = 2000;
 
     function fetchAll() {
-      fetchStatus(); fetchConfig(); fetchQos(); fetchDnsmasq(); fetchServices(); fetchUpdates(); fetchAbout();
+      fetchStatus(); fetchConfig(); fetchQos(); fetchDnsmasq(); fetchTechnitium(); fetchServices(); fetchUpdates(); fetchAbout();
     }
 
     function scheduleReconnect(delay: number) {
@@ -698,6 +822,7 @@
         activeTab = saved.tab;
         configSubTab = saved.configSub;
         stateSubTab = saved.stateSub;
+        dnsSubTab = saved.dnsSub;
         if (saved.tab === "state" && saved.stateSub === "nftables") {
           selectHook(saved.hook);
         }
@@ -799,8 +924,8 @@
 {:else}
 <div class="min-h-screen px-4 py-2 md:px-8 md:py-3 max-w-6xl mx-auto space-y-3">
   <!-- Title bar with uptime -->
-  <div class="flex items-baseline justify-between">
-    <h1 class="text-3xl font-bold tracking-tight">nifty-filter
+  <div class="flex items-baseline justify-between select-none">
+    <h1 class="text-3xl font-bold tracking-tight"><!-- svelte-ignore a11y_no_static_element_interactions --><span class="cursor-pointer hover:text-muted-foreground transition-colors" onclick={() => { activeTab = "config"; configSubTab = "overview"; updateHash(); }}>nifty-filter</span>
       {#if configJson?.hostname}
         <span class="text-lg font-normal text-muted-foreground ml-2">{configJson.hostname}</span>
       {/if}
@@ -954,7 +1079,7 @@
                           <th class="py-2 pr-4">IPv4 Subnet</th>
                           <th class="py-2 pr-4">IPv6 Subnet</th>
                           <th class="py-2 pr-4">Egress</th>
-                          <th class="py-2">Services</th>
+                          <th class="py-2" title="Services reachable on the router from this VLAN">Router Services</th>
                         </tr>
                       </thead>
                       <tbody class="font-mono">
@@ -974,11 +1099,18 @@
                               {/if}
                             </td>
                             <td class="py-2 text-xs">
-                              {#if vlan.dhcp}<span class="text-green-400 mr-2">DHCPv4</span>{/if}
-                              {#if vlan.dhcpv6}<span class="text-green-400 mr-2">DHCPv6</span>{/if}
-                              {#if vlan.iperf}<span class="text-green-400 mr-2">iperf3</span>{/if}
-                              {#if vlan.tcp_accept}<span class="mr-2"><span class="text-muted-foreground">TCP:</span> <span class="text-amber-300">{vlan.tcp_accept}</span></span>{/if}
-                              {#if vlan.udp_accept}<span><span class="text-muted-foreground">UDP:</span> <span class="text-amber-300">{vlan.udp_accept}</span></span>{/if}
+                              {#if true}
+                                {@const classified = classifyPorts(vlan.tcp_accept, vlan.udp_accept, vlan.dhcp, vlan.dhcpv6, vlan.iperf)}
+                                {#each classified.services as svc}
+                                  <span class="inline-block rounded-full bg-green-900/50 text-green-400 px-2 py-0.5 mr-1 mb-0.5 text-xs">{svc}</span>
+                                {/each}
+                                {#if classified.remainingTcp.length > 0}
+                                  <span class="inline-block rounded-full bg-amber-900/50 text-amber-300 px-2 py-0.5 mr-1 mb-0.5 text-xs">TCP: {classified.remainingTcp.join(", ")}</span>
+                                {/if}
+                                {#if classified.remainingUdp.length > 0}
+                                  <span class="inline-block rounded-full bg-amber-900/50 text-amber-300 px-2 py-0.5 mr-1 mb-0.5 text-xs">UDP: {classified.remainingUdp.join(", ")}</span>
+                                {/if}
+                              {/if}
                             </td>
                           </tr>
                         {/each}
@@ -1185,7 +1317,25 @@
           </Card.Root>
         {/if}
 
-        {:else if stateSubTab === "dnsmasq" && dnsmasqData}
+        {:else if stateSubTab === "dns"}
+        <!-- DNS sub-tabs -->
+        <div class="flex gap-1 border-b border-border/50 mb-4">
+          {#each dnsSubTabs as sub}
+            {#if sub.condition()}
+              <button
+                class="px-3 py-1.5 text-sm font-medium transition-colors {dnsSubTab === sub.id
+                  ? 'border-b-2 border-primary text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'}"
+                onclick={() => { dnsSubTab = sub.id; updateHash(); }}
+              >
+                {sub.label}
+              </button>
+            {/if}
+          {/each}
+        </div>
+
+        {#if dnsSubTab === "dnsmasq" && dnsmasqData}
+        <p class="text-sm text-muted-foreground mb-4">Per-VLAN DNS service offered via DHCP to all clients.</p>
         <div class="space-y-4">
           <!-- Upstream DNS -->
           {#if dnsmasqData.upstream_dns.length > 0}
@@ -1322,6 +1472,108 @@
           </Card.Root>
           {/if}
         </div>
+
+        {:else if dnsSubTab === "technitium"}
+        <p class="text-sm text-muted-foreground mb-4">Caching resolver and forwarder, authoritative for local zones.</p>
+        {#if technitiumError}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title class="text-red-400">Technitium Unavailable</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <p class="text-red-400 text-sm font-mono">{technitiumError}</p>
+            </Card.Content>
+          </Card.Root>
+        {:else if technitiumData}
+        <div class="space-y-4">
+          <!-- Forwarder Configuration -->
+          {#if technitiumData.forwarders}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>Forwarder Configuration</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                  <span class="text-muted-foreground">Forwarders</span>
+                  <div class="flex flex-wrap gap-2 mt-1">
+                    {#each technitiumData.forwarders.forwarders as server}
+                      <span class="font-mono bg-muted px-2 py-1 rounded">{server}</span>
+                    {/each}
+                    {#if technitiumData.forwarders.forwarders.length === 0}
+                      <span class="text-muted-foreground font-mono">none (recursive resolver)</span>
+                    {/if}
+                  </div>
+                </div>
+                <div>
+                  <span class="text-muted-foreground">Protocol</span>
+                  <p class="font-mono">{technitiumData.forwarders.forwarder_protocol}</p>
+                </div>
+                <div>
+                  <span class="text-muted-foreground">Concurrency</span>
+                  <p class="font-mono">{technitiumData.forwarders.forwarderConcurrency}</p>
+                </div>
+                <div>
+                  <span class="text-muted-foreground">Concurrent Forwarding</span>
+                  <p class="{technitiumData.forwarders.concurrentForwarding ? 'text-green-400' : 'text-zinc-500'}">{technitiumData.forwarders.concurrentForwarding ? "Enabled" : "Disabled"}</p>
+                </div>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+
+          <!-- Zones -->
+          {#each technitiumData.zones as zone}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>
+                <span class="font-mono">{zone.name}</span>
+                <span class="text-muted-foreground text-xs font-normal ml-2">{zone.type}</span>
+              </Card.Title>
+            </Card.Header>
+            <Card.Content>
+              {#if zone.records.length > 0}
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="py-2 pr-4">Name</th>
+                      <th class="py-2 pr-4">Type</th>
+                      <th class="py-2 pr-4">TTL</th>
+                      <th class="py-2">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody class="font-mono">
+                    {#each zone.records as record}
+                      <tr class="border-b border-border/50">
+                        <td class="py-2 pr-4 font-semibold">{record.name}</td>
+                        <td class="py-2 pr-4">
+                          <span class="{record.type === 'A' || record.type === 'AAAA' ? 'text-cyan-400' : record.type === 'CNAME' ? 'text-purple-400' : record.type === 'NS' ? 'text-blue-400' : record.type === 'SOA' ? 'text-zinc-500' : 'text-amber-400'}">{record.type}</span>
+                        </td>
+                        <td class="py-2 pr-4 text-muted-foreground">{record.ttl}</td>
+                        <td class="py-2 break-all">{record.value}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+              {:else}
+                <p class="text-muted-foreground text-sm">No records in this zone.</p>
+              {/if}
+            </Card.Content>
+          </Card.Root>
+          {/each}
+
+          {#if technitiumData.zones.length === 0}
+          <Card.Root>
+            <Card.Content class="py-4">
+              <p class="text-muted-foreground text-sm">No zones configured in Technitium.</p>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+        </div>
+        {/if}
+        {/if}
 
         {:else if stateSubTab === "qos" && qosData}
         {#if !qosData.configured && !qosData.active}

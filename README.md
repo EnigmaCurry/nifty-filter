@@ -151,7 +151,7 @@ of both also work.
 If you are rebuilding, tear down the old VM first:
 
 ```bash
-just pve-destroy pve-router 100 nifty-filter
+just pve-destroy pve-router 101 nifty-filter
 ```
 
 ### 2. Create and boot the VM
@@ -164,7 +164,7 @@ just pve-install pve-router
 ```
 
 The wizard will prompt for:
-- **VM ID** — defaults to the lowest unused ID (starting at 100)
+- **VM ID** — defaults to the lowest unused ID (starting at 101)
 - **VM name** — defaults to `nifty-filter`
 - **WAN NIC** — choose virtual (bridge) or PCI passthrough
 - **LAN NIC** — same choice

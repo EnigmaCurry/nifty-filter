@@ -54,27 +54,53 @@ wan {
   #]
 }
 
-# DNS resolver: dnsmasq forwards queries to Technitium on the infra VLAN.
-# Technitium serves as the primary recursive/authoritative DNS server.
-# Fallback upstream (1.1.1.1) is used when Technitium is unavailable (e.g. during boot).
-# Web admin UI: https://10.99.2.10 (via Traefik)
-dns {
-  upstream = ["10.99.2.10", "1.1.1.1"]
-}
-
 # Services configuration for the infrastructure VM (nifty-service-monitor).
 # The service monitor polls /api/services-config and applies these settings.
 services {
-  technitium {
-    domain         = "dns.infra.lan"
-    address        = "10.99.2.10"  # default if omitted
-    admin_password = "changeme"
+  host {
+    ip_address = "10.99.2.2"
+    domain     = "nifty.internal"
+  }
+
+  # Traefik reverse proxy routes for services on the infra VM.
+  # Each route creates a Host(`<name>.<domain>`) rule in Traefik.
+  # allow_from is required — routes without it are not exposed.
+  traefik {
+    route "dns" {
+      backend    = "http://127.0.0.1:5380"
+      allow_from = ["10.99.2.0/24", "10.99.10.0/24"]
+    }
+  }
+
+  dns {
+    # Dnsmasq on the router is the forwarding DNS resolver for all VLAN clients.
+    # Dnsmasq forwards to Technitium, running on the infra-services VM.
+    # ---
+    # Set the dnsmasq upstream DNS to include both technitium (10.99.2.2) and
+    # a fallback for when technitium is unavailable/booting (1.1.1.1):
+    upstream       = ["10.99.2.2", "1.1.1.1"]
+    viewer_password = "changeme"
+
+    # Forwarders: further upstream DNS servers for Technitium to query.
+    # If empty, Technitium acts as a recursive resolver using root hints.
+    forwarders          = ["1.1.1.1", "1.0.0.1"]
+    forwarder_protocol  = "tls"   # udp, tcp, tls, https, quic
+    forwarder_concurrency = 2     # 1-10, used when multiple forwarders
+
+    # Define all of your extra zones here
+    zone "nifty.internal" {
+      A = {
+        "@" = "10.99.2.2"
+        dns = "10.99.2.2"
+        ntp = "10.99.2.2"
+      }
+    }
   }
 }
 
 # --- VLAN 2: Infrastructure ---
 # Services VM (NTP, DNS, monitoring, etc.) lives here.
-# Runs Technitium DNS (10.99.2.10:53) and Chrony NTP (10.99.2.10:123).
+# Runs Technitium DNS (10.99.2.2:53) and Chrony NTP (10.99.2.2:123).
 # dnsmasq on the router forwards DNS queries to Technitium.
 # Uses a dedicated interface (virtual NIC on an isolated bridge) instead of
 # a trunk subinterface, so the services VM is self-contained on the hypervisor.
@@ -96,32 +122,25 @@ vlan "infra" {
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable"]
     tcp_accept  = [22, 53, 80, 443, 3000] # 3000 = dashboard (services-config API)
-    udp_accept  = [53, 67, 68]
-  }
-
-  dhcp {
-    pool_start = "10.99.2.100"
-    pool_end   = "10.99.2.250"
-    router     = "10.99.2.1"
-    dns        = "10.99.2.10"
+    udp_accept  = [53]
   }
 
   # Allow NTP (chrony) and Traefik (HTTP/HTTPS) access from all VLANs
   allow_from "trusted" {
-    tcp = ["10.99.2.10:80", "10.99.2.10:443"]
-    udp = ["10.99.2.10:123"]
+    tcp = ["10.99.2.2:80", "10.99.2.2:443"]
+    udp = ["10.99.2.2:123"]
   }
   allow_from "iot" {
-    tcp = ["10.99.2.10:80", "10.99.2.10:443"]
-    udp = ["10.99.2.10:123"]
+    tcp = ["10.99.2.2:80", "10.99.2.2:443"]
+    udp = ["10.99.2.2:123"]
   }
   allow_from "guest" {
-    tcp = ["10.99.2.10:80", "10.99.2.10:443"]
-    udp = ["10.99.2.10:123"]
+    tcp = ["10.99.2.2:80", "10.99.2.2:443"]
+    udp = ["10.99.2.2:123"]
   }
   allow_from "lab" {
-    tcp = ["10.99.2.10:80", "10.99.2.10:443"]
-    udp = ["10.99.2.10:123"]
+    tcp = ["10.99.2.2:80", "10.99.2.2:443"]
+    udp = ["10.99.2.2:123"]
   }
 }
 
@@ -154,7 +173,7 @@ vlan "trusted" {
     pool_end   = "10.99.10.250"
     router     = "10.99.10.1"
     dns        = "10.99.10.1"
-    ntp        = "10.99.2.10"
+    ntp        = "10.99.2.2"
 
     # host {
     #   mac      = "aa:bb:cc:dd:ee:01"
@@ -197,7 +216,7 @@ vlan "iot" {
     pool_end   = "10.99.20.250"
     router     = "10.99.20.1"
     dns        = "10.99.20.1"
-    ntp        = "10.99.2.10"
+    ntp        = "10.99.2.2"
   }
 }
 
@@ -222,7 +241,7 @@ vlan "guest" {
     pool_end   = "10.99.30.250"
     router     = "10.99.30.1"
     dns        = "10.99.30.1"
-    ntp        = "10.99.2.10"
+    ntp        = "10.99.2.2"
   }
 }
 
@@ -252,7 +271,7 @@ vlan "lab" {
     pool_end   = "10.99.40.250"
     router     = "10.99.40.1"
     dns        = "10.99.40.1"
-    ntp        = "10.99.2.10"
+    ntp        = "10.99.2.2"
   }
 
   dhcpv6 {
@@ -288,65 +307,65 @@ qos {
 # The NixOS module extracts these settings as env vars for sodola-switch.
 
 switch {
-#   url        = "http://192.168.2.1"
-#   user       = "admin"
-#   pass       = "admin"
-#   mgmt_iface = "trunk"
-#   router_ip  = "192.168.2.2/24"
-#
-#   # Per-port configuration (Sodola SL-SWTGW218AS: ports 1-8 RJ45, port 9 SFP+)
-#   # VLANs not listed on a port are not members of that port.
-#   port "1" {
-#     pvid   = 10
-#     accept = "untagged-only"
-#     vlans { untagged = [10] }
-#   }
-#   port "2" {
-#     pvid   = 20
-#     accept = "untagged-only"
-#     vlans { untagged = [20] }
-#   }
-#   port "3" {
-#     pvid   = 30
-#     accept = "untagged-only"
-#     vlans { untagged = [30] }
-#   }
-#   port "4" {
-#     pvid   = 30
-#     accept = "untagged-only"
-#     vlans { untagged = [30] }
-#   }
-#   port "5" {
-#     pvid   = 40
-#     accept = "untagged-only"
-#     vlans { untagged = [40] }
-#   }
-#   port "6" {
-#     pvid   = 40
-#     accept = "untagged-only"
-#     vlans { untagged = [40] }
-#   }
-#   port "7" {
-#     pvid   = 40
-#     accept = "tagged-only"
-#     label  = "secondary switch"
-#     vlans {
-#       tagged = [20, 40]
-#     }
-#   }
-#   port "8" {
-#     pvid   = 1
-#     accept = "all"
-#     label  = "management"
-#     vlans { untagged = [1] }
-#   }
-#   port "9" {
-#     pvid   = 1
-#     accept = "all"
-#     label  = "trunk/uplink"
-#     vlans {
-#       untagged = [1]
-#       tagged   = [10, 20, 30, 40]
-#     }
-#   }
+  url        = "http://192.168.2.1"
+  user       = "admin"
+  pass       = "admin"
+  mgmt_iface = "trunk"
+  router_ip  = "192.168.2.2/24"
+
+  # Per-port configuration (Sodola SL-SWTGW218AS: ports 1-8 RJ45, port 9 SFP+)
+  # VLANs not listed on a port are not members of that port.
+  port "1" {
+    pvid   = 10
+    accept = "untagged-only"
+    vlans { untagged = [10] }
+  }
+  port "2" {
+    pvid   = 20
+    accept = "untagged-only"
+    vlans { untagged = [20] }
+  }
+  port "3" {
+    pvid   = 30
+    accept = "untagged-only"
+    vlans { untagged = [30] }
+  }
+  port "4" {
+    pvid   = 30
+    accept = "untagged-only"
+    vlans { untagged = [30] }
+  }
+  port "5" {
+    pvid   = 40
+    accept = "untagged-only"
+    vlans { untagged = [40] }
+  }
+  port "6" {
+    pvid   = 40
+    accept = "untagged-only"
+    vlans { untagged = [40] }
+  }
+  port "7" {
+    pvid   = 40
+    accept = "tagged-only"
+    label  = "secondary switch"
+    vlans {
+      tagged = [20, 40]
+    }
+  }
+  port "8" {
+    pvid   = 1
+    accept = "all"
+    label  = "management"
+    vlans { untagged = [1] }
+  }
+  port "9" {
+    pvid   = 1
+    accept = "all"
+    label  = "trunk/uplink"
+    vlans {
+      untagged = [1]
+      tagged   = [10, 20, 30, 40]
+    }
+  }
 }

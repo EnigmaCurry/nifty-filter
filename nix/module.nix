@@ -56,6 +56,10 @@ in
 
   config = mkIf cfg.enable (lib.mkMerge [
     {
+      # Read-only access group for the HCL config file
+      users.groups.nifty-config = {};
+      users.users.admin.extraGroups = [ "nifty-config" ];
+
       # Disable NixOS's built-in firewall (we replace it entirely)
       networking.firewall.enable = false;
 

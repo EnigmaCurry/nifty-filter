@@ -1,5 +1,4 @@
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind};
-use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
@@ -11,30 +10,6 @@ pub fn config_file_path() -> PathBuf {
     std::env::var("NIFTY_CONFIG_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/var/nifty-filter/nifty-filter.hcl"))
-}
-
-pub async fn read_boot_sha() -> String {
-    // Read the boot-time SHA from the file written by nifty-config-sha.service.
-    // Falls back to computing it from the config file if the boot SHA file doesn't exist
-    // (e.g. running outside NixOS).
-    let boot_sha_path = std::env::var("NIFTY_CONFIG_BOOT_SHA_FILE")
-        .unwrap_or_else(|_| "/run/nifty-filter/config-boot-sha".to_string());
-    if let Ok(contents) = tokio::fs::read_to_string(&boot_sha_path).await {
-        let sha = contents.trim().to_string();
-        if !sha.is_empty() {
-            return sha;
-        }
-    }
-    // Fallback: compute from current config file
-    compute_config_sha().await
-}
-
-pub async fn compute_config_sha() -> String {
-    let path = config_file_path();
-    match tokio::fs::read(&path).await {
-        Ok(contents) => format!("{:x}", Sha256::digest(&contents)),
-        Err(_) => String::new(),
-    }
 }
 
 pub fn spawn_config_watcher(tx: broadcast::Sender<()>) {

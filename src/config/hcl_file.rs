@@ -150,12 +150,6 @@ pub fn format_hcl(config: &HclConfig) -> String {
     write_wan(&mut w, &config.wan);
     w.blank();
 
-    // dns
-    if let Some(ref dns) = config.dns {
-        write_dns(&mut w, dns);
-        w.blank();
-    }
-
     // vlans (sorted by id)
     let mut vlans: Vec<(&String, &VlanHclConfig)> = config.vlan.iter().collect();
     vlans.sort_by_key(|(_, v)| v.id);
@@ -235,12 +229,6 @@ fn write_wan(w: &mut HclWriter, wan: &WanConfig) {
         }
         w.string_array("udp_forward", &wan.udp_forward);
     }
-    w.close();
-}
-
-fn write_dns(w: &mut HclWriter, dns: &DnsConfig) {
-    w.open("dns");
-    w.string_array("upstream", &dns.upstream);
     w.close();
 }
 
@@ -479,9 +467,6 @@ wan {
   enable_ipv6 = true
   tcp_accept = [22, 80]
 }
-dns {
-  upstream = ["1.1.1.1"]
-}
 vlan "trusted" {
   id = 10
   ipv4 {
@@ -523,7 +508,6 @@ vlan "iot" {
             .as_ref()
             .unwrap();
         assert_eq!(dhcp.pool_start, "10.99.10.100");
-        assert_eq!(reparsed.dns.unwrap().upstream, vec!["1.1.1.1"]);
     }
 
     #[test]

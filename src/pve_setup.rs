@@ -202,8 +202,8 @@ pub fn run(pve_host: &str) {
         .filter_map(|l| l.trim().parse().ok())
         .collect();
 
-    // Find lowest unused ID starting at 100
-    let mut default_vmid: u32 = 100;
+    // Find lowest unused ID starting at 101
+    let mut default_vmid: u32 = 101;
     while used_ids.contains(&default_vmid) {
         default_vmid += 1;
     }

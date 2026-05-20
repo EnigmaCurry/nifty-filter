@@ -8,6 +8,10 @@
 
 { pkgs, nifty-filter, configDir, hclFile, ... }:
 
+let
+  acl = pkgs.acl;
+in
+
 {
   # Seed the default config on first boot if it doesn't exist
   systemd.services.nifty-filter-init = {
@@ -21,9 +25,15 @@
     };
     script = ''
       mkdir -p ${configDir}
+      chown root:wheel ${configDir}
+      chmod 0770 ${configDir}
+      ${acl}/bin/setfacl -m g:nifty-config:rx ${configDir}
       cp ${../default-nifty-filter.hcl} ${hclFile}
-      chmod 0600 ${hclFile}
+      chmod 0660 ${hclFile}
+      chown root:wheel ${hclFile}
+      ${acl}/bin/setfacl -m g:nifty-config:r ${hclFile}
       mkdir -p ${configDir}/ssh
+      chmod 0700 ${configDir}/ssh
     '';
   };
 
@@ -56,9 +66,8 @@
   # Set hostname from HCL config at boot
   systemd.services.nifty-hostname = {
     description = "Set hostname from nifty-filter HCL config";
-    wantedBy = [ "sysinit.target" ];
-    before = [ "network-pre.target" ];
-    unitConfig.DefaultDependencies = false;
+    wantedBy = [ "multi-user.target" ];
+    after = [ "nifty-filter-init.service" "local-fs.target" ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
@@ -77,13 +86,14 @@
   # Generate interface rename rules (.link files) from HCL config at boot
   systemd.services.nifty-link = {
     description = "Generate interface rename rules from HCL config";
-    wantedBy = [ "sysinit.target" ];
-    before = [ "systemd-udevd.service" "systemd-networkd.service" ];
-    unitConfig.DefaultDependencies = false;
+    wantedBy = [ "multi-user.target" ];
+    after = [ "nifty-filter-init.service" "local-fs.target" ];
+    before = [ "nifty-network.service" "nifty-filter.service" ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
     };
+    path = [ pkgs.systemd ];
     script = ''
       if [ ! -f ${hclFile} ]; then
         echo "No HCL config found, skipping link generation"
@@ -91,6 +101,8 @@
       fi
       mkdir -p /run/systemd/network
       ${nifty-filter}/bin/nifty-filter generate linkfiles --config ${hclFile} --output-dir /run/systemd/network
+      udevadm trigger --subsystem-match=net --action=add
+      udevadm settle
     '';
   };
 }

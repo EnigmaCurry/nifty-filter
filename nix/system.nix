@@ -149,7 +149,7 @@
 
   # --- Minimal packages ---
   environment.systemPackages = with pkgs; [
-    (writeShellScriptBin "nifty-config" ''exec nifty-filter config "$@"'')
+    (writeShellScriptBin "nifty-config" ''exec sudo nifty-filter config "$@"'')
     (writeShellScriptBin "nifty-maintenance" ''exec nifty-filter maintenance "$@"'')
     (writeShellScriptBin "nifty-upgrade" ''exec nifty-filter upgrade "$@"'')
     git

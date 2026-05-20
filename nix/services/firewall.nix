@@ -14,7 +14,7 @@
   systemd.services.nifty-filter = {
     description = "Apply nifty-filter nftables ruleset";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-pre.target" "nifty-filter-init.service" ];
+    after = [ "network-pre.target" "nifty-filter-init.service" "nifty-network.service" ];
     before = [ "network.target" ];
     wants = [ "network-pre.target" ];
 

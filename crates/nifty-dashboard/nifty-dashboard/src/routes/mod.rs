@@ -32,6 +32,7 @@ pub mod qos;
 pub mod services;
 pub mod services_config;
 pub mod status;
+pub mod technitium;
 pub mod updates;
 pub mod whoami;
 

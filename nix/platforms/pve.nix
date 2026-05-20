@@ -44,6 +44,153 @@
     '';
   };
 
+  # Auto-populate the default HCL with real MAC addresses from fw_cfg.
+  # Runs once after nifty-filter-init seeds the default config, patching
+  # placeholder MACs with real ones discovered from fw_cfg + PCI bus order.
+  systemd.services.nifty-pve-init-config = {
+    description = "Populate HCL config with real MACs from fw_cfg";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "nifty-filter-init.service" "systemd-udevd-settle.service" ];
+    before = [ "nifty-link.service" "nifty-network.service" "nifty-filter.service" ];
+    unitConfig.ConditionPathExists = "!/var/nifty-filter/.pve-init-done";
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    path = [ pkgs.iproute2 pkgs.gnugrep pkgs.gnused pkgs.coreutils pkgs.gawk ];
+    script = ''
+      HCL="/var/nifty-filter/nifty-filter.hcl"
+      if [ ! -f "$HCL" ]; then
+        echo "No HCL file found, skipping"
+        exit 0
+      fi
+
+      # Read fw_cfg
+      FWCFG="/sys/firmware/qemu_fw_cfg/by_name/opt/nifty"
+      if [ ! -d "$FWCFG" ]; then
+        echo "No fw_cfg data, skipping"
+        touch /var/nifty-filter/.pve-init-done
+        exit 0
+      fi
+
+      MGMT_MAC=""
+      NIC_ROLES=""
+      [ -f "$FWCFG/mgmt_mac/raw" ] && MGMT_MAC=$(cat "$FWCFG/mgmt_mac/raw" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+      [ -f "$FWCFG/nic_roles/raw" ] && NIC_ROLES=$(cat "$FWCFG/nic_roles/raw" | tr -d '[:space:]')
+
+      if [ -z "$NIC_ROLES" ]; then
+        echo "No nic_roles in fw_cfg, skipping"
+        touch /var/nifty-filter/.pve-init-done
+        exit 0
+      fi
+
+      echo "fw_cfg: mgmt_mac=$MGMT_MAC nic_roles=$NIC_ROLES"
+
+      # Split roles (colon-separated)
+      IFS=':' read -ra ROLES <<< "$NIC_ROLES"
+
+      # Build MAC map: first check fw_cfg for per-role MACs (virtual NICs),
+      # then discover PCI NICs by bus address for any missing
+      declare -A ROLE_MAC
+      NEED_PCI=()
+      for role in "''${ROLES[@]}"; do
+        if [ -f "$FWCFG/''${role}_mac/raw" ]; then
+          MAC=$(cat "$FWCFG/''${role}_mac/raw" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+          ROLE_MAC[$role]="$MAC"
+          echo "  $role: $MAC (from fw_cfg)"
+        else
+          NEED_PCI+=("$role")
+        fi
+      done
+
+      # Discover PCI NICs (sorted by bus address) for roles without fw_cfg MACs
+      if [ ''${#NEED_PCI[@]} -gt 0 ]; then
+        PCI_NICS=()
+        for iface in /sys/class/net/*/device; do
+          [ -e "$iface" ] || continue
+          IFNAME=$(basename $(dirname "$iface"))
+          [ "$IFNAME" = "lo" ] && continue
+          MAC=$(ip -o link show "$IFNAME" 2>/dev/null | grep -oP 'link/ether \K[^ ]+' | tr '[:upper:]' '[:lower:]')
+          # Skip mgmt interface
+          [ "$MAC" = "$MGMT_MAC" ] && continue
+          # Skip any interface already assigned from fw_cfg
+          SKIP=""
+          for assigned_mac in "''${ROLE_MAC[@]}"; do
+            [ "$MAC" = "$assigned_mac" ] && SKIP=1 && break
+          done
+          [ -n "$SKIP" ] && continue
+          BUS=$(readlink -f "$iface" | grep -oP '/[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]/' | tail -1 | tr -d '/')
+          # Use pipe delimiter to avoid MAC colon conflicts
+          PCI_NICS+=("$BUS|$IFNAME|$MAC")
+        done
+        # Sort by PCI bus address
+        IFS=$'\n' SORTED=($(sort <<< "''${PCI_NICS[*]}")); unset IFS
+
+        for i in "''${!NEED_PCI[@]}"; do
+          if [ "$i" -lt "''${#SORTED[@]}" ]; then
+            role="''${NEED_PCI[$i]}"
+            MAC=$(echo "''${SORTED[$i]}" | cut -d'|' -f3)
+            IFNAME=$(echo "''${SORTED[$i]}" | cut -d'|' -f2)
+            ROLE_MAC[$role]="$MAC"
+            echo "  $role: $MAC ($IFNAME, PCI)"
+          fi
+        done
+      fi
+
+      # Build new interfaces block
+      IFACES_FILE=$(mktemp)
+      echo "interfaces {" > "$IFACES_FILE"
+      for role in "''${ROLES[@]}"; do
+        MAC="''${ROLE_MAC[$role]:-}"
+        if [ -n "$MAC" ]; then
+          echo "  $role {" >> "$IFACES_FILE"
+          echo "    mac  = \"$MAC\"" >> "$IFACES_FILE"
+          echo "    name = \"$role\"" >> "$IFACES_FILE"
+          echo "  }" >> "$IFACES_FILE"
+        fi
+      done
+      if [ -n "$MGMT_MAC" ]; then
+        echo "  mgmt {" >> "$IFACES_FILE"
+        echo "    mac    = \"$MGMT_MAC\"" >> "$IFACES_FILE"
+        echo "    name   = \"mgmt\"" >> "$IFACES_FILE"
+        echo "    subnet = \"10.99.0.1/24\"" >> "$IFACES_FILE"
+        echo "  }" >> "$IFACES_FILE"
+      fi
+      echo "}" >> "$IFACES_FILE"
+
+      echo "New interfaces block:"
+      cat "$IFACES_FILE"
+
+      # Replace the interfaces block in HCL using awk
+      # Matches from "interfaces {" through the balanced closing "}"
+      awk -v replacement="$(cat "$IFACES_FILE")" '
+        /^(# Interfaces:|# To give|# and specify|# name you|# Find your)/ && !in_block { skipping_comments=1; next }
+        /^interfaces\s*\{/ {
+          in_block=1; depth=1
+          printf "%s\n", replacement
+          next
+        }
+        in_block {
+          if ($0 ~ /\{/) depth++
+          if ($0 ~ /\}/) depth--
+          if (depth == 0) { in_block=0 }
+          next
+        }
+        skipping_comments && /^[^#]/ { skipping_comments=0 }
+        skipping_comments { next }
+        { print }
+      ' "$HCL" > "$HCL.tmp"
+      mv "$HCL.tmp" "$HCL"
+      chmod 0660 "$HCL"
+      chown root:wheel "$HCL"
+      ${pkgs.acl}/bin/setfacl -m g:nifty-config:r "$HCL"
+      rm -f "$IFACES_FILE"
+
+      echo "HCL updated with real MACs"
+      touch /var/nifty-filter/.pve-init-done
+    '';
+  };
+
   # Bootstrap networking: configure mgmt interface from fw_cfg before
   # nifty-install has run. This ensures SSH access on first boot.
   # After nifty-install writes the env file, nifty-network takes over.
@@ -92,6 +239,9 @@
     '';
   };
 
+  # On PVE, nifty-link must wait for the HCL to be populated with real MACs
+  systemd.services.nifty-link.after = [ "nifty-pve-init-config.service" "systemd-udevd-settle.service" ];
+
   # No root password — console auto-logs in as admin, SSH is key-only
   users.users.root.hashedPassword = lib.mkForce "!";
 
@@ -114,7 +264,7 @@
       echo -e "\e[1;33m  nifty-filter PVE image — not yet configured\e[0m"
       echo ""
       echo "  Run the configuration wizard:"
-      echo "    nifty-install"
+      echo "    nifty-config"
       echo ""
     else
       echo ""
