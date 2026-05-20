@@ -107,6 +107,15 @@ table inet filter {
         ip6 saddr {{ vlan.subnet_ipv6 }} tcp dport {{ iperf_port }} accept comment "nf:Allow iperf3 (IPv6)"
         {% endif %}
         {% endif %}
+
+        {% if vlan.mdns_reflector %}
+        {% if enable_ipv4 && vlan.subnet_ipv4 != "" %}
+        udp dport 5353 ip daddr 224.0.0.251 accept comment "nf:Allow mDNS (IPv4)"
+        {% endif %}
+        {% if enable_ipv6 && vlan.subnet_ipv6 != "" %}
+        udp dport 5353 ip6 daddr ff02::fb accept comment "nf:Allow mDNS (IPv6)"
+        {% endif %}
+        {% endif %}
     }
     {% endfor %}
 

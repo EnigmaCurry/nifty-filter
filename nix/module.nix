@@ -89,5 +89,6 @@ in
     (import ./services/iperf.nix serviceArgs)
     (import ./services/dashboard.nix serviceArgs)
     (import ./services/sodola-switch.nix serviceArgs)
+    (import ./services/avahi.nix serviceArgs)
   ]);
 }

@@ -28,6 +28,7 @@ pub struct Vlan {
     pub bandwidth_upload_kbit: Option<u32>,
     pub bandwidth_download_kbit: Option<u32>,
     pub iperf_enabled: bool,
+    pub mdns_reflector: bool,
     pub dhcp_enabled: bool,
     pub dhcp_pool_start: String,
     pub dhcp_pool_end: String,

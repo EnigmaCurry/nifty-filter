@@ -98,7 +98,7 @@ enum Commands {
         config: String,
     },
 
-    /// Print a config value by key (wan-name, trunk-name, mgmt-name, wan-mac, trunk-mac, mgmt-mac, mgmt-subnet, enable-ipv6, dashboard-port, iperf-port)
+    /// Print a config value by key (wan-name, trunk-name, mgmt-name, wan-mac, trunk-mac, mgmt-mac, mgmt-subnet, enable-ipv6, dashboard-port, iperf-port, mdns-interfaces)
     Get {
         /// Path to the HCL config file
         #[arg(long, short)]
@@ -145,6 +145,15 @@ enum GenerateCommands {
     },
     /// Generate minimal DNS-only dnsmasq.conf (no HCL config needed)
     DnsmasqMinimal {
+        /// Output file path
+        #[arg(long, short = 'O')]
+        output: String,
+    },
+    /// Generate avahi-daemon.conf for mDNS reflection
+    Avahi {
+        /// Path to the HCL config file
+        #[arg(long, short)]
+        config: String,
         /// Output file path
         #[arg(long, short = 'O')]
         output: String,
@@ -555,6 +564,7 @@ impl RouterTemplate {
                 bandwidth_upload_kbit,
                 bandwidth_download_kbit,
                 iperf_enabled: vhcl.iperf_enabled,
+                mdns_reflector: vhcl.mdns_reflector,
                 dhcp_enabled,
                 dhcp_pool_start,
                 dhcp_pool_end,
@@ -859,6 +869,26 @@ fn app() {
                         .collect();
                     if names.is_empty() { None } else { Some(names.join(" ")) }
                 },
+                "mdns-interfaces" => {
+                    let trunk = hcl_config.interfaces.trunk_name();
+                    let vlan_aware = hcl_config.vlan_aware_switch;
+                    let mut ifaces: Vec<String> = Vec::new();
+                    let mut entries: Vec<_> = hcl_config.vlan.iter().collect();
+                    entries.sort_by_key(|(_, v)| v.id);
+                    for (name, v) in &entries {
+                        if v.mdns_reflector {
+                            let iface = if let Some(ref dedicated) = v.interface {
+                                dedicated.name.clone()
+                            } else if v.id == 1 && !vlan_aware {
+                                trunk.to_string()
+                            } else {
+                                name.to_string()
+                            };
+                            ifaces.push(iface);
+                        }
+                    }
+                    if ifaces.is_empty() { None } else { Some(ifaces.join(" ")) }
+                },
                 "switch-router-ip" => hcl_config.switch.as_ref().and_then(|s| s.router_ip.clone()),
                 "switch-mgmt-iface" => hcl_config.switch.as_ref().and_then(|s| s.mgmt_iface.clone()),
                 _ => {
@@ -894,6 +924,13 @@ fn app() {
             }
             GenerateCommands::DnsmasqMinimal { output } => {
                 if let Err(e) = generate::generate_dnsmasq_minimal(&output) {
+                    eprintln!("Error: {}", e);
+                    exit(1);
+                }
+            }
+            GenerateCommands::Avahi { config, output } => {
+                let hcl_config = load_hcl_config(&config);
+                if let Err(e) = generate::generate_avahi(&hcl_config, &output) {
                     eprintln!("Error: {}", e);
                     exit(1);
                 }
@@ -1497,5 +1534,73 @@ mod tests {
         assert!(rendered.contains("cake bandwidth 10000kbit diffserv4 nat wash"));
         assert!(rendered.contains("handle 0x10000 fw classid 1:2"));
         assert!(rendered.contains("classid 1:ffff htb rate 10gbit"));
+    }
+
+    #[test]
+    fn test_mdns_reflector_rules() {
+        let hcl = r#"
+            interfaces {
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
+            }
+            wan { enable_ipv4 = true }
+            vlan_aware_switch = true
+            vlan "trusted" {
+                id = 10
+                ipv4 { subnet = "10.10.0.1/24" }
+                firewall {
+                    tcp_accept = [22]
+                    udp_accept = [67, 68]
+                }
+                mdns_reflector = true
+            }
+            vlan "guest" {
+                id = 30
+                ipv4 { subnet = "10.30.0.1/24" }
+                firewall {
+                    udp_accept = [67, 68]
+                }
+            }
+        "#;
+        let config = parse_hcl(hcl).unwrap();
+        let tmpl = RouterTemplate::from_hcl(&config).unwrap();
+        let rendered = tmpl.render().unwrap();
+
+        // Trusted VLAN (mdns_reflector=true) should have mDNS rules
+        assert!(rendered.contains("udp dport 5353 ip daddr 224.0.0.251 accept"));
+        // Guest VLAN (no mdns_reflector) should NOT have mDNS rules
+        // Check that mDNS rule only appears once (in trusted chain, not guest)
+        assert_eq!(rendered.matches("Allow mDNS (IPv4)").count(), 1);
+    }
+
+    #[test]
+    fn test_mdns_reflector_dual_stack() {
+        let hcl = r#"
+            interfaces {
+                trunk { name = "trunk" }
+                wan   { name = "wan" }
+            }
+            wan {
+                enable_ipv4 = true
+                enable_ipv6 = true
+            }
+            vlan_aware_switch = true
+            vlan "trusted" {
+                id = 10
+                ipv4 { subnet = "10.10.0.1/24" }
+                ipv6 { subnet = "fd00:10::1/64" }
+                firewall {
+                    tcp_accept = [22]
+                    udp_accept = [67, 68]
+                }
+                mdns_reflector = true
+            }
+        "#;
+        let config = parse_hcl(hcl).unwrap();
+        let tmpl = RouterTemplate::from_hcl(&config).unwrap();
+        let rendered = tmpl.render().unwrap();
+
+        assert!(rendered.contains("udp dport 5353 ip daddr 224.0.0.251 accept"));
+        assert!(rendered.contains("udp dport 5353 ip6 daddr ff02::fb accept"));
     }
 }

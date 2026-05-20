@@ -155,7 +155,26 @@ vlan "infra" {
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable"]
     tcp_accept  = [22, 53, 80, 443] # 80/443 redirected to dashboard
-    udp_accept  = [53]
+    udp_accept  = [53, 67, 68]
+  }
+
+  dhcp {
+    pool_start = "10.99.2.100"
+    pool_end   = "10.99.2.250"
+    router     = "10.99.2.1"
+    dns        = "10.99.2.1"
+    ntp        = "10.99.2.2"
+
+    # host {
+    #   mac      = "aa:bb:cc:dd:ee:01"
+    #   ip       = "10.99.2.10"
+    #   hostname = "server1"
+    # }
+    # host {
+    #   mac      = "aa:bb:cc:dd:ee:02"
+    #   ip       = "10.99.2.11"
+    #   hostname = "nas"
+    # }
   }
 
   # Allow NTP (chrony) and Traefik (HTTP/HTTPS) access from all VLANs
@@ -182,6 +201,7 @@ vlan "infra" {
 # Full internet access + SSH to router
 vlan "trusted" {
   id = 10
+  mdns_reflector = true  # Reflect .local mDNS to other participating VLANs
 
   ipv4 {
     subnet = "10.99.10.1/24"
@@ -201,24 +221,12 @@ vlan "trusted" {
   }
 
   # DHCP config for dnsmasq - clients receive IP addresses from the range defined.
-  ## You may add static hosts by uncommenting the host subsection.
   dhcp {
     pool_start = "10.99.10.100"
     pool_end   = "10.99.10.250"
     router     = "10.99.10.1"
     dns        = "10.99.10.1"
     ntp        = "10.99.2.2"
-
-    # host {
-    #   mac      = "aa:bb:cc:dd:ee:01"
-    #   ip       = "10.99.10.10"
-    #   hostname = "server1"
-    # }
-    # host {
-    #   mac      = "aa:bb:cc:dd:ee:02"
-    #   ip       = "10.99.10.11"
-    #   hostname = "nas"
-    # }
   }
 }
 
@@ -229,6 +237,7 @@ vlan "trusted" {
 # Requires the qos block to be enabled.
 vlan "iot" {
   id = 20
+  mdns_reflector = true  # IoT devices discoverable from trusted VLAN
 
   # bandwidth {
   #   upload_mbps   = 5

@@ -384,6 +384,58 @@ pub fn generate_dnsmasq_minimal(output: &str) -> Result<(), String> {
     fs::write(output, content).map_err(|e| format!("Cannot write {}: {}", output, e))
 }
 
+/// Generate avahi-daemon.conf for mDNS reflection across participating VLANs.
+pub fn generate_avahi(config: &HclConfig, output: &str) -> Result<(), String> {
+    let path = Path::new(output);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
+    }
+
+    let trunk = config.interfaces.trunk_name();
+    let vlan_aware = config.vlan_aware_switch;
+    let mut ifaces: Vec<String> = Vec::new();
+    let mut entries: Vec<_> = config.vlan.iter().collect();
+    entries.sort_by_key(|(_, v)| v.id);
+    for (name, v) in &entries {
+        if v.mdns_reflector {
+            let iface = if let Some(ref dedicated) = v.interface {
+                dedicated.name.clone()
+            } else if v.id == 1 && !vlan_aware {
+                trunk.to_string()
+            } else {
+                name.to_string()
+            };
+            ifaces.push(iface);
+        }
+    }
+
+    if ifaces.is_empty() {
+        return Err("No VLANs have mdns_reflector enabled.".to_string());
+    }
+
+    let mut out = fs::File::create(path)
+        .map_err(|e| format!("Cannot create {}: {}", output, e))?;
+
+    writeln!(out, "# Generated from nifty-filter HCL config").ok();
+    writeln!(out, "[server]").ok();
+    writeln!(out, "use-ipv4=yes").ok();
+    writeln!(out, "use-ipv6=yes").ok();
+    writeln!(out, "allow-interfaces={}", ifaces.join(",")).ok();
+    writeln!(out, "enable-dbus=no").ok();
+    writeln!(out).ok();
+    writeln!(out, "[publish]").ok();
+    writeln!(out, "publish-addresses=no").ok();
+    writeln!(out, "publish-hinfo=no").ok();
+    writeln!(out, "publish-workstation=no").ok();
+    writeln!(out, "publish-domain=no").ok();
+    writeln!(out).ok();
+    writeln!(out, "[reflector]").ok();
+    writeln!(out, "enable-reflector=yes").ok();
+
+    Ok(())
+}
+
 fn write_file(dir: &Path, name: &str, content: &str) -> Result<(), String> {
     let path = dir.join(name);
     fs::write(&path, content).map_err(|e| format!("Cannot write {}: {}", path.display(), e))
@@ -767,6 +819,54 @@ vlan "trusted" {
 
         let content = fs::read_to_string(&output).unwrap();
         assert!(!content.contains("ntp-server"));
+    }
+
+    #[test]
+    fn test_generate_avahi_basic() {
+        let config = parse_test_config(r#"
+interfaces {
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
+}
+wan {}
+vlan_aware_switch = true
+vlan "trusted" {
+  id = 10
+  mdns_reflector = true
+}
+vlan "iot" {
+  id = 20
+  mdns_reflector = true
+}
+vlan "guest" {
+  id = 30
+}
+"#);
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("avahi-daemon.conf");
+        generate_avahi(&config, output.to_str().unwrap()).unwrap();
+        let content = fs::read_to_string(&output).unwrap();
+        assert!(content.contains("allow-interfaces=trusted,iot"));
+        assert!(content.contains("enable-reflector=yes"));
+        assert!(content.contains("publish-addresses=no"));
+        assert!(content.contains("enable-dbus=no"));
+    }
+
+    #[test]
+    fn test_generate_avahi_no_reflectors() {
+        let config = parse_test_config(r#"
+interfaces {
+  trunk { name = "trunk" }
+  wan   { name = "wan" }
+}
+wan {}
+vlan "lan" { id = 1 }
+"#);
+        let dir = TempDir::new().unwrap();
+        let output = dir.path().join("avahi-daemon.conf");
+        let result = generate_avahi(&config, output.to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No VLANs have mdns_reflector"));
     }
 
     #[test]

@@ -145,6 +145,8 @@ pub struct VlanHclConfig {
     #[serde(default)]
     pub iperf_enabled: bool,
     #[serde(default)]
+    pub mdns_reflector: bool,
+    #[serde(default)]
     pub tcp_forward: Vec<String>,
     #[serde(default)]
     pub udp_forward: Vec<String>,
@@ -870,6 +872,26 @@ vlan "trusted" {
 }
 "#);
         assert!(config.vlan.get("trusted").unwrap().bandwidth.is_none());
+    }
+
+    #[test]
+    fn test_parse_mdns_reflector() {
+        let config = parse_with_prefix(r#"
+vlan "trusted" {
+  id = 10
+  mdns_reflector = true
+}
+vlan "iot" {
+  id = 20
+  mdns_reflector = true
+}
+vlan "guest" {
+  id = 30
+}
+"#);
+        assert!(config.vlan.get("trusted").unwrap().mdns_reflector);
+        assert!(config.vlan.get("iot").unwrap().mdns_reflector);
+        assert!(!config.vlan.get("guest").unwrap().mdns_reflector);
     }
 
     #[test]
