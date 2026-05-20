@@ -12,12 +12,13 @@ use crate::{
         generate::{
             ensure_rustls_crypto_provider, load_or_generate_self_signed, renew_self_signed_loop,
         },
+        http_redirect::HttpRedirectAcceptor,
         self_signed_cache::{delete_cached_pair, read_private_tls_file, read_tls_file},
     },
     util::write_files::{atomic_write_file_0600, create_private_dir_all_0700},
 };
 use anyhow::Context;
-use axum_server::{Handle, tls_rustls::RustlsConfig};
+use axum_server::{Handle, accept::DefaultAcceptor, tls_rustls::{RustlsAcceptor, RustlsConfig}};
 use futures_util::StreamExt;
 use rustls::ServerConfig as RustlsServerConfig;
 use sqlx::{ConnectOptions, SqlitePool, sqlite::SqliteConnectOptions};
@@ -83,6 +84,7 @@ pub enum TlsConfig {
 /// Run the HTTP server until shutdown.
 pub async fn run(
     addr: SocketAddr,
+    public_port: u16,
     forward_auth_cfg: ForwardAuthConfig,
     forward_for_cfg: TrustedForwardedForConfig,
     oidc_cfg: OidcConfig,
@@ -167,7 +169,7 @@ pub async fn run(
         TlsConfig::RustlsFiles {
             cert_path,
             key_path,
-        } => serve_rustls_files(addr, app, deletion_abort, shutdown_tx, cert_path, key_path).await?,
+        } => serve_rustls_files(addr, app, deletion_abort, shutdown_tx, public_port, cert_path, key_path).await?,
 
         TlsConfig::SelfSigned {
             cache_dir,
@@ -183,6 +185,7 @@ pub async fn run(
                 app,
                 deletion_abort,
                 shutdown_tx,
+                public_port,
                 cache_dir,
                 sans,
                 leaf_valid_secs,
@@ -202,6 +205,7 @@ pub async fn run(
                 app,
                 deletion_abort,
                 shutdown_tx,
+                public_port,
                 directory_url,
                 cache_dir,
                 domains,
@@ -222,6 +226,7 @@ pub async fn run(
                 app,
                 deletion_abort,
                 shutdown_tx,
+                public_port,
                 directory_url,
                 cache_dir,
                 domains,
@@ -359,6 +364,7 @@ async fn serve_rustls_files(
     app: axum::Router,
     deletion_abort: tokio::task::AbortHandle,
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
+    public_port: u16,
     cert_path: PathBuf,
     key_path: PathBuf,
 ) -> anyhow::Result<()> {
@@ -376,8 +382,12 @@ async fn serve_rustls_files(
 
     info!("listening on https://{addr}");
 
+    let acceptor = RustlsAcceptor::new(rustls_config)
+        .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+
     serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
-        axum_server::bind_rustls(addr, rustls_config)
+        axum_server::bind(addr)
+            .acceptor(acceptor)
             .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
     })
@@ -389,6 +399,7 @@ async fn serve_acme_tls_alpn01(
     app: axum::Router,
     deletion_abort: tokio::task::AbortHandle,
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
+    public_port: u16,
     directory_url: String,
     cache_dir: PathBuf,
     domains: Vec<String>,
@@ -426,7 +437,8 @@ async fn serve_acme_tls_alpn01(
         .with_no_client_auth()
         .with_cert_resolver(state.resolver());
 
-    let acceptor = state.axum_acceptor(Arc::new(rustls_config));
+    let acme_acceptor = state.axum_acceptor(Arc::new(rustls_config));
+    let acceptor = HttpRedirectAcceptor::new(acme_acceptor, public_port);
 
     tokio::spawn(async move {
         while let Some(res) = state.next().await {
@@ -453,6 +465,7 @@ async fn serve_acme_dns01(
     app: axum::Router,
     deletion_abort: tokio::task::AbortHandle,
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
+    public_port: u16,
     directory_url: String,
     cache_dir: PathBuf,
     domains: Vec<String>,
@@ -484,8 +497,12 @@ async fn serve_acme_dns01(
 
     info!("listening on https://{addr} (ACME dns-01)");
 
+    let acceptor = RustlsAcceptor::new(rustls_config)
+        .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+
     serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
-        axum_server::bind_rustls(addr, rustls_config)
+        axum_server::bind(addr)
+            .acceptor(acceptor)
             .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
     })
@@ -533,6 +550,7 @@ async fn serve_self_signed(
     app: axum::Router,
     deletion_abort: tokio::task::AbortHandle,
     shutdown_tx: tokio::sync::broadcast::Sender<()>,
+    public_port: u16,
     cache_dir: Option<PathBuf>,
     sans: Vec<String>,
     leaf_valid_secs: u32,
@@ -576,8 +594,12 @@ async fn serve_self_signed(
 
     info!("listening on https://{addr} (self-signed)");
 
+    let acceptor = RustlsAcceptor::new(rustls_config)
+        .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+
     serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
-        axum_server::bind_rustls(addr, rustls_config)
+        axum_server::bind(addr)
+            .acceptor(acceptor)
             .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
     })

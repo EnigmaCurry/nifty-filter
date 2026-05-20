@@ -19,6 +19,7 @@ static TLS_CACHE_DIR: &str = "tls-cache";
 
 pub struct ServePlan {
     pub addr: SocketAddr,
+    pub public_port: u16,
     pub tls_config: server::TlsConfig,
     pub db_url: String,
     pub forward_auth_cfg: middleware::trusted_header_auth::ForwardAuthConfig,
@@ -38,6 +39,7 @@ fn plan_serve(cfg: &AppConfig, root_dir: &Path) -> Result<ServePlan, CliError> {
 
     Ok(ServePlan {
         addr,
+        public_port: cfg.network.public_port,
         tls_config,
         db_url,
         forward_auth_cfg,
@@ -66,6 +68,7 @@ pub fn serve(cfg: AppConfig, root_dir: PathBuf) -> Result<(), CliError> {
     let rt = create_runtime()?;
     rt.block_on(server::run(
         plan.addr,
+        plan.public_port,
         plan.forward_auth_cfg,
         plan.forward_for_cfg,
         plan.oidc_cfg,
@@ -381,6 +384,7 @@ fn plan_serve_builds_expected_db_url_and_addr() {
         network: crate::config::NetworkConfig {
             listen_ip: "127.0.0.1".to_string(),
             listen_port: 3001,
+            public_port: 443,
             host: None,
             // ..other fields
         },

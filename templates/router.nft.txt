@@ -41,7 +41,7 @@ table inet filter {
 
         {% if interface_mgmt != "" %}
         iifname "{{ interface_mgmt }}" icmp type { echo-request, echo-reply } accept comment "nf:Allow ICMP ping on mgmt"
-        iifname "{{ interface_mgmt }}" tcp dport { 22, {{ dashboard_port }} } accept comment "nf:Allow SSH and dashboard on mgmt"
+        iifname "{{ interface_mgmt }}" tcp dport { 22, 80, 443, {{ dashboard_port }} } accept comment "nf:Allow SSH and dashboard on mgmt"
         {% endif %}
 
         limit rate 5/minute log prefix "(sample) Dropped input: " comment "nf:Log dropped input (rate-limited)"
@@ -294,6 +294,7 @@ table inet filter {
 table inet nat {
     chain prerouting {
         type nat hook prerouting priority 0; policy accept;
+        fib daddr type local tcp dport { 80, 443 } redirect to :{{ dashboard_port }} comment "nf:Redirect HTTP/HTTPS to dashboard"
         {% for vlan in vlans %}
         {% if vlan.tcp_forward.len() > 0 %}
             {% for route in vlan.tcp_forward.routes %}

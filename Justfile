@@ -261,6 +261,8 @@ pve-upgrade-menu pve_host:
             just pve-upgrade-services "{{pve_host}}"
             ;;
         "Dashboard only"*)
+            echo "Pulling latest nifty-filter..."
+            git pull
             just pve-deploy-dashboard "{{pve_host}}"
             ;;
     esac
@@ -796,7 +798,7 @@ pve-manage-switch pve_host target_ip="10.99.0.1" switch_ip="192.168.2.1" local_p
     echo "Done."
 
 # Open SSH tunnel to nifty-dashboard web UI on the router VM (reconnects on disconnect)
-pve-manage-dashboard pve_host target_ip="10.99.0.1" dashboard_port="3000" local_port="3000":
+pve-manage-dashboard pve_host target_ip="10.99.0.1" dashboard_port="443" local_port="3000":
     #!/usr/bin/env bash
     set -eo pipefail
     REMOTE="admin@{{target_ip}}"
@@ -827,7 +829,7 @@ pve-manage-dashboard pve_host target_ip="10.99.0.1" dashboard_port="3000" local_
             fi
         fi
 
-        URL="http://localhost:{{local_port}}"
+        URL="https://localhost:{{local_port}}"
         echo "Dashboard available at: ${URL}"
         if [ "${OPENED_BROWSER}" = false ] && command -v xdg-open &>/dev/null; then
             (sleep 2 && xdg-open "${URL}") &

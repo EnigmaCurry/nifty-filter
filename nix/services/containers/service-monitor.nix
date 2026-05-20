@@ -29,7 +29,7 @@ in
 
     routerUrl = lib.mkOption {
       type = lib.types.str;
-      description = "Base URL of the router's nifty-dashboard API (e.g. https://10.99.2.1:3000)";
+      description = "Base URL of the router's nifty-dashboard API (e.g. https://10.99.2.1)";
     };
 
     pollInterval = lib.mkOption {

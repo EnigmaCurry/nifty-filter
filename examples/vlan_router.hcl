@@ -2,24 +2,17 @@
 # Four VLANs: trusted (10), iot (20), guest (30), lab (40)
 # Load via: nifty-filter nftables --config vlan_router.hcl
 
-# Your router machine must have at least two network interfaces (NICs):
-# 1) trunk:
-##   trunk is the backend (LAN side) interface trafficking ALL VLANs.
-##   trunk MUST be connected to a managed switch.
-##     (if you don't have one, use home_router.hcl instead).
-##   If your switch has mixed speed ports, plug trunk into the fastest one.
-# 2) wan:
-##   wan is the upstream (internet) connection.
-# 3) mgmt (optional):
-##   mgmt is the optional management interface, for direct access to
-##   the router for configuration, upgrade, and maintainance purposes.
-
+# Enable VLAN support, which requires a *managed* switch:
 vlan_aware_switch = true
 
-# Interfaces:
+# Network interfaces:
+## The MAC addresses must match your actual hardware - but the names you may customize.
+## 1) TRUNK interface connects to the *managed* switch, for all tagged VLAN traffic.
+## 2) WAN is the upstream (internet) connection.
+## 3) MGMT is your dedicated management interface.
 interfaces {
   trunk {
-    mac = "aa:bb:cc:dd:ee:01" # the real MAC address of the LAN-side interface.
+    mac = "aa:bb:cc:dd:ee:01" # the real MAC address of the VLAN-side interface.
     name = "trunk"            # the new name you want for the interface.
   }
   wan {
@@ -54,31 +47,66 @@ wan {
   #]
 }
 
+# --- QoS: Bufferbloat mitigation (CAKE) ---
+## You must run a speed test (speedtest.net) and record your peak upload/download rate:
+## QoS will be disabled if these rates are not set:
+qos {
+  #upload_mbps    = 20
+  #download_mbps  = 300
+  shave_percent  = 10
+
+  # overrides {
+  #   voice = ["10.99.10.50", "10.99.10.51"]
+  #   bulk  = ["10.99.20.0/24"]
+  # }
+}
+
 # Services configuration for the infrastructure VM (nifty-service-monitor).
 # The service monitor polls /api/services-config and applies these settings.
 services {
   host {
+    # IP address of the infra-services VM:
     ip_address = "10.99.2.2"
+    # The apex domain for your deployment:
+    #  - You can use a sub-domain of a real domain you control, e.g. `my-home.example.com`.
+    #  - You can use a fake domain ending in `.internal`, e.g. `nifty.internal`
     domain     = "nifty.internal"
   }
 
-  # Traefik reverse proxy routes for services on the infra VM.
+  # Traefik reverse proxy routes for the infra-services VM.
+  # This limits which clients may reach each service.
   # Each route creates a Host(`<name>.<domain>`) rule in Traefik.
-  # allow_from is required — routes without it are not exposed.
+  # `allow_from` is required — routes without it are not exposed.
   traefik {
     route "dns" {
+      ## Route to local technitium DNS web admin service:
       backend    = "http://127.0.0.1:5380"
+      ## Allowed VLANs for this route:
       allow_from = ["10.99.2.0/24", "10.99.10.0/24"]
     }
   }
 
+  # Local DNS is handled by a combination of dnsmasq and technitium:
+  #  - Dnsmasq on the router is a non-caching, forwarding DNS resolver (and DHCP
+  #    service) for all VLAN clients.
+  #    (e.g. trusted=10.99.10.1, iot=10.99.20.1, etc.)
+  #  - Dnsmasq forwards DNS requests to Technitium, which runs on the
+  #    infra-services VM (e.g., 10.99.2.2).
+  #  - VLAN clients do not require a route to the technititum DNS, because
+  #    dnsmasq forwards all requests.
+  #  - In this example, Technitium is configured to be a forwarding
+  #    resolver using Cloudflare DNS over TLS. It can also be
+  #    configured as a recursive resolver using root DNS hints.
+  #  - Technitium also becomes a local authority for `nifty.internal`,
+  #    or any other zones you wish to define.
   dns {
-    # Dnsmasq on the router is the forwarding DNS resolver for all VLAN clients.
-    # Dnsmasq forwards to Technitium, running on the infra-services VM.
     # ---
     # Set the dnsmasq upstream DNS to include both technitium (10.99.2.2) and
     # a fallback for when technitium is unavailable/booting (1.1.1.1):
     upstream       = ["10.99.2.2", "1.1.1.1"]
+    # A technitium account with limited read-only permissions is maintained for
+    # the nifty-dashboard to monitor it. This password declares the current value,
+    # so you can update it here and it will be automatically reapplied:
     viewer_password = "changeme"
 
     # Forwarders: further upstream DNS servers for Technitium to query.
@@ -90,14 +118,19 @@ services {
     # Define all of your extra zones here
     zone "nifty.internal" {
       A = {
-        "@" = "10.99.2.2"
-        dns = "10.99.2.2"
-        ntp = "10.99.2.2"
+        "@" = "10.99.0.1" # apex domain points to the nifty-dashboard
+        dns = "10.99.2.2" # dns domain points to technitium infra-services VM
+        ntp = "10.99.2.2" # ntp points to chrony on the infra-services VM
       }
     }
   }
 }
+###
+# --- VLAN 1: RESERVED -- DO NOT use VLAN 1 ---
+###
 
+
+###
 # --- VLAN 2: Infrastructure ---
 # Services VM (NTP, DNS, monitoring, etc.) lives here.
 # Runs Technitium DNS (10.99.2.2:53) and Chrony NTP (10.99.2.2:123).
@@ -121,7 +154,7 @@ vlan "infra" {
 
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable"]
-    tcp_accept  = [22, 53, 80, 443, 3000] # 3000 = dashboard (services-config API)
+    tcp_accept  = [22, 53, 80, 443] # 80/443 redirected to dashboard
     udp_accept  = [53]
   }
 
@@ -144,6 +177,7 @@ vlan "infra" {
   }
 }
 
+###
 # --- VLAN 10: Trusted ---
 # Full internet access + SSH to router
 vlan "trusted" {
@@ -162,7 +196,7 @@ vlan "trusted" {
   #    - [67, 68] DHCP requests handled by the router.
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable", "time-exceeded"]
-    tcp_accept  = [22, 3000] # 3000 = dashboard web UI
+    tcp_accept  = [22, 80, 443] # 80/443 redirected to dashboard
     udp_accept  = [53, 67, 68]
   }
 
@@ -188,6 +222,7 @@ vlan "trusted" {
   }
 }
 
+###
 # --- VLAN 20: IoT Jail ---
 # DHCP only, no internet, no router access beyond DHCP
 # bandwidth limits hard-cap this VLAN's WAN egress (upload), non-burstable.
@@ -220,6 +255,7 @@ vlan "iot" {
   }
 }
 
+###
 # --- VLAN 30: Guest ---
 # Internet access but no SSH to router
 vlan "guest" {
@@ -245,6 +281,7 @@ vlan "guest" {
   }
 }
 
+###
 # --- VLAN 40: Lab (dual-stack) ---
 # Full internet on both IPv4 and IPv6
 vlan "lab" {
@@ -283,20 +320,6 @@ vlan "lab" {
     "443:[2001:db8:abcd:40::50]",
     "22:[2001:db8:abcd:40::10]",
   ]
-}
-
-# --- QoS: Bufferbloat mitigation (CAKE) ---
-## You must run a speed test (speedtest.net) and record your peak upload/download rate:
-## QoS will be disabled if these rates are not set:
-qos {
-  #upload_mbps    = 20
-  #download_mbps  = 300
-  shave_percent  = 10
-
-  # overrides {
-  #   voice = ["10.99.10.50", "10.99.10.51"]
-  #   bulk  = ["10.99.20.0/24"]
-  # }
 }
 
 # --- Managed switch (Sodola) ---
