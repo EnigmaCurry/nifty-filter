@@ -261,7 +261,22 @@ vlan "iot" {
     router     = "10.99.20.1"
     dns        = "10.99.20.1"
     ntp        = "10.99.2.2"
+
+    # Give each Chromecast a static DHCP lease so allow_from rules can target it:
+    # host {
+    #   mac      = "aa:bb:cc:dd:ee:cc"
+    #   ip       = "10.99.20.200"
+    #   hostname = "chromecast-living-room"
+    # }
   }
+
+  # Cross-VLAN Chromecast: allow trusted VLAN to cast to Chromecasts on IoT.
+  # Requires mdns_reflector=true on both VLANs (for device discovery).
+  # TCP 8008/8009 = cast control, UDP 32768-61000 = media streaming.
+  # allow_from "trusted" {
+  #   tcp = ["10.99.20.200:8008", "10.99.20.200:8009"]
+  #   udp = ["10.99.20.200:32768-61000"]
+  # }
 }
 
 ###

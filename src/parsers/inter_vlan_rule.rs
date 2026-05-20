@@ -2,14 +2,57 @@ use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
 
+/// A port specification: either a single port or an inclusive range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PortSpec {
+    Single(u16),
+    Range(u16, u16),
+}
+
+impl PortSpec {
+    fn parse(input: &str) -> Result<Self, String> {
+        if let Some((start_str, end_str)) = input.split_once('-') {
+            let start = start_str
+                .parse::<u16>()
+                .map_err(|_| format!("Invalid port range start: '{}'", start_str))?;
+            let end = end_str
+                .parse::<u16>()
+                .map_err(|_| format!("Invalid port range end: '{}'", end_str))?;
+            if start >= end {
+                return Err(format!(
+                    "Invalid port range: start ({}) must be less than end ({})",
+                    start, end
+                ));
+            }
+            Ok(PortSpec::Range(start, end))
+        } else {
+            let port = input
+                .parse::<u16>()
+                .map_err(|_| format!("Invalid port: '{}'", input))?;
+            Ok(PortSpec::Single(port))
+        }
+    }
+}
+
+impl fmt::Display for PortSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PortSpec::Single(p) => write!(f, "{}", p),
+            PortSpec::Range(start, end) => write!(f, "{}-{}", start, end),
+        }
+    }
+}
+
 /// An inter-VLAN allow rule.
 ///
 /// 2-tuple format: `dest:port` — allow entire source VLAN to reach dest:port
 /// 3-tuple format: `src:dest:port` — allow only src to reach dest:port
+///
+/// Port can be a single port (e.g. `8008`) or a range (e.g. `32768-61000`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InterVlanRule {
     pub dest: IpAddr,
-    pub port: u16,
+    pub port: PortSpec,
     pub src: Option<IpAddr>,
 }
 
@@ -66,8 +109,7 @@ impl FromStr for InterVlanRule {
                 if rest.as_bytes().get(after_second) != Some(&b':') {
                     return Err(format!("Expected ':' after second address in '{}'", input));
                 }
-                let port = rest[after_second + 1..]
-                    .parse::<u16>()
+                let port = PortSpec::parse(&rest[after_second + 1..])
                     .map_err(|_| format!("Invalid port in '{}'", input))?;
                 Ok(InterVlanRule {
                     dest: second_addr,
@@ -76,8 +118,7 @@ impl FromStr for InterVlanRule {
                 })
             } else {
                 // 2-tuple: [dest]:port
-                let port = rest
-                    .parse::<u16>()
+                let port = PortSpec::parse(rest)
                     .map_err(|_| format!("Invalid port in '{}'", input))?;
                 Ok(InterVlanRule {
                     dest: first_addr,
@@ -86,7 +127,7 @@ impl FromStr for InterVlanRule {
                 })
             }
         } else {
-            // IPv4: dest:port or src:dest:port
+            // IPv4: dest:port or src:dest:port (port may contain '-' for ranges)
             let parts: Vec<&str> = input.split(':').collect();
             match parts.len() {
                 2 => {
@@ -94,8 +135,7 @@ impl FromStr for InterVlanRule {
                     let dest = parts[0]
                         .parse::<IpAddr>()
                         .map_err(|_| format!("Invalid destination address: '{}'", parts[0]))?;
-                    let port = parts[1]
-                        .parse::<u16>()
+                    let port = PortSpec::parse(parts[1])
                         .map_err(|_| format!("Invalid port: '{}'", parts[1]))?;
                     Ok(InterVlanRule {
                         dest,
@@ -111,8 +151,7 @@ impl FromStr for InterVlanRule {
                     let dest = parts[1]
                         .parse::<IpAddr>()
                         .map_err(|_| format!("Invalid destination address: '{}'", parts[1]))?;
-                    let port = parts[2]
-                        .parse::<u16>()
+                    let port = PortSpec::parse(parts[2])
                         .map_err(|_| format!("Invalid port: '{}'", parts[2]))?;
                     Ok(InterVlanRule {
                         dest,
@@ -131,15 +170,12 @@ impl FromStr for InterVlanRule {
 
 impl fmt::Display for InterVlanRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.src {
-            Some(src) => {
-                if src.is_ipv6() {
-                    write!(f, "[{}]:", src)?;
-                } else {
-                    write!(f, "{}:", src)?;
-                }
+        if let Some(src) = &self.src {
+            if src.is_ipv6() {
+                write!(f, "[{}]:", src)?;
+            } else {
+                write!(f, "{}:", src)?;
             }
-            None => {}
         }
         if self.dest.is_ipv6() {
             write!(f, "[{}]:{}", self.dest, self.port)
@@ -204,7 +240,7 @@ mod tests {
     fn test_ipv4_2tuple() {
         let rule = InterVlanRule::from_str("10.99.40.5:80").unwrap();
         assert_eq!(rule.dest, "10.99.40.5".parse::<IpAddr>().unwrap());
-        assert_eq!(rule.port, 80);
+        assert_eq!(rule.port, PortSpec::Single(80));
         assert!(rule.src.is_none());
         assert!(rule.dest_is_ipv4());
     }
@@ -214,7 +250,7 @@ mod tests {
         let rule = InterVlanRule::from_str("10.99.10.50:10.99.40.5:443").unwrap();
         assert_eq!(rule.src.unwrap(), "10.99.10.50".parse::<IpAddr>().unwrap());
         assert_eq!(rule.dest, "10.99.40.5".parse::<IpAddr>().unwrap());
-        assert_eq!(rule.port, 443);
+        assert_eq!(rule.port, PortSpec::Single(443));
         assert!(rule.has_src());
         assert!(rule.src_is_ipv4());
     }
@@ -223,7 +259,7 @@ mod tests {
     fn test_ipv6_2tuple() {
         let rule = InterVlanRule::from_str("[fd00:40::5]:80").unwrap();
         assert_eq!(rule.dest, "fd00:40::5".parse::<IpAddr>().unwrap());
-        assert_eq!(rule.port, 80);
+        assert_eq!(rule.port, PortSpec::Single(80));
         assert!(rule.src.is_none());
         assert!(!rule.dest_is_ipv4());
     }
@@ -236,7 +272,40 @@ mod tests {
             "fd00:10::50".parse::<IpAddr>().unwrap()
         );
         assert_eq!(rule.dest, "fd00:40::5".parse::<IpAddr>().unwrap());
-        assert_eq!(rule.port, 443);
+        assert_eq!(rule.port, PortSpec::Single(443));
+    }
+
+    #[test]
+    fn test_ipv4_port_range() {
+        let rule = InterVlanRule::from_str("10.99.20.5:32768-61000").unwrap();
+        assert_eq!(rule.dest, "10.99.20.5".parse::<IpAddr>().unwrap());
+        assert_eq!(rule.port, PortSpec::Range(32768, 61000));
+        assert!(rule.src.is_none());
+    }
+
+    #[test]
+    fn test_ipv4_3tuple_port_range() {
+        let rule = InterVlanRule::from_str("10.99.10.50:10.99.20.5:32768-61000").unwrap();
+        assert_eq!(rule.src.unwrap(), "10.99.10.50".parse::<IpAddr>().unwrap());
+        assert_eq!(rule.dest, "10.99.20.5".parse::<IpAddr>().unwrap());
+        assert_eq!(rule.port, PortSpec::Range(32768, 61000));
+    }
+
+    #[test]
+    fn test_ipv6_port_range() {
+        let rule = InterVlanRule::from_str("[fd00:20::5]:32768-61000").unwrap();
+        assert_eq!(rule.dest, "fd00:20::5".parse::<IpAddr>().unwrap());
+        assert_eq!(rule.port, PortSpec::Range(32768, 61000));
+    }
+
+    #[test]
+    fn test_invalid_port_range_reversed() {
+        assert!(InterVlanRule::from_str("10.99.20.5:61000-32768").is_err());
+    }
+
+    #[test]
+    fn test_invalid_port_range_equal() {
+        assert!(InterVlanRule::from_str("10.99.20.5:8080-8080").is_err());
     }
 
     #[test]
