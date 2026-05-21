@@ -1,98 +1,15 @@
 # nifty-filter
 
-nifty-filter is a declarative config to deploy network routers and firewalls. It is two things that share the same name:
+A declarative NixOS router distribution. Configure your network with a
+single HCL file — VLANs, firewall rules, DHCP, DNS, QoS, and
+infrastructure services — and deploy immutable VM images to Proxmox VE.
 
-1. **A standalone nftables rule generator** — a Rust library and CLI tool that reads
-   an HCL config file and emits a complete nftables ruleset.
-   Install it with `cargo install nifty-filter` and use it as a standalone piece in your own adhoc router.
-   
-2. **A declarative NixOS router distribution** — a complete router operating system, built around that same binary, with DHCP,
-   DNS, VLANs, an interactive installer, and more. Deploy a fully featured router on Proxmox VE.
+The root filesystem is read-only. All configuration lives on a
+writable `/var` partition. Upgrades replace the entire system image
+while preserving state.
 
-nifty-filter is in a stage of development and should be used for research purposes
-only. Use it at your own risk!
-
-## Standalone usage
-
-```bash
-cargo install nifty-filter
-```
-
-Or [download a release](https://github.com/EnigmaCurry/nifty-filter/releases).
-
-```bash
-# Generate rules from an HCL config file:
-nifty-filter nftables --config router.hcl
-
-# Generate and validate (requires nft on the host):
-nifty-filter nftables --config router.hcl --validate
-
-# Generate QoS (CAKE) traffic shaping commands:
-nifty-filter qos --config router.hcl
-```
-
-The ruleset is generated from a compile-time validated
-[askama template](templates/router.nft.txt). See
-[examples/](examples/) for complete configurations covering a basic
-home router, dual-stack IPv6, and multi-VLAN setups.
-
-### HCL configuration
-
-nifty-filter uses [HCL](https://github.com/hashicorp/hcl) (HashiCorp
-Configuration Language) for its config format. HCL provides labeled
-blocks, real lists, typed values, and comments — making network config
-readable and structured.
-
-```hcl
-interfaces {
-  trunk = "trunk"
-  wan   = "wan"
-}
-
-wan {
-  enable_ipv4 = true
-  enable_ipv6 = true
-  tcp_forward = ["443:10.99.40.50:443"]
-}
-
-vlan "trusted" {
-  id = 10
-  ipv4 {
-    subnet = "10.99.10.1/24"
-    egress = ["0.0.0.0/0"]
-  }
-  firewall {
-    tcp_accept = [22]
-    udp_accept = [53, 67, 68]
-  }
-  dhcp {
-    pool_start = "10.99.10.100"
-    pool_end   = "10.99.10.250"
-    router     = "10.99.10.1"
-    dns        = "10.99.10.1"
-  }
-}
-```
-
-See [examples/home_router.hcl](examples/home_router.hcl) for a simple
-setup, [examples/dual_stack_router.hcl](examples/dual_stack_router.hcl)
-for IPv4+IPv6, and
-[examples/vlan_router.hcl](examples/vlan_router.hcl) for a full
-multi-VLAN configuration with managed switch.
-
----
-
-# NixOS Router Distribution
-
-nifty-filter as a NixOS distribution provides DHCP, DNS, VLANs,
-firewall, and an interactive configuration TUI — all driven by config
-files on the writable `/var` partition. The root filesystem is
-read-only.
-
-Install it on Proxmox VE (preferred for backups and QoL) or
-bare metal. You can use virtual NICs (for routing other VMs) or real
-network hardware via PCI passthrough. A full router on a hypervisor
-platform is useful to put your apps right on the edge of your network.
+> nifty-filter is in active development and should be used for research
+> purposes only. Use it at your own risk.
 
 ## Prerequisites
 
@@ -367,3 +284,28 @@ All config lives in `/var/nifty-filter/`:
   ssh/
     ssh_host_*            # Persistent SSH host keys
 ```
+
+## Standalone nftables generator
+
+The `nifty-filter` binary can also be used as a standalone nftables
+rule generator, outside of NixOS. It reads an HCL config file and
+emits a complete nftables ruleset.
+
+```bash
+cargo install nifty-filter
+```
+
+Or [download a release](https://github.com/EnigmaCurry/nifty-filter/releases).
+
+```bash
+# Generate rules from an HCL config file:
+nifty-filter nftables --config router.hcl
+
+# Generate and validate (requires nft on the host):
+nifty-filter nftables --config router.hcl --validate
+
+# Generate QoS (CAKE) traffic shaping commands:
+nifty-filter qos --config router.hcl
+```
+
+See [examples/](examples/) for complete configurations.
