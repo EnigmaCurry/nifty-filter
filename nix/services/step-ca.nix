@@ -191,7 +191,7 @@ in
         set -euo pipefail
         echo "Waiting for Step-CA to become healthy..."
         for i in $(seq 1 30); do
-          if curl -sk https://localhost:${portStr}/health | grep -q '"status":"ok"'; then
+          if curl -sk https://127.0.0.1:${portStr}/health | grep -q '"status":"ok"'; then
             echo "Step-CA is healthy."
             exit 0
           fi
@@ -237,7 +237,7 @@ in
             ${stepRun} ca certificate "$CN" \
               "/home/step/client-certs/${name}-cert.pem" \
               "/home/step/client-certs/${name}-key.pem" \
-              --ca-url="https://localhost:${portStr}" \
+              --ca-url="https://127.0.0.1:${portStr}" \
               --root=/home/step/certs/root_ca.crt \
               --provisioner="${cfg.provisioner}" \
               --provisioner-password-file=/home/step/secrets/password \
@@ -277,7 +277,7 @@ in
               ${stepRun} ca renew \
                 "/home/step/client-certs/${name}-cert.pem" \
                 "/home/step/client-certs/${name}-key.pem" \
-                --ca-url="https://localhost:${portStr}" \
+                --ca-url="https://127.0.0.1:${portStr}" \
                 --root=/home/step/certs/root_ca.crt \
                 --force
               cp "$MOUNT/client-certs/${name}-cert.pem" "$DIR/cert.pem"
