@@ -7,7 +7,7 @@ nifty-filter is a declarative config to deploy network routers and firewalls. It
    Install it with `cargo install nifty-filter` and use it as a standalone piece in your own adhoc router.
    
 2. **A declarative NixOS router distribution** — a complete router operating system, built around that same binary, with DHCP,
-   DNS, VLANs, an interactive installer, and more. Deploy a fully featured router on Proxmox VE, or bare metal.
+   DNS, VLANs, an interactive installer, and more. Deploy a fully featured router on Proxmox VE.
 
 nifty-filter is in a stage of development and should be used for research purposes
 only. Use it at your own risk!
