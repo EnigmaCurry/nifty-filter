@@ -103,21 +103,6 @@ boot, Step-CA bootstraps automatically: generates a root CA, enables
 ACME, and issues client certificates for dashboard, service-monitor,
 and traefik.
 
-After boot, copy the root CA cert and client certs from the CA VM:
-
-```bash
-# Root CA cert (add to your Nix config for security.pki.certificateFiles)
-scp user@10.99.2.3:/var/lib/step-ca/certs/root_ca.crt ./
-
-# Dashboard client cert (copy to router VM later)
-scp user@10.99.2.3:/var/lib/step-ca/client-certs/dashboard/cert.pem ./dashboard-cert.pem
-scp user@10.99.2.3:/var/lib/step-ca/client-certs/dashboard/key.pem ./dashboard-key.pem
-
-# Service-monitor + traefik client certs (copy to infra-services VM later)
-scp user@10.99.2.3:/var/lib/step-ca/client-certs/service-monitor/ ./
-scp user@10.99.2.3:/var/lib/step-ca/client-certs/traefik/ ./
-```
-
 ### 3. Deploy the router
 
 ```bash
@@ -142,31 +127,25 @@ two disks: a boot+root disk (read-only NixOS system) and a `/var` disk
 RAM, and serial console (no VGA). Set `VAR_SIZE` to override the
 default 8 GB `/var` disk.
 
-### 4. Configure the router
+### 4. Distribute certificates
 
-The router boots with a full `vlan_router.hcl` config — interface MACs
-are patched automatically from fw_cfg at first boot. SSH in to review
-or edit the config:
+With the router online as a jump host, distribute TLS certificates from
+the Step-CA VM to all other VMs:
 
 ```bash
-just pve-ssh pve-router 10.99.0.1
-sudo nano /var/nifty-filter/nifty-filter.hcl
+just pve-distribute-certs pve-router
 ```
 
-To enable ACME + mTLS, copy the dashboard client cert/key from the
-Step-CA VM and add a `dashboard_tls` block to the HCL config:
+This copies the dashboard client cert/key to the router, and (if the
+infra-services VM is reachable) the service-monitor and traefik certs
+too. The root CA cert is saved locally for inclusion in your Nix config.
+Run it again after deploying infra-services to distribute those certs.
 
-```hcl
-dashboard_tls {
-  acme_directory_url = "https://10.99.2.3:9443/acme/acme/directory"
-  client_cert        = "/var/lib/nifty-dashboard/client-cert.pem"
-  client_key         = "/var/lib/nifty-dashboard/client-key.pem"
-  sans               = ["router.nifty.internal"]
-}
-```
-
-Then reboot. The dashboard will obtain its server cert from Step-CA via
-ACME and require mTLS client certificates on all HTTPS endpoints.
+The router boots with ACME + mTLS enabled by default. Once the certs
+are in place, the dashboard will obtain its server certificate from
+Step-CA and require mTLS client certificates on all HTTPS endpoints.
+If the dashboard is in a restart loop waiting for certs, it will pick
+them up automatically.
 
 ### 5. Deploy infra-services
 
