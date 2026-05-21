@@ -1206,11 +1206,10 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
     # Helper: read a file from Step-CA via double jump
     ca_cat() { ssh ${JUMP_TO_INFRA} ${CA} "sudo cat $1"; }
 
-    # --- Copy root CA cert to workstation (for Nix config) ---
+    # --- Copy root CA cert to workstation (for Nix build) ---
     echo "Fetching root CA cert..."
-    mkdir -p .step-ca-certs
-    ca_cat /var/lib/step-ca/certs/root_ca.crt > .step-ca-certs/root_ca.crt
-    echo "  Saved to .step-ca-certs/root_ca.crt"
+    ca_cat /var/lib/step-ca/certs/root_ca.crt > certs/step-ca-root.crt
+    echo "  Saved to certs/step-ca-root.crt (used by security.pki.certificateFiles in Nix build)"
 
     # --- Copy dashboard client cert to router ---
     echo "Copying dashboard client cert to router (${ROUTER_IP})..."
@@ -1242,11 +1241,9 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
     fi
 
     echo ""
-    echo "Done. Root CA cert saved locally at .step-ca-certs/root_ca.crt"
-    echo "Add it to your Nix config: security.pki.certificateFiles = [ ./step-ca-certs/root_ca.crt ];"
-    echo ""
-    echo "Restart the dashboard to pick up the new certs:"
-    echo "  ssh ${JUMP_TO_ROUTER} ${ROUTER} sudo systemctl restart nifty-dashboard"
+    echo "Done. Root CA cert saved to certs/step-ca-root.crt"
+    echo "Rebuild the router to trust it: just pve-upgrade ${PVE_HOST} 101 nifty-filter"
+    echo "Or restart the dashboard if already rebuilt: ssh ${JUMP_TO_ROUTER} ${ROUTER} sudo systemctl restart nifty-dashboard"
 
 # Upgrade Step-CA VM (delegates to nixos-vm-template proxmox backend)
 pve-upgrade-step-ca pve_host vm_name="infra-CA" pve_storage="local-lvm":
