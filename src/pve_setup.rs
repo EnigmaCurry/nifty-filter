@@ -202,19 +202,8 @@ pub fn run(pve_host: &str) {
         .filter_map(|l| l.trim().parse().ok())
         .collect();
 
-    // Find lowest unused ID starting at 101
-    let mut default_vmid: u32 = 101;
-    while used_ids.contains(&default_vmid) {
-        default_vmid += 1;
-    }
-
-    if !used_ids.is_empty() {
-        let ids_str: Vec<String> = used_ids.iter().map(|id| id.to_string()).collect();
-        eprintln!("Used VM IDs: {}", ids_str.join(", "));
-    }
-
-    let vmid_str = prompt_text("VM ID:", &default_vmid.to_string());
-    let vmid: u32 = vmid_str.trim().parse().unwrap_or_else(|_| die("Invalid VM ID"));
+    // Router VM is always VMID 101
+    let vmid: u32 = 101;
     if used_ids.contains(&vmid) {
         die(&format!("VM ID {vmid} is already in use"));
     }
