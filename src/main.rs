@@ -98,7 +98,7 @@ enum Commands {
         config: String,
     },
 
-    /// Print a config value by key (wan-name, trunk-name, mgmt-name, wan-mac, trunk-mac, mgmt-mac, mgmt-subnet, enable-ipv6, dashboard-port, iperf-port, mdns-interfaces)
+    /// Print a config value by key (wan-name, trunk-name, mgmt-name, wan-mac, trunk-mac, mgmt-mac, mgmt-subnet, enable-ipv6, dashboard-port, iperf-port, mdns-interfaces, dashboard-tls-enabled, dashboard-tls-acme-url, dashboard-tls-acme-email, dashboard-tls-client-cert, dashboard-tls-client-key, dashboard-tls-sans)
     Get {
         /// Path to the HCL config file
         #[arg(long, short)]
@@ -891,6 +891,14 @@ fn app() {
                 },
                 "switch-router-ip" => hcl_config.switch.as_ref().and_then(|s| s.router_ip.clone()),
                 "switch-mgmt-iface" => hcl_config.switch.as_ref().and_then(|s| s.mgmt_iface.clone()),
+                "dashboard-tls-enabled" => Some(hcl_config.dashboard_tls.is_some().to_string()),
+                "dashboard-tls-acme-url" => hcl_config.dashboard_tls.as_ref().map(|t| t.acme_directory_url.clone()),
+                "dashboard-tls-acme-email" => hcl_config.dashboard_tls.as_ref().and_then(|t| t.acme_email.clone()),
+                "dashboard-tls-client-cert" => hcl_config.dashboard_tls.as_ref().map(|t| t.client_cert.clone()),
+                "dashboard-tls-client-key" => hcl_config.dashboard_tls.as_ref().map(|t| t.client_key.clone()),
+                "dashboard-tls-sans" => hcl_config.dashboard_tls.as_ref().and_then(|t| {
+                    if t.sans.is_empty() { None } else { Some(t.sans.join(",")) }
+                }),
                 _ => {
                     eprintln!("Unknown key: {}", key);
                     exit(1);
