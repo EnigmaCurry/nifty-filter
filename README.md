@@ -237,30 +237,6 @@ just pve-destroy pve-router 101 nifty-filter     # Router
 just pve-destroy pve-router 202 infra-services   # Services
 ```
 
-## Deploying to bare metal
-
-### 1. Build and flash the ISO
-
-```bash
-just iso
-sudo dd if=result/iso/nifty-filter-*.iso of=/dev/sdX bs=4M status=progress
-```
-
-Use `just iso-big` if you need full hardware support (all
-linux-firmware and drivers).
-
-### 2. Boot, install, and configure
-
-Boot from the media. The console shows the IP address and login
-credentials (`admin` / `nifty`). Copy your SSH key and connect:
-
-```bash
-ssh-copy-id admin@<router-ip>
-ssh admin@<router-ip>
-```
-
-Run `nifty-install`, then remove the media and power on.
-
 ## Configuring the router
 
 SSH into the installed system and edit the HCL config:
