@@ -97,7 +97,7 @@ platform is useful to put your apps right on the edge of your network.
 ## Prerequisites
 
  * You need a workstation (Linux/macOS) to build images.
- * You need a separate Proxmox VE host (or bare metal target) to run the router.
+ * You need a separate Proxmox VE host to run the router.
 
 On your workstation:
 
