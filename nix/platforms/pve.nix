@@ -190,6 +190,10 @@
       if [ -n "$INFRA_MAC" ]; then
         echo "  infra MAC: $INFRA_MAC (from fw_cfg)"
         sed -i "s/mac  = \"aa:bb:cc:dd:ee:10\"/mac  = \"$INFRA_MAC\"/" "$HCL"
+        # Re-apply permissions (sed -i replaces the file, dropping ACLs)
+        chmod 0660 "$HCL"
+        chown root:wheel "$HCL"
+        ${pkgs.acl}/bin/setfacl -m g:nifty-config:r "$HCL"
       fi
 
       echo "HCL updated with real MACs"
