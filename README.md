@@ -122,13 +122,14 @@ a managed switch:
 | lab | 40 | `10.99.40.0/24` + `fd00:40::/64` | Lab (dual-stack). Full internet on IPv4 and IPv6, SSH to router. |
 
 The management interface (`10.99.0.0/24`) provides out-of-band access
-to the router from the Proxmox host.
+to the router from the Proxmox host. The router uses PCI passthrough
+NICs for WAN, trunk, and management. The infra VLAN uses a virtual NIC
+on an isolated bridge (`vmbr2`) shared between the router and
+infrastructure VMs.
 
 ## Deploying to Proxmox VE
 
-A full deployment consists of three VMs, deployed in order. The example
-uses PCI passthrough NICs for the router, but virtual bridge NICs
-(`vmbr*`) or a mix of both also work.
+A full deployment consists of three VMs, deployed in order.
 
 | VM | VMID | IP | Purpose |
 |----|------|----|---------|
