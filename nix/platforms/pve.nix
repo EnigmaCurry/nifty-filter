@@ -158,6 +158,7 @@
       fi
       echo "}" >> "$IFACES_FILE"
 
+
       echo "New interfaces block:"
       cat "$IFACES_FILE"
 
@@ -185,6 +186,14 @@
       chown root:wheel "$HCL"
       ${pkgs.acl}/bin/setfacl -m g:nifty-config:r "$HCL"
       rm -f "$IFACES_FILE"
+
+      # Handle infra NIC (virtual bridge for Step-CA / services communication)
+      INFRA_MAC=""
+      [ -f "$FWCFG/infra_mac/raw" ] && INFRA_MAC=$(cat "$FWCFG/infra_mac/raw" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+      if [ -n "$INFRA_MAC" ]; then
+        echo "  infra MAC: $INFRA_MAC (from fw_cfg)"
+        sed -i "s/mac  = \"aa:bb:cc:dd:ee:10\"/mac  = \"$INFRA_MAC\"/" "$HCL"
+      fi
 
       echo "HCL updated with real MACs"
       touch /var/nifty-filter/.pve-init-done
