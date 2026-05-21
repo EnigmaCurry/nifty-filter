@@ -68,10 +68,14 @@ in
         "--poll-interval" (toString cfg.service-monitor.pollInterval)
         "--state-dir" "/data"
         "--traefik-dynamic-dir" "/traefik-dynamic"
+      ] ++ lib.optionals cfg.ddns.enable [
+        "--ddns-config-path" "/ddns/config.json"
       ];
       volumes = [
         "service-monitor-data:/data"
         "traefik-dynamic:/traefik-dynamic"
+      ] ++ lib.optionals cfg.ddns.enable [
+        "/var/lib/ddns-updater:/ddns"
       ];
       extraOptions = [
         "--network=host"

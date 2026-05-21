@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 pub struct ApiResponse {
@@ -20,6 +20,7 @@ pub struct ServicesConfig {
     pub dns: Option<DnsServiceConfig>,
     #[serde(default)]
     pub traefik: Option<TraefikConfig>,
+    pub ddns: Option<DdnsConfig>,
 }
 
 #[derive(Deserialize, Default)]
@@ -127,5 +128,44 @@ pub struct CaaRecord {
     #[serde(default)]
     pub flags: u8,
     pub ttl: Option<u32>,
+}
+
+#[derive(Deserialize)]
+pub struct DdnsConfig {
+    /// Period is consumed by the Nix container module as an env var,
+    /// not by the service-monitor, but we parse it to avoid unknown-field errors.
+    #[allow(dead_code)]
+    #[serde(default = "default_ddns_period")]
+    pub period: String,
+    #[serde(default)]
+    pub record: HashMap<String, DdnsRecord>,
+}
+
+fn default_ddns_period() -> String {
+    "5m".to_string()
+}
+
+/// A single DDNS record entry. The `provider` field is required; all other
+/// fields are provider-specific and passed through to ddns-updater's config.json.
+#[derive(Deserialize)]
+pub struct DdnsRecord {
+    pub provider: String,
+    /// All remaining provider-specific fields (token, zone_identifier, etc.)
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+/// The JSON format that ddns-updater expects in its config.json.
+#[derive(Serialize)]
+pub struct DdnsUpdaterConfig {
+    pub settings: Vec<DdnsUpdaterEntry>,
+}
+
+#[derive(Serialize)]
+pub struct DdnsUpdaterEntry {
+    pub provider: String,
+    pub domain: String,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 

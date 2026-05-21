@@ -1,4 +1,5 @@
 mod config;
+mod ddns;
 mod technitium;
 mod tofu;
 mod traefik;
@@ -41,6 +42,10 @@ struct Cli {
     /// Traefik dynamic config directory (for writing service router configs)
     #[arg(long, env = "MONITOR_TRAEFIK_DYNAMIC_DIR")]
     traefik_dynamic_dir: Option<PathBuf>,
+
+    /// Path to write the ddns-updater config.json
+    #[arg(long, env = "MONITOR_DDNS_CONFIG_PATH")]
+    ddns_config_path: Option<PathBuf>,
 }
 
 fn build_client(state_dir: &std::path::Path) -> reqwest::Client {
@@ -52,8 +57,20 @@ fn build_client(state_dir: &std::path::Path) -> reqwest::Client {
 
     reqwest::Client::builder()
         .use_preconfigured_tls(tls_config)
+        .connect_timeout(Duration::from_secs(10))
         .build()
         .expect("failed to build HTTP client")
+}
+
+/// Format a reqwest error with its full source chain for debugging.
+fn format_error(e: &reqwest::Error) -> String {
+    let mut msg = e.to_string();
+    let mut source = std::error::Error::source(e);
+    while let Some(cause) = source {
+        msg.push_str(&format!(": {cause}"));
+        source = std::error::Error::source(cause);
+    }
+    msg
 }
 
 async fn fetch_config(client: &reqwest::Client, router_url: &str) -> Result<ServicesConfig, String> {
@@ -62,7 +79,7 @@ async fn fetch_config(client: &reqwest::Client, router_url: &str) -> Result<Serv
         .get(&url)
         .send()
         .await
-        .map_err(|e| format!("request failed: {e}"))?;
+        .map_err(|e| format!("request failed: {}", format_error(&e)))?;
 
     let api: ApiResponse = resp
         .json()
@@ -120,7 +137,7 @@ async fn sse_listener(client: reqwest::Client, url: String, tx: mpsc::Sender<()>
                 warn!("SSE connection closed, reconnecting");
             }
             Err(e) => {
-                warn!("SSE connection failed: {e}");
+                warn!("SSE connection failed: {}", format_error(&e));
             }
         }
         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -138,6 +155,7 @@ async fn poll_and_apply(
     config: &ServicesConfig,
     state: &mut ServiceState,
     traefik_dynamic_dir: Option<&Path>,
+    ddns_config_path: Option<&Path>,
 ) -> bool {
     let mut ok = true;
 
@@ -152,12 +170,23 @@ async fn poll_and_apply(
         traefik::write_routes(dir, &config.host.domain, config.traefik.as_ref());
     }
 
+    // Write ddns-updater config.json (systemd path unit restarts the container).
+    if let Some(path) = ddns_config_path {
+        if let Some(ref ddns) = config.ddns {
+            if !ddns::write_config(path, ddns) {
+                ok = false;
+            }
+        }
+    }
+
     ok
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .target(env_logger::Target::Stdout)
+        .init();
 
     let cli = Cli::parse();
     let interval = Duration::from_secs(cli.poll_interval);
@@ -188,7 +217,7 @@ async fn main() -> ExitCode {
                     config_fetched = true;
                 }
                 debug!("applying services config");
-                poll_and_apply(&client, &config, &mut state, cli.traefik_dynamic_dir.as_deref()).await
+                poll_and_apply(&client, &config, &mut state, cli.traefik_dynamic_dir.as_deref(), cli.ddns_config_path.as_deref()).await
             }
             Err(e) => {
                 warn!("failed to fetch services config: {e}");

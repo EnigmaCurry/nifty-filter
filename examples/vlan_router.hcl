@@ -84,6 +84,11 @@ services {
       ## Allowed VLANs for this route:
       allow_from = ["10.99.2.0/24", "10.99.10.0/24"]
     }
+    route "ddns" {
+      ## Route to ddns-updater web dashboard:
+      backend    = "http://127.0.0.1:8000"
+      allow_from = ["10.99.2.0/24", "10.99.10.0/24"]
+    }
   }
 
   # Local DNS is handled by a combination of dnsmasq and technitium:
@@ -119,11 +124,24 @@ services {
     zone "nifty.internal" {
       A = {
         "@" = "10.99.0.1" # apex domain points to the nifty-dashboard
+        ddns = "10.99.2.2" # ddns-updater web dashboard on infra-services VM
         dns = "10.99.2.2" # dns domain points to technitium infra-services VM
         ntp = "10.99.2.2" # ntp points to chrony on the infra-services VM
       }
     }
   }
+
+  # Dynamic DNS: keep external DNS records updated with the current WAN IP.
+  # Each record block defines a domain to update at a given provider.
+  # Provider-specific fields (token, zone_identifier, etc.) are passed through.
+  # See provider docs: https://github.com/qdm12/ddns-updater#configuration
+  # ddns {
+  #   period = "5m"
+  #   record "myhost.duckdns.org" {
+  #     provider = "duckdns"
+  #     token    = "your-duckdns-token"
+  #   }
+  # }
 }
 ###
 # --- VLAN 1: RESERVED -- DO NOT use VLAN 1 ---
@@ -154,7 +172,7 @@ vlan "infra" {
 
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable"]
-    tcp_accept  = [22, 53, 80, 443] # 80/443 redirected to dashboard
+    tcp_accept  = [22, 53, 80, 443, 3000] # 80/443 redirected to dashboard (port 3000)
     udp_accept  = [53, 67, 68]
   }
 
@@ -216,7 +234,7 @@ vlan "trusted" {
   #    - [67, 68] DHCP requests handled by the router.
   firewall {
     icmp_accept = ["echo-request", "echo-reply", "destination-unreachable", "time-exceeded"]
-    tcp_accept  = [22, 80, 443] # 80/443 redirected to dashboard
+    tcp_accept  = [22, 80, 443, 3000] # 80/443 redirected to dashboard (port 3000)
     udp_accept  = [53, 67, 68]
   }
 

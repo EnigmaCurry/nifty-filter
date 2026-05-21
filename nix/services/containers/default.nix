@@ -12,6 +12,7 @@ in
 {
   imports = [
     ./chrony.nix
+    ./ddns.nix
     ./technitium.nix
     ./traefik.nix
     ./service-monitor.nix

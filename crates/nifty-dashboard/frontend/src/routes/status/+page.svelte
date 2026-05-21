@@ -204,7 +204,7 @@
 
   type Tab = "config" | "state" | "updates" | "about";
   type StateSubTab = "interfaces" | "nftables" | "dns" | "qos" | "switch" | "services";
-  type DnsSubTab = "dnsmasq" | "technitium";
+  type DnsSubTab = "dnsmasq" | "technitium" | "ddns";
 
   interface TechnitiumForwarderInfo {
     forwarders: string[];
@@ -229,6 +229,22 @@
   interface TechnitiumData {
     forwarders: TechnitiumForwarderInfo | null;
     zones: TechnitiumZoneInfo[];
+    error?: string;
+  }
+
+  interface DdnsRecord {
+    domain: string;
+    owner: string;
+    provider: string;
+    ip_version: string;
+    status: string;
+    status_class: string;
+    current_ip: string;
+    previous_ips: string;
+  }
+
+  interface DdnsData {
+    records: DdnsRecord[];
     error?: string;
   }
 
@@ -263,6 +279,7 @@
   let dnsmasqData = $state<DnsmasqData | null>(null);
   let technitiumData = $state<TechnitiumData | null>(null);
   let technitiumError = $state<string | null>(null);
+  let ddnsData = $state<DdnsData | null>(null);
   let servicesData = $state<ServicesData | null>(null);
   let updatesData = $state<UpdatesData | null>(null);
   let loading = $state(true);
@@ -314,9 +331,12 @@
         } else if (parts[1] === "technitium") {
           stateSub = "dns";
           dnsSub = "technitium";
+        } else if (parts[1] === "ddns") {
+          stateSub = "dns";
+          dnsSub = "ddns";
         } else if (parts[1] === "dns") {
           stateSub = "dns";
-          const validDnsSubs: DnsSubTab[] = ["dnsmasq", "technitium"];
+          const validDnsSubs: DnsSubTab[] = ["dnsmasq", "technitium", "ddns"];
           dnsSub = validDnsSubs.includes(parts[2] as DnsSubTab) ? parts[2] as DnsSubTab : "dnsmasq";
         } else if (validStateSubs.includes(parts[1] as StateSubTab)) {
           stateSub = parts[1] as StateSubTab;
@@ -448,7 +468,7 @@
 
   const tabs: { id: Tab; label: string; condition: () => boolean }[] = [
     { id: "config", label: "Config", condition: () => true },
-    { id: "state", label: "State", condition: () => (data?.interfaces.length ?? 0) > 0 || (data?.nft_chains.length ?? 0) > 0 || dnsmasqData != null || technitiumData != null || technitiumError != null || qosData != null || data?.switch != null || servicesData != null },
+    { id: "state", label: "State", condition: () => (data?.interfaces.length ?? 0) > 0 || (data?.nft_chains.length ?? 0) > 0 || dnsmasqData != null || technitiumData != null || technitiumError != null || ddnsData != null || qosData != null || data?.switch != null || servicesData != null },
     { id: "updates", label: "Updates", condition: () => updatesData != null },
     { id: "about", label: "About", condition: () => aboutData != null },
   ];
@@ -456,7 +476,7 @@
   const stateSubTabs: { id: StateSubTab; label: string; condition: () => boolean }[] = [
     { id: "interfaces", label: "Interfaces", condition: () => (data?.interfaces.length ?? 0) > 0 },
     { id: "nftables", label: "Netfilter", condition: () => (data?.nft_chains.length ?? 0) > 0 },
-    { id: "dns", label: "DNS", condition: () => dnsmasqData != null || technitiumData != null || technitiumError != null },
+    { id: "dns", label: "DNS", condition: () => dnsmasqData != null || technitiumData != null || technitiumError != null || ddnsData != null },
     { id: "qos", label: "QoS", condition: () => qosData != null },
     { id: "switch", label: "Switch", condition: () => data?.switch != null },
     { id: "services", label: "Services", condition: () => servicesData != null },
@@ -465,6 +485,7 @@
   const dnsSubTabs: { id: DnsSubTab; label: string; condition: () => boolean }[] = [
     { id: "dnsmasq", label: "Dnsmasq", condition: () => dnsmasqData != null },
     { id: "technitium", label: "Technitium", condition: () => technitiumData != null || technitiumError != null },
+    { id: "ddns", label: "DDNS", condition: () => ddnsData != null },
   ];
 
   function formatUptime(seconds: number): string {
@@ -711,6 +732,21 @@
     }
   }
 
+  async function fetchDdns() {
+    try {
+      const res = await fetch("/api/ddns", { credentials: "include" });
+      if (res.ok) {
+        const body = await res.json();
+        const d = body.data ?? null;
+        if (d?.error && (!d.records || d.records.length === 0)) {
+          ddnsData = null;
+        } else {
+          ddnsData = d;
+        }
+      }
+    } catch {}
+  }
+
   async function fetchServices() {
     try {
       const res = await fetch("/api/services", { credentials: "include" });
@@ -747,12 +783,13 @@
     fetchQos();
     fetchDnsmasq();
     fetchTechnitium();
+    fetchDdns();
     fetchServices();
     fetchUpdates();
     fetchStatus();
     const interval = setInterval(() => {
       if (!connected) return;
-      fetchStatus(); fetchQos(); fetchDnsmasq(); fetchTechnitium(); fetchServices();
+      fetchStatus(); fetchQos(); fetchDnsmasq(); fetchTechnitium(); fetchDdns(); fetchServices();
     }, 15000);
 
     // SSE with reconnection logic
@@ -762,7 +799,7 @@
     let retryDelay = 2000;
 
     function fetchAll() {
-      fetchStatus(); fetchConfig(); fetchQos(); fetchDnsmasq(); fetchTechnitium(); fetchServices(); fetchUpdates(); fetchAbout();
+      fetchStatus(); fetchConfig(); fetchQos(); fetchDnsmasq(); fetchTechnitium(); fetchDdns(); fetchServices(); fetchUpdates(); fetchAbout();
     }
 
     function scheduleReconnect(delay: number) {
@@ -1573,6 +1610,54 @@
           {/if}
         </div>
         {/if}
+
+        {:else if dnsSubTab === "ddns" && ddnsData}
+        <div class="space-y-4">
+          {#if ddnsData.error}
+          <p class="text-yellow-400 text-sm">{ddnsData.error}</p>
+          {/if}
+          {#if ddnsData.records.length > 0}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>Dynamic DNS Records</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="py-2 pr-4">Domain</th>
+                      <th class="py-2 pr-4">Provider</th>
+                      <th class="py-2 pr-4">IP Version</th>
+                      <th class="py-2 pr-4">Status</th>
+                      <th class="py-2 pr-4">Current IP</th>
+                      <th class="py-2">Previous IPs</th>
+                    </tr>
+                  </thead>
+                  <tbody class="font-mono">
+                    {#each ddnsData.records as record}
+                      <tr class="border-b border-border/50">
+                        <td class="py-2 pr-4 font-semibold">{record.domain}</td>
+                        <td class="py-2 pr-4">{record.provider}</td>
+                        <td class="py-2 pr-4">{record.ip_version}</td>
+                        <td class="py-2 pr-4">
+                          <span class="{record.status_class === 'success' || record.status_class === 'uptodate' ? 'text-green-400' : record.status_class === 'error' ? 'text-red-400' : record.status_class === 'updating' ? 'text-purple-400' : 'text-yellow-400'}">
+                            {record.status}
+                          </span>
+                        </td>
+                        <td class="py-2 pr-4">{record.current_ip}</td>
+                        <td class="py-2 text-muted-foreground">{record.previous_ips}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {:else}
+          <p class="text-muted-foreground text-sm">No DDNS records found.</p>
+          {/if}
+        </div>
         {/if}
 
         {:else if stateSubTab === "qos" && qosData}
