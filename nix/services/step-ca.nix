@@ -37,9 +37,17 @@ let
   hostCertsDir = "${hostDataDir}/certs";
   hostClientCertsDir = "${hostDataDir}/client-certs";
 
-  # Run step-cli directly on the host with STEPPATH pointing to the volume.
-  # This avoids container networking issues when talking to the Step-CA container.
-  stepRun = "STEPPATH=$MOUNT HOME=$MOUNT ${pkgs.step-cli}/bin/step";
+  # Run step-cli inside a container (for init — so ca.json gets container-relative paths)
+  stepRunContainer = ''${pkgs.podman}/bin/podman run --rm \
+    -v step-ca-data:/home/step \
+    -e STEPPATH=/home/step \
+    -e HOME=/home/step \
+    --network=host \
+    --entrypoint ${pkgs.step-cli}/bin/step \
+    nifty-step-ca:latest'';
+
+  # Run step-cli directly on the host (for cert issuance — avoids container networking issues)
+  stepRunHost = "STEPPATH=$MOUNT HOME=$MOUNT ${pkgs.step-cli}/bin/step";
 
   portStr = toString cfg.port;
 in
@@ -137,14 +145,14 @@ in
         openssl rand -base64 32 > "$MOUNT/secrets/password"
         chmod 600 "$MOUNT/secrets/password"
 
-        # Initialize the CA.
-        ${stepRun} ca init \
+        # Initialize the CA (in container so ca.json gets container-relative paths).
+        ${stepRunContainer} ca init \
           --name="${cfg.caName}" \
           --provisioner="${cfg.provisioner}" \
           --dns="${dnsFlags}" \
           --address=":${portStr}" \
           --deployment-type=standalone \
-          --password-file="$MOUNT/secrets/password" \
+          --password-file="/home/step/secrets/password" \
           --acme
 
         # Copy root CA cert to host for operator access.
@@ -231,7 +239,7 @@ in
             echo "Issuing client cert for $CN..."
             MOUNT=$(podman volume inspect step-ca-data --format '{{.Mountpoint}}')
             mkdir -p "$MOUNT/client-certs"
-            ${stepRun} ca certificate "$CN" \
+            ${stepRunHost} ca certificate "$CN" \
               "$MOUNT/client-certs/${name}-cert.pem" \
               "$MOUNT/client-certs/${name}-key.pem" \
               --ca-url="https://127.0.0.1:${portStr}" \
@@ -271,7 +279,7 @@ in
             if ! openssl x509 -in "$DIR/cert.pem" -checkend 2592000 -noout 2>/dev/null; then
               echo "Renewing cert for ${name}.${cfg.domain}..."
               MOUNT=$(podman volume inspect step-ca-data --format '{{.Mountpoint}}')
-              ${stepRun} ca renew \
+              ${stepRunHost} ca renew \
                 "$MOUNT/client-certs/${name}-cert.pem" \
                 "$MOUNT/client-certs/${name}-key.pem" \
                 --ca-url="https://127.0.0.1:${portStr}" \
