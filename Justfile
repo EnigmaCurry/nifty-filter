@@ -1157,7 +1157,7 @@ pve-install-step-ca pve_host ip bridge="vmbr2" vm_name="infra-CA" router_vmid="1
         fi
     else
         echo "Router VM {{router_vmid}} does not exist yet — skipping NIC addition."
-        echo "The router NIC will be added to ${BRIDGE} when pve-install-services runs."
+        echo "The router will get an infra NIC automatically when pve-install runs."
     fi
 
     # Close PVE SSH before handing off to nixos-vm-template
