@@ -106,6 +106,31 @@ On your workstation:
  * Ensure your ssh-agent is running and that `ssh-add -L` returns at least one loaded key.
  * Ensure you can login to your PVE host (test `ssh root@<proxmox-host> whoami`).
 
+## Example network
+
+The rest of this document uses the
+[`examples/vlan_router.hcl`](examples/vlan_router.hcl) config as a
+running example. It defines a VLAN-aware router with five VLANs behind
+a managed switch:
+
+| VLAN | ID | Subnet | Purpose |
+|------|----|--------|---------|
+| infra | 2 | `10.99.2.0/24` | Infrastructure services (Step-CA, Traefik, DNS, NTP). Uses a dedicated virtual NIC on an isolated bridge — not on the trunk/switch. |
+| trusted | 10 | `10.99.10.0/24` | Trusted devices. Full internet, SSH to router, dashboard access. mDNS reflected to IoT. |
+| iot | 20 | `10.99.20.0/24` | IoT jail. DHCP only, no internet, no router access beyond DHCP/DNS. mDNS reflected to trusted. |
+| guest | 30 | `10.99.30.0/24` | Guest network. Internet access but no SSH or dashboard. |
+| lab | 40 | `10.99.40.0/24` + `fd00:40::/64` | Lab (dual-stack). Full internet on IPv4 and IPv6, SSH to router. |
+
+The management interface (`10.99.0.0/24`) provides out-of-band access
+to the router from the Proxmox host. Three VMs provide the
+infrastructure:
+
+| VM | VMID | IP | Role |
+|----|------|----|------|
+| infra-CA | 100 | `10.99.2.3` | Step-CA private PKI — issues TLS and mTLS certificates |
+| nifty-filter | 101 | `10.99.0.1` | Router, firewall, nifty-dashboard |
+| infra-services | 202 | `10.99.2.2` | Traefik reverse proxy, Technitium DNS, DDNS updater, Chrony NTP |
+
 ## Deploying to Proxmox VE
 
 A full deployment consists of three VMs, deployed in order. The example
