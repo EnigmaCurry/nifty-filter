@@ -477,7 +477,21 @@ async fn serve_acme_tls_alpn01(
     );
 
     let mut state = {
+        // Build a rustls ClientConfig with native roots (includes Step-CA root
+        // from security.pki.certificateFiles). tokio-rustls-acme defaults to
+        // webpki-roots which only has public CAs.
+        let mut acme_root_store = rustls::RootCertStore::empty();
+        for cert in rustls_native_certs::load_native_certs().certs {
+            let _ = acme_root_store.add(cert);
+        }
+        let acme_client_config = Arc::new(
+            rustls::ClientConfig::builder()
+                .with_root_certificates(acme_root_store)
+                .with_no_client_auth(),
+        );
+
         let mut cfg = AcmeConfig::new(domains.clone())
+            .client_tls_config(acme_client_config)
             .cache(DirCache::new(cache_dir.clone()))
             .directory(directory_url.clone());
 
