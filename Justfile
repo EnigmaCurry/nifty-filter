@@ -1103,29 +1103,34 @@ pve-install-step-ca pve_host ip bridge="vmbr2" vm_name="infra-CA" router_vmid="1
     fi
 
     # --- Add a NIC to the router VM on this bridge (if not already present) ---
-    ROUTER_CONFIG=$(ssh ${SSH_OPTS} ${REMOTE} "qm config {{router_vmid}}")
-    if ! echo "${ROUTER_CONFIG}" | grep -q "bridge=${BRIDGE}"; then
-        NEXT_NET=1
-        while echo "${ROUTER_CONFIG}" | grep -q "^net${NEXT_NET}:"; do
-            NEXT_NET=$((NEXT_NET + 1))
-        done
-        echo "Adding net${NEXT_NET} (bridge=${BRIDGE}) to router VM {{router_vmid}}..."
-        ssh ${SSH_OPTS} ${REMOTE} "qm set {{router_vmid}} --net${NEXT_NET} virtio,bridge=${BRIDGE}"
-        INFRA_MAC=$(ssh ${SSH_OPTS} ${REMOTE} "qm config {{router_vmid}}" | grep "^net${NEXT_NET}:" | grep -oP 'virtio=\K[^,]+')
-        echo "  Router NIC added (MAC: ${INFRA_MAC})."
-        echo "  Add this to your nifty-filter.hcl:"
-        echo ""
-        echo "    vlan \"infra\" {"
-        echo "      id = 2"
-        echo "      interface {"
-        echo "        mac  = \"${INFRA_MAC}\""
-        echo "        name = \"infra\""
-        echo "      }"
-        echo "      ..."
-        echo "    }"
-        echo ""
+    if ssh ${SSH_OPTS} ${REMOTE} "qm config {{router_vmid}}" &>/dev/null; then
+        ROUTER_CONFIG=$(ssh ${SSH_OPTS} ${REMOTE} "qm config {{router_vmid}}")
+        if ! echo "${ROUTER_CONFIG}" | grep -q "bridge=${BRIDGE}"; then
+            NEXT_NET=1
+            while echo "${ROUTER_CONFIG}" | grep -q "^net${NEXT_NET}:"; do
+                NEXT_NET=$((NEXT_NET + 1))
+            done
+            echo "Adding net${NEXT_NET} (bridge=${BRIDGE}) to router VM {{router_vmid}}..."
+            ssh ${SSH_OPTS} ${REMOTE} "qm set {{router_vmid}} --net${NEXT_NET} virtio,bridge=${BRIDGE}"
+            INFRA_MAC=$(ssh ${SSH_OPTS} ${REMOTE} "qm config {{router_vmid}}" | grep "^net${NEXT_NET}:" | grep -oP 'virtio=\K[^,]+')
+            echo "  Router NIC added (MAC: ${INFRA_MAC})."
+            echo "  Add this to your nifty-filter.hcl:"
+            echo ""
+            echo "    vlan \"infra\" {"
+            echo "      id = 2"
+            echo "      interface {"
+            echo "        mac  = \"${INFRA_MAC}\""
+            echo "        name = \"infra\""
+            echo "      }"
+            echo "      ..."
+            echo "    }"
+            echo ""
+        else
+            echo "Router VM {{router_vmid}} already has a NIC on ${BRIDGE}."
+        fi
     else
-        echo "Router VM {{router_vmid}} already has a NIC on ${BRIDGE}."
+        echo "Router VM {{router_vmid}} does not exist yet — skipping NIC addition."
+        echo "The router NIC will be added to ${BRIDGE} when pve-install-services runs."
     fi
 
     # Close PVE SSH before handing off to nixos-vm-template
