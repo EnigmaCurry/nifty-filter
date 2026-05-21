@@ -78,6 +78,8 @@ pub fn serve(cfg: AppConfig, root_dir: PathBuf) -> Result<(), CliError> {
         plan.session_check_secs,
         plan.tls_config,
         plan.auth_config,
+        cfg.tls.client_cert_path.clone(),
+        cfg.tls.client_key_path.clone(),
     ))
     .map_err(|e| {
         error!("server::run failed: {:#}", e);

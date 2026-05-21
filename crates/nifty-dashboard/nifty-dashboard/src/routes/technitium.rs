@@ -117,8 +117,8 @@ struct TechRecordEntry {
 ///
 /// Returns forwarder configuration and zone information from the Technitium DNS
 /// server running on the services host. Authenticates as the viewer user.
-async fn get_technitium(_state: State<AppState>) -> ApiJson<TechnitiumResponse> {
-    match fetch_technitium_data().await {
+async fn get_technitium(state: State<AppState>) -> ApiJson<TechnitiumResponse> {
+    match fetch_technitium_data(&state.services_client).await {
         Ok(resp) => json_ok(resp),
         Err(msg) => json_ok(TechnitiumResponse {
             forwarders: None,
@@ -203,34 +203,13 @@ fn read_services_config() -> Result<ServicesInfo, String> {
     })
 }
 
-async fn fetch_technitium_data() -> Result<TechnitiumResponse, String> {
+async fn fetch_technitium_data(services_client: &reqwest::Client) -> Result<TechnitiumResponse, String> {
     let info = read_services_config()?;
 
     let dns_host = format!("dns.{}", info.domain);
     let base_url = format!("https://{}", info.ip_address);
 
-    // TOFU: pin the services VM's Traefik certificate on first connect.
-    // If the services VM is redeployed, delete the pin file to re-pin.
-    let state_dir = std::env::var("ROOT_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("/var/lib/nifty-dashboard"));
-    let pin_path = state_dir.join("services-cert.pin");
-    let verifier = std::sync::Arc::new(crate::util::tofu::TofuVerifier::new(&pin_path));
-    let tls_config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth();
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .use_preconfigured_tls(tls_config)
-        .default_headers({
-            let mut h = reqwest::header::HeaderMap::new();
-            h.insert(reqwest::header::HOST, dns_host.parse().unwrap());
-            h
-        })
-        .build()
-        .map_err(|e| format!("http client error: {e}"))?;
+    let client = services_client;
 
     // Forwarder info comes from the HCL config (settings API requires admin).
     let concurrent = info.forwarders.len() > 1;
@@ -242,22 +221,8 @@ async fn fetch_technitium_data() -> Result<TechnitiumResponse, String> {
     });
 
     // Login as viewer and fetch zones (viewer has per-zone read access).
-    let token = login(&client, &base_url, &info.viewer_password).await
-        .map_err(|e| {
-            if e.contains("certificate") || e.contains("fingerprint") || e.contains("InvalidCertificate") {
-                format!(
-                    "WARNING: The services VM TLS certificate has changed since it was last pinned. \
-                     This could indicate the services VM was redeployed, or it could be a \
-                     man-in-the-middle attack. Investigate before proceeding. \
-                     If the services VM was intentionally redeployed, reset the pin: \
-                     sudo rm {} && sudo systemctl restart nifty-dashboard",
-                    pin_path.display()
-                )
-            } else {
-                e
-            }
-        })?;
-    let zones = fetch_zones(&client, &base_url, &token).await.unwrap_or_default();
+    let token = login(client, &base_url, &dns_host, &info.viewer_password).await?;
+    let zones = fetch_zones(client, &base_url, &dns_host, &token).await.unwrap_or_default();
 
     Ok(TechnitiumResponse {
         forwarders,
@@ -291,11 +256,13 @@ async fn parse_json<T: serde::de::DeserializeOwned>(
 async fn login(
     client: &reqwest::Client,
     base_url: &str,
+    host: &str,
     password: &str,
 ) -> Result<String, String> {
     let url = format!("{base_url}/api/user/login");
     let resp = client
         .post(&url)
+        .header(reqwest::header::HOST, host)
         .form(&[("user", "viewer"), ("pass", password)])
         .send()
         .await
@@ -315,11 +282,13 @@ async fn login(
 async fn fetch_zones(
     client: &reqwest::Client,
     base_url: &str,
+    host: &str,
     token: &str,
 ) -> Result<Vec<ZoneInfo>, String> {
     let url = format!("{base_url}/api/zones/list");
     let resp = client
         .get(&url)
+        .header(reqwest::header::HOST, host)
         .header("Authorization", format!("Bearer {token}"))
         .send()
         .await
@@ -338,7 +307,7 @@ async fn fetch_zones(
 
     let mut zones = Vec::new();
     for entry in zone_entries {
-        let records = fetch_zone_records(client, base_url, token, &entry.name)
+        let records = fetch_zone_records(client, base_url, host, token, &entry.name)
             .await
             .unwrap_or_default();
         zones.push(ZoneInfo {
@@ -354,12 +323,14 @@ async fn fetch_zones(
 async fn fetch_zone_records(
     client: &reqwest::Client,
     base_url: &str,
+    host: &str,
     token: &str,
     zone: &str,
 ) -> Result<Vec<RecordInfo>, String> {
     let url = format!("{base_url}/api/zones/records/get");
     let resp = client
         .get(&url)
+        .header(reqwest::header::HOST, host)
         .header("Authorization", format!("Bearer {token}"))
         .query(&[("domain", zone), ("zone", zone), ("listZone", "true")])
         .send()

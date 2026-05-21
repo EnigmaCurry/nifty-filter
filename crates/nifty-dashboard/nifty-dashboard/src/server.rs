@@ -36,6 +36,9 @@ pub struct AppState {
     pub config_changed_tx: tokio::sync::broadcast::Sender<()>,
     pub shutdown_tx: tokio::sync::broadcast::Sender<()>,
     pub config_boot_values: Option<serde_json::Value>,
+    /// Shared HTTP client for outbound connections to services VM (Traefik).
+    /// Uses system roots for CA verification + optional mTLS client cert.
+    pub services_client: reqwest::Client,
 }
 
 #[derive(Clone, Debug)]
@@ -82,6 +85,8 @@ pub async fn run(
     session_check_secs: u64,
     tls_config: TlsConfig,
     auth_config: AuthConfig,
+    client_cert_path: Option<PathBuf>,
+    client_key_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     log_startup(&db_url)?;
 
@@ -132,12 +137,17 @@ pub async fn run(
     let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
 
     // Shared state + router
+    let services_client = build_services_client(
+        client_cert_path.as_deref(),
+        client_key_path.as_deref(),
+    )?;
     let state = AppState {
         db,
         auth_config,
         config_changed_tx,
         shutdown_tx: shutdown_tx.clone(),
         config_boot_values,
+        services_client,
     };
     let app = build_app(
         forward_auth_cfg,
@@ -310,6 +320,46 @@ fn build_mtls_client_verifier() -> anyhow::Result<Arc<dyn rustls::server::danger
         .build()
         .context("failed to build client certificate verifier")?;
     Ok(verifier)
+}
+
+/// Build a shared reqwest::Client for outbound connections to the services VM.
+/// Uses system roots for CA verification + optional mTLS client cert.
+fn build_services_client(
+    client_cert: Option<&std::path::Path>,
+    client_key: Option<&std::path::Path>,
+) -> anyhow::Result<reqwest::Client> {
+    let mut root_store = rustls::RootCertStore::empty();
+    let native = rustls_native_certs::load_native_certs();
+    for cert in native.certs {
+        root_store.add(cert).context("failed to add system root cert")?;
+    }
+
+    let tls_config = if let (Some(cert_path), Some(key_path)) = (client_cert, client_key) {
+        let cert_data = std::fs::read(cert_path)
+            .with_context(|| format!("failed to read client cert '{}'", cert_path.display()))?;
+        let key_data = std::fs::read(key_path)
+            .with_context(|| format!("failed to read client key '{}'", key_path.display()))?;
+        let certs = rustls_pemfile::certs(&mut &cert_data[..])
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to parse client cert PEM")?;
+        let key = rustls_pemfile::private_key(&mut &key_data[..])
+            .context("failed to parse client key PEM")?
+            .context("no private key found in client key PEM")?;
+        rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_client_auth_cert(certs, key)
+            .context("failed to configure client auth cert for outbound connections")?
+    } else {
+        rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth()
+    };
+
+    reqwest::Client::builder()
+        .use_preconfigured_tls(tls_config)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .context("failed to build services HTTP client")
 }
 
 /// Build a `RustlsConfig` from PEM cert/key with mTLS client verification enabled.
