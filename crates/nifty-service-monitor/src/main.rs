@@ -1,12 +1,10 @@
 mod config;
 mod ddns;
 mod technitium;
-mod tofu;
 mod traefik;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
@@ -35,9 +33,17 @@ struct Cli {
     #[arg(long, env = "MONITOR_POLL_INTERVAL", default_value = "60")]
     poll_interval: u64,
 
-    /// Directory for persistent state (certificate pins, etc.)
+    /// Directory for persistent state (admin passwords, etc.)
     #[arg(long, env = "MONITOR_STATE_DIR", default_value = "/var/lib/nifty-service-monitor")]
     state_dir: PathBuf,
+
+    /// Path to client certificate PEM for mTLS
+    #[arg(long, env = "MONITOR_CLIENT_CERT")]
+    client_cert: Option<PathBuf>,
+
+    /// Path to client key PEM for mTLS
+    #[arg(long, env = "MONITOR_CLIENT_KEY")]
+    client_key: Option<PathBuf>,
 
     /// Traefik dynamic config directory (for writing service router configs)
     #[arg(long, env = "MONITOR_TRAEFIK_DYNAMIC_DIR")]
@@ -48,18 +54,52 @@ struct Cli {
     ddns_config_path: Option<PathBuf>,
 }
 
-fn build_client(state_dir: &std::path::Path) -> reqwest::Client {
-    let verifier = Arc::new(tofu::TofuVerifier::new(state_dir));
-    let tls_config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth();
+fn build_client(
+    client_cert: Option<&std::path::Path>,
+    client_key: Option<&std::path::Path>,
+) -> reqwest::Client {
+    // Load system root certificates (includes Step-CA root via security.pki.certificateFiles)
+    let mut root_store = rustls::RootCertStore::empty();
+    for cert in rustls_native_certs::load_native_certs().expect("failed to load system root certs") {
+        root_store.add(cert).expect("failed to add system root cert");
+    }
+
+    let tls_config = if let (Some(cert_path), Some(key_path)) = (client_cert, client_key) {
+        // mTLS: present client certificate
+        let certs = load_pem_certs(cert_path);
+        let key = load_pem_key(key_path);
+        rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_client_auth_cert(certs, key)
+            .expect("failed to configure client auth cert")
+    } else {
+        // No client cert — still verify server via system roots
+        rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth()
+    };
 
     reqwest::Client::builder()
         .use_preconfigured_tls(tls_config)
         .connect_timeout(Duration::from_secs(10))
         .build()
         .expect("failed to build HTTP client")
+}
+
+fn load_pem_certs(path: &std::path::Path) -> Vec<rustls::pki_types::CertificateDer<'static>> {
+    let data = std::fs::read(path)
+        .unwrap_or_else(|e| panic!("failed to read cert file '{}': {e}", path.display()));
+    rustls_pemfile::certs(&mut &data[..])
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_else(|e| panic!("failed to parse PEM certs from '{}': {e}", path.display()))
+}
+
+fn load_pem_key(path: &std::path::Path) -> rustls::pki_types::PrivateKeyDer<'static> {
+    let data = std::fs::read(path)
+        .unwrap_or_else(|e| panic!("failed to read key file '{}': {e}", path.display()));
+    rustls_pemfile::private_key(&mut &data[..])
+        .unwrap_or_else(|e| panic!("failed to parse PEM key from '{}': {e}", path.display()))
+        .unwrap_or_else(|| panic!("no private key found in '{}'", path.display()))
 }
 
 /// Format a reqwest error with its full source chain for debugging.
@@ -190,7 +230,7 @@ async fn main() -> ExitCode {
 
     let cli = Cli::parse();
     let interval = Duration::from_secs(cli.poll_interval);
-    let client = build_client(&cli.state_dir);
+    let client = build_client(cli.client_cert.as_deref(), cli.client_key.as_deref());
 
     info!(
         "starting nifty-service-monitor (router={}, interval={}s)",
