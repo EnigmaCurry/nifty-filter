@@ -110,7 +110,8 @@ in
       };
       path = [ pkgs.podman pkgs.openssl pkgs.step-cli ];
       script = let
-        dnsFlags = concatStringsSep "," cfg.dnsNames;
+        allDnsNames = cfg.dnsNames ++ [ "ca.${cfg.domain}" ];
+        dnsFlags = concatStringsSep "," allDnsNames;
       in ''
         set -euo pipefail
         mkdir -p ${hostCertsDir} ${hostClientCertsDir}
