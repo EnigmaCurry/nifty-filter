@@ -1169,7 +1169,7 @@ pve-install-step-ca pve_host ip bridge="vmbr2" vm_name="infra-CA" router_vmid="1
         just create-batch "${VM_NAME}" "podman,step-ca" "512" "1" "4G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
 
 # Copy TLS certs from Step-CA VM to router and infra-services VMs.
-# Uses the router (10.99.2.1) as a jump host to reach the infra VLAN.
+# Jump chain: workstation → PVE host → router (mgmt) → infra VLAN VMs.
 pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" services_ip="10.99.2.2":
     #!/usr/bin/env bash
     set -eo pipefail
@@ -1178,47 +1178,51 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
     STEP_CA_IP="{{step_ca_ip}}"
     ROUTER_IP="{{router_ip}}"
     SERVICES_IP="{{services_ip}}"
-    JUMP="root@${PVE_HOST}"
-    CA="admin@${STEP_CA_IP}"
+
+    # Jump chain: PVE host → router (mgmt bridge) → infra VLAN
+    PVE="root@${PVE_HOST}"
     ROUTER="admin@${ROUTER_IP}"
-    SERVICES="admin@${SERVICES_IP}"
+    JUMP_TO_ROUTER="-J ${PVE}"
+    JUMP_TO_INFRA="-J ${PVE},${ROUTER}"
+
+    CA="admin@${STEP_CA_IP}"
 
     echo "=== Distributing TLS certificates from Step-CA (${STEP_CA_IP}) ==="
+    echo "    Jump chain: ${PVE_HOST} → ${ROUTER_IP} → ${STEP_CA_IP}"
     echo ""
+
+    # Helper: read a file from Step-CA via double jump
+    ca_cat() { ssh ${JUMP_TO_INFRA} ${CA} "cat $1"; }
 
     # --- Copy root CA cert to workstation (for Nix config) ---
     echo "Fetching root CA cert..."
     mkdir -p .step-ca-certs
-    scp -J ${JUMP} "${CA}:/var/lib/step-ca/certs/root_ca.crt" .step-ca-certs/root_ca.crt
+    ca_cat /var/lib/step-ca/certs/root_ca.crt > .step-ca-certs/root_ca.crt
     echo "  Saved to .step-ca-certs/root_ca.crt"
 
     # --- Copy dashboard client cert to router ---
     echo "Copying dashboard client cert to router (${ROUTER_IP})..."
-    ssh -J ${JUMP} ${ROUTER} "sudo mkdir -p /var/lib/nifty-dashboard && sudo chown root:wheel /var/lib/nifty-dashboard && sudo chmod 755 /var/lib/nifty-dashboard"
-    scp -J ${JUMP} -o "ProxyJump=${JUMP}" \
-        <(ssh -J ${JUMP} ${CA} "cat /var/lib/step-ca/client-certs/dashboard/cert.pem") \
-        /dev/null 2>/dev/null || true
-    # scp through double jump is tricky — use ssh pipe instead
-    ssh -J ${JUMP} ${CA} "cat /var/lib/step-ca/client-certs/dashboard/cert.pem" | \
-        ssh -J ${JUMP} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/client-cert.pem > /dev/null && sudo chmod 644 /var/lib/nifty-dashboard/client-cert.pem"
-    ssh -J ${JUMP} ${CA} "cat /var/lib/step-ca/client-certs/dashboard/key.pem" | \
-        ssh -J ${JUMP} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/client-key.pem > /dev/null && sudo chmod 600 /var/lib/nifty-dashboard/client-key.pem"
+    ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo mkdir -p /var/lib/nifty-dashboard && sudo chown root:wheel /var/lib/nifty-dashboard && sudo chmod 755 /var/lib/nifty-dashboard"
+    ca_cat /var/lib/step-ca/client-certs/dashboard/cert.pem | \
+        ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/client-cert.pem > /dev/null && sudo chmod 644 /var/lib/nifty-dashboard/client-cert.pem"
+    ca_cat /var/lib/step-ca/client-certs/dashboard/key.pem | \
+        ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/client-key.pem > /dev/null && sudo chmod 600 /var/lib/nifty-dashboard/client-key.pem"
     echo "  Dashboard certs installed on router."
 
     # --- Copy service-monitor + traefik client certs to infra-services ---
-    if ssh -J ${JUMP} ${SERVICES} "true" 2>/dev/null; then
+    if ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "true" 2>/dev/null; then
         echo "Copying service-monitor client cert to infra-services (${SERVICES_IP})..."
-        ssh -J ${JUMP} ${CA} "cat /var/lib/step-ca/client-certs/service-monitor/cert.pem" | \
-            ssh -J ${JUMP} ${SERVICES} "sudo mkdir -p /var/lib/service-monitor-certs && sudo tee /var/lib/service-monitor-certs/cert.pem > /dev/null"
-        ssh -J ${JUMP} ${CA} "cat /var/lib/step-ca/client-certs/service-monitor/key.pem" | \
-            ssh -J ${JUMP} ${SERVICES} "sudo tee /var/lib/service-monitor-certs/key.pem > /dev/null && sudo chmod 600 /var/lib/service-monitor-certs/key.pem"
+        ca_cat /var/lib/step-ca/client-certs/service-monitor/cert.pem | \
+            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo mkdir -p /var/lib/service-monitor-certs && sudo tee /var/lib/service-monitor-certs/cert.pem > /dev/null"
+        ca_cat /var/lib/step-ca/client-certs/service-monitor/key.pem | \
+            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo tee /var/lib/service-monitor-certs/key.pem > /dev/null && sudo chmod 600 /var/lib/service-monitor-certs/key.pem"
         echo "  Service-monitor certs installed."
 
         echo "Copying traefik client cert to infra-services (${SERVICES_IP})..."
-        ssh -J ${JUMP} ${CA} "cat /var/lib/step-ca/client-certs/traefik/cert.pem" | \
-            ssh -J ${JUMP} ${SERVICES} "sudo mkdir -p /var/lib/traefik-certs && sudo tee /var/lib/traefik-certs/cert.pem > /dev/null"
-        ssh -J ${JUMP} ${CA} "cat /var/lib/step-ca/client-certs/traefik/key.pem" | \
-            ssh -J ${JUMP} ${SERVICES} "sudo tee /var/lib/traefik-certs/key.pem > /dev/null && sudo chmod 600 /var/lib/traefik-certs/key.pem"
+        ca_cat /var/lib/step-ca/client-certs/traefik/cert.pem | \
+            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo mkdir -p /var/lib/traefik-certs && sudo tee /var/lib/traefik-certs/cert.pem > /dev/null"
+        ca_cat /var/lib/step-ca/client-certs/traefik/key.pem | \
+            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo tee /var/lib/traefik-certs/key.pem > /dev/null && sudo chmod 600 /var/lib/traefik-certs/key.pem"
         echo "  Traefik certs installed."
     else
         echo "Infra-services VM (${SERVICES_IP}) not reachable — skipping."
@@ -1230,7 +1234,7 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
     echo "Add it to your Nix config: security.pki.certificateFiles = [ ./step-ca-certs/root_ca.crt ];"
     echo ""
     echo "Restart the dashboard to pick up the new certs:"
-    echo "  ssh -J ${JUMP} ${ROUTER} sudo systemctl restart nifty-dashboard"
+    echo "  ssh ${JUMP_TO_ROUTER} ${ROUTER} sudo systemctl restart nifty-dashboard"
 
 # Upgrade Step-CA VM (delegates to nixos-vm-template proxmox backend)
 pve-upgrade-step-ca pve_host vm_name="infra-CA" pve_storage="local-lvm":
