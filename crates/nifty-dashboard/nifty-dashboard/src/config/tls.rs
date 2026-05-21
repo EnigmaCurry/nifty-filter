@@ -17,10 +17,8 @@ pub enum TlsMode {
     None,
     /// Use local certificate and private key files.
     Manual,
-    /// Use ACME (Let's Encrypt, etc.) for automatic TLS certificates.
+    /// Use ACME (Let's Encrypt, Step-CA, etc.) for automatic TLS certificates.
     Acme,
-    /// Use a self-signed certificate generated at startup.
-    SelfSigned,
 }
 
 impl fmt::Display for TlsMode {
@@ -29,7 +27,6 @@ impl fmt::Display for TlsMode {
             TlsMode::None => "none",
             TlsMode::Manual => "manual",
             TlsMode::Acme => "acme",
-            TlsMode::SelfSigned => "self-signed",
         };
         write!(f, "{s}")
     }
@@ -43,9 +40,8 @@ impl FromStr for TlsMode {
             "none" => Ok(TlsMode::None),
             "manual" => Ok(TlsMode::Manual),
             "acme" => Ok(TlsMode::Acme),
-            "self-signed" => Ok(TlsMode::SelfSigned),
             other => Err(format!(
-                "invalid TLS mode '{other}', expected one of: none, manual, acme, self-signed"
+                "invalid TLS mode '{other}', expected one of: none, manual, acme"
             )),
         }
     }
@@ -87,25 +83,10 @@ impl FromStr for TlsAcmeChallenge {
     }
 }
 
-impl TlsConfig {
-    pub const DEFAULT_SELF_SIGNED_VALID_SECONDS: u32 = 60 * 60 * 24 * 365; // 1 year
-    pub const DEFAULT_CA_CERT_VALID_SECONDS: u32 = 60 * 60 * 24 * 365 * 10; // 10 years
-
-    pub fn effective_self_signed_valid_seconds(&self) -> u32 {
-        self.self_signed_valid_seconds
-            .unwrap_or(Self::DEFAULT_SELF_SIGNED_VALID_SECONDS)
-    }
-
-    pub fn effective_ca_cert_valid_seconds(&self) -> u32 {
-        self.ca_cert_valid_seconds
-            .unwrap_or(Self::DEFAULT_CA_CERT_VALID_SECONDS)
-    }
-}
-
 #[derive(Conf, Debug, Clone, Serialize, Deserialize, Default)]
 #[conf(serde)]
 pub struct TlsConfig {
-    /// TLS mode to use: none, manual, acme, or self-signed.
+    /// TLS mode to use: none, manual, or acme.
     #[arg(long = "tls-mode", env = "TLS_MODE")]
     #[conf(default(TlsMode::None))]
     pub mode: TlsMode,
@@ -121,7 +102,7 @@ pub struct TlsConfig {
     /// Additional DNS SubjectAltNames (SANs) for the TLS certificate.
     ///
     /// APP_HOST is used as the primary Common Name (CN); these names are added
-    /// as SubjectAltNames. Used for ACME and self-signed modes.
+    /// as SubjectAltNames. Used for ACME mode.
     #[arg(long = "tls-san", env = "TLS_SANS")]
     #[conf(default(StringList([].to_vec())))]
     pub sans: StringList,
@@ -131,7 +112,7 @@ pub struct TlsConfig {
     #[conf(default(TlsAcmeChallenge::TlsAlpn01))]
     pub acme_challenge: TlsAcmeChallenge,
 
-    /// ACME directory URL (e.g. Let's Encrypt).
+    /// ACME directory URL (e.g. Step-CA or Let's Encrypt).
     /// Only used when --tls-mode=acme.
     #[arg(long = "tls-acme-directory-url", env = "TLS_ACME_DIRECTORY_URL")]
     #[conf(default("https://acme-v02.api.letsencrypt.org/directory".to_string()))]
@@ -141,34 +122,22 @@ pub struct TlsConfig {
     #[arg(long = "tls-acme-email", env = "TLS_ACME_EMAIL")]
     pub acme_email: Option<String>,
 
-    /// Use ephemeral self-signed cert (no CA cert, no tls cache directory).
-    /// Only valid when --tls-mode=self-signed.
-    #[arg(long = "tls-self-signed-ephemeral", env = "TLS_SELF_SIGNED_EPHEMERAL")]
-    pub self_signed_ephemeral: bool,
-
-    /// Validity in seconds for the *leaf* certificate when --tls-mode=self-signed.
-    /// If omitted, defaults to 1 year.
-    #[arg(
-        long = "tls-self-signed-valid-seconds",
-        env = "TLS_SELF_SIGNED_VALID_SECONDS"
-    )]
-    pub self_signed_valid_seconds: Option<u32>,
-
-    /// Validity in seconds for the *CA* certificate when --tls-mode=self-signed (non-ephemeral).
-    /// If omitted, defaults to 10 years.
-    #[arg(long = "tls-ca-cert-valid-seconds", env = "TLS_CA_CERT_VALID_SECONDS")]
-    pub ca_cert_valid_seconds: Option<u32>,
-
     #[arg(long = "acme-dns-api-base", env = "ACME_DNS_API_BASE")]
     #[conf(default("https://auth.acme-dns.io".to_string()))]
     pub acme_dns_api_base: String,
+
+    /// Path to client certificate PEM for mTLS (dashboard's own identity).
+    #[arg(long = "tls-client-cert", env = "TLS_CLIENT_CERT")]
+    pub client_cert_path: Option<PathBuf>,
+
+    /// Path to client key PEM for mTLS.
+    #[arg(long = "tls-client-key", env = "TLS_CLIENT_KEY")]
+    pub client_key_path: Option<PathBuf>,
 }
 
 impl TlsConfig {
     pub fn validate_with_root(&self, _root_dir: &std::path::Path) -> Result<(), CliError> {
-        // -------------------------------
         // manual mode requirements
-        // -------------------------------
         if self.mode == TlsMode::Manual {
             if self.cert_path.is_none() || self.key_path.is_none() {
                 return Err(CliError::InvalidArgs(
@@ -177,7 +146,6 @@ impl TlsConfig {
                 ));
             }
         } else {
-            // Best practice: reject manual-only args outside manual mode
             if self.cert_path.is_some() || self.key_path.is_some() {
                 return Err(CliError::InvalidArgs(
                     "--tls-cert/--tls-key are only valid when --tls-mode=manual.".to_string(),
@@ -185,64 +153,12 @@ impl TlsConfig {
             }
         }
 
-        // -------------------------------
-        // self-signed knobs require tls-mode=self-signed
-        // -------------------------------
-        if self.mode != TlsMode::SelfSigned {
-            if self.self_signed_ephemeral {
-                return Err(CliError::InvalidArgs(
-                    "--tls-self-signed-ephemeral requires --tls-mode=self-signed.".to_string(),
-                ));
-            }
-            if self.self_signed_valid_seconds.is_some() {
-                return Err(CliError::InvalidArgs(
-                    "--tls-self-signed-valid-seconds requires --tls-mode=self-signed.".to_string(),
-                ));
-            }
-            if self.ca_cert_valid_seconds.is_some() {
-                return Err(CliError::InvalidArgs(
-                    "--tls-ca-cert-valid-seconds requires --tls-mode=self-signed.".to_string(),
-                ));
-            }
-            return Ok(());
-        }
-
-        // -------------------------------
-        // self-signed mode constraints
-        // -------------------------------
-        let leaf_secs = self.effective_self_signed_valid_seconds();
-
-        // keep this >= your renewal logic sanity (and avoids ridiculous configs)
-        if leaf_secs < 10 {
-            return Err(CliError::InvalidArgs(format!(
-                "--tls-self-signed-valid-seconds must be at least 10 (got {leaf_secs})."
-            )));
-        }
-
-        if self.self_signed_ephemeral {
-            // ephemeral: no CA, so CA validity must not be set
-            if self.ca_cert_valid_seconds.is_some() {
-                return Err(CliError::InvalidArgs(
-                    "--tls-ca-cert-valid-seconds is not valid with --tls-self-signed-ephemeral (ephemeral mode has no CA)."
-                        .to_string(),
-                ));
-            }
-            return Ok(());
-        }
-
-        // non-ephemeral: CA is required and must outlive leaf
-        let ca_secs = self.effective_ca_cert_valid_seconds();
-
-        if ca_secs < 60 {
-            return Err(CliError::InvalidArgs(format!(
-                "--tls-ca-cert-valid-seconds must be at least 60 (got {ca_secs})."
-            )));
-        }
-
-        if ca_secs <= leaf_secs {
-            return Err(CliError::InvalidArgs(format!(
-                "--tls-ca-cert-valid-seconds ({ca_secs}) must be greater than --tls-self-signed-valid-seconds ({leaf_secs})."
-            )));
+        // Client cert/key must be provided together
+        if self.client_cert_path.is_some() != self.client_key_path.is_some() {
+            return Err(CliError::InvalidArgs(
+                "--tls-client-cert and --tls-client-key must both be provided together."
+                    .to_string(),
+            ));
         }
 
         Ok(())
