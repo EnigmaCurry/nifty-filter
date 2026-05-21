@@ -140,8 +140,8 @@ disrupting the others, smaller images build and boot faster, and
 kernel-level isolation limits the blast radius if any single service is
 compromised. The CA runs on its own VM so that its private keys are
 never co-located with application workloads. With long-lived
-certificates, the CA VM can be shut down entirely between renewals for
-a truly offline CA.
+certificates, the CA VM can be shut down entirely between renewals to
+further limit access to the CA.
 
 The router uses PCI passthrough NICs for WAN, trunk, and management.
 The infra VLAN uses a virtual NIC on an isolated bridge (`vmbr2`)
