@@ -155,6 +155,10 @@ in
           --password-file="/home/step/secrets/password" \
           --acme
 
+        # Fix paths in ca.json to be container-relative (/home/step/...)
+        sed -i "s|$MOUNT|/home/step|g" "$MOUNT/config/ca.json"
+        sed -i "s|$MOUNT|/home/step|g" "$MOUNT/config/defaults.json"
+
         # Increase max cert duration to 100 years (private CA, long-lived certs).
         ${pkgs.jq}/bin/jq '.authority.provisioners |= map(
           if .type == "JWK" then .claims = (.claims // {}) + {"maxTLSCertDuration": "876000h", "defaultTLSCertDuration": "876000h"}
