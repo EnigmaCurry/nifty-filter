@@ -108,9 +108,9 @@ On your workstation:
 
 ## Deploying to Proxmox VE
 
-A full deployment consists of three VMs on the infra VLAN, deployed in
-order. The example uses PCI passthrough NICs for the router, but
-virtual bridge NICs (`vmbr*`) or a mix of both also work.
+A full deployment consists of three VMs, deployed in order. The example
+uses PCI passthrough NICs for the router, but virtual bridge NICs
+(`vmbr*`) or a mix of both also work.
 
 | VM | VMID | IP | Purpose |
 |----|------|----|---------|
