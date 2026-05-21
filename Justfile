@@ -541,13 +541,32 @@ pve-install pve_host:
         fi
     done
 
-    # --- Build NIC flags (mgmt is always net0) ---
+    # --- Discover infra bridge (created by pve-install-step-ca) ---
+    INFRA_BRIDGE=""
+    for candidate in vmbr2; do
+        if ssh ${SSH_OPTS} ${REMOTE} "ip link show ${candidate}" &>/dev/null; then
+            INFRA_BRIDGE="${candidate}"
+            echo "Found infra bridge: ${INFRA_BRIDGE}"
+            break
+        fi
+    done
+    if [ -z "${INFRA_BRIDGE}" ]; then
+        echo "ERROR: No infra bridge found (expected vmbr2)."
+        echo "Deploy the Step-CA VM first: just pve-install-step-ca ${PVE_HOST} <step-ca-ip>"
+        exit 1
+    fi
+
+    # --- Build NIC flags (mgmt is always net0, infra is last) ---
     NIC_ARGS="--net0 virtio,bridge=mgmt"
     NET_INDEX=1
     for bridge in "${BRIDGES[@]}"; do
         NIC_ARGS="${NIC_ARGS} --net${NET_INDEX} virtio,bridge=${bridge}"
         NET_INDEX=$((NET_INDEX + 1))
     done
+    # Infra NIC for Step-CA / services communication
+    NIC_ARGS="${NIC_ARGS} --net${NET_INDEX} virtio,bridge=${INFRA_BRIDGE}"
+    INFRA_NET_INDEX=${NET_INDEX}
+    NET_INDEX=$((NET_INDEX + 1))
 
     HOSTPCI_ARGS=""
     PCI_INDEX=0
@@ -628,6 +647,13 @@ pve-install pve_host:
         fi
     done
 
+    # Pass infra NIC MAC so the router can identify it
+    INFRA_MAC=$(echo "${QM_CONFIG}" | grep "^net${INFRA_NET_INDEX}:" | grep -oP 'virtio=\K[^,]+')
+    if [ -n "${INFRA_MAC}" ]; then
+        FW_CFG_ARGS="${FW_CFG_ARGS} -fw_cfg name=opt/nifty/infra_mac,string=${INFRA_MAC}"
+        echo "  infra MAC: ${INFRA_MAC} (bridge: ${INFRA_BRIDGE})"
+    fi
+
     ssh ${SSH_OPTS} ${REMOTE} "qm set ${VMID} --args '${FW_CFG_ARGS}'"
 
     # --- Start VM ---
@@ -645,6 +671,7 @@ pve-install pve_host:
     for bridge in "${BRIDGES[@]}"; do
         echo "  Bridge:  ${bridge}"
     done
+    echo "  Infra:   ${INFRA_MAC:-unknown} on ${INFRA_BRIDGE}"
     for dev in "${PCI_DEVICES[@]}"; do
         echo "  PCI:     0000:${dev}"
     done
