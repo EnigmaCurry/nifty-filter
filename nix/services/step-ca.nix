@@ -41,6 +41,7 @@ let
   stepRun = ''${pkgs.podman}/bin/podman run --rm \
     -v step-ca-data:/home/step \
     -e STEPPATH=/home/step \
+    -e HOME=/home/step \
     --entrypoint ${pkgs.step-cli}/bin/step \
     nifty-step-ca:latest'';
 
@@ -161,6 +162,10 @@ in
       image = "nifty-step-ca:latest";
       cmd = [ "/home/step/config/ca.json" "--password-file" "/home/step/secrets/password" ];
       volumes = [ "step-ca-data:/home/step" ];
+      environment = {
+        STEPPATH = "/home/step";
+        HOME = "/home/step";
+      };
       extraOptions = [ "--network=host" ];
       dependsOn = [];
     };
