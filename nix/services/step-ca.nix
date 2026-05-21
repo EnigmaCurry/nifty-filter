@@ -155,6 +155,14 @@ in
           --password-file="/home/step/secrets/password" \
           --acme
 
+        # Increase max cert duration to 100 years (private CA, long-lived certs).
+        ${pkgs.jq}/bin/jq '.authority.provisioners |= map(
+          if .type == "JWK" then .claims = (.claims // {}) + {"maxTLSCertDuration": "876000h", "defaultTLSCertDuration": "876000h"}
+          elif .type == "ACME" then .claims = (.claims // {}) + {"maxTLSCertDuration": "876000h", "defaultTLSCertDuration": "876000h"}
+          else . end
+        )' "$MOUNT/config/ca.json" > "$MOUNT/config/ca.json.tmp"
+        mv "$MOUNT/config/ca.json.tmp" "$MOUNT/config/ca.json"
+
         # Copy root CA cert to host for operator access.
         cp "$MOUNT/certs/root_ca.crt" ${hostCertsDir}/root_ca.crt
         echo "Step-CA bootstrap complete. Root CA at ${hostCertsDir}/root_ca.crt"
@@ -246,7 +254,7 @@ in
               --root="$MOUNT/certs/root_ca.crt" \
               --provisioner="${cfg.provisioner}" \
               --provisioner-password-file="$MOUNT/secrets/password" \
-              --not-after=24h
+              --not-after=876000h
             cp "$MOUNT/client-certs/${name}-cert.pem" "$DIR/cert.pem"
             cp "$MOUNT/client-certs/${name}-key.pem" "$DIR/key.pem"
             chmod 644 "$DIR/cert.pem"
@@ -255,45 +263,6 @@ in
           fi
         '';
       in concatStringsSep "\n" (map issueOne certNames);
-    };
-
-    # Daily renewal timer.
-    systemd.timers.step-ca-renew-client-certs = {
-      description = "Daily client certificate renewal check";
-      wantedBy = [ "timers.target" ];
-      timerConfig = {
-        OnCalendar = "daily";
-        Persistent = true;
-      };
-    };
-
-    systemd.services.step-ca-renew-client-certs = {
-      description = "Renew client certificates approaching expiry";
-      after = [ "podman-step-ca.service" ];
-      serviceConfig.Type = "oneshot";
-      path = [ pkgs.podman pkgs.openssl pkgs.coreutils pkgs.step-cli ];
-      script = let
-        renewOne = name: ''
-          DIR="${hostClientCertsDir}/${name}"
-          if [ -f "$DIR/cert.pem" ] && [ -f "$DIR/key.pem" ]; then
-            if ! openssl x509 -in "$DIR/cert.pem" -checkend 2592000 -noout 2>/dev/null; then
-              echo "Renewing cert for ${name}.${cfg.domain}..."
-              MOUNT=$(podman volume inspect step-ca-data --format '{{.Mountpoint}}')
-              ${stepRunHost} ca renew \
-                "$MOUNT/client-certs/${name}-cert.pem" \
-                "$MOUNT/client-certs/${name}-key.pem" \
-                --ca-url="https://127.0.0.1:${portStr}" \
-                --root="$MOUNT/certs/root_ca.crt" \
-                --force
-              cp "$MOUNT/client-certs/${name}-cert.pem" "$DIR/cert.pem"
-              cp "$MOUNT/client-certs/${name}-key.pem" "$DIR/key.pem"
-              chmod 644 "$DIR/cert.pem"
-              chmod 600 "$DIR/key.pem"
-              echo "Renewed cert for ${name}.${cfg.domain}"
-            fi
-          fi
-        '';
-      in concatStringsSep "\n" (map renewOne cfg.clientCerts);
     };
 
     # Open the CA port.
