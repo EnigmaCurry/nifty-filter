@@ -3,13 +3,15 @@
 # Load via: nifty-filter nftables --config vlan_router.hcl
 
 # Dashboard TLS (Step-CA ACME + mTLS):
-# Uncomment after deploying the infra-CA VM and copying certs to the router.
-# dashboard_tls {
-#   acme_directory_url = "https://10.99.2.3:9443/acme/acme/directory"
-#   client_cert        = "/var/lib/nifty-dashboard/client-cert.pem"
-#   client_key         = "/var/lib/nifty-dashboard/client-key.pem"
-#   sans               = ["router.nifty.internal"]
-# }
+# The dashboard obtains its server cert from Step-CA via ACME and requires
+# mTLS client certificates on all HTTPS endpoints.
+# Copy client certs from the infra-CA VM to the paths below.
+dashboard_tls {
+  acme_directory_url = "https://10.99.2.3:9443/acme/acme/directory"
+  client_cert        = "/var/lib/nifty-dashboard/client-cert.pem"
+  client_key         = "/var/lib/nifty-dashboard/client-key.pem"
+  sans               = ["router.nifty.internal"]
+}
 
 # Enable VLAN support, which requires a *managed* switch:
 vlan_aware_switch = true
