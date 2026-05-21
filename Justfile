@@ -1204,7 +1204,7 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
     echo ""
 
     # Helper: read a file from Step-CA via double jump
-    ca_cat() { ssh ${JUMP_TO_INFRA} ${CA} "cat $1"; }
+    ca_cat() { ssh ${JUMP_TO_INFRA} ${CA} "sudo cat $1"; }
 
     # --- Copy root CA cert to workstation (for Nix config) ---
     echo "Fetching root CA cert..."
