@@ -142,7 +142,6 @@
   # Install script and tools available in PATH
   environment.systemPackages = with pkgs; [
     nifty-filter-pkg
-    (writeShellScriptBin "nifty-install" ''exec nifty-filter install "$@"'')
     parted
     dosfstools
     e2fsprogs
@@ -199,8 +198,8 @@
         fi
       done < "$HOME/.ssh/authorized_keys"
       echo ""
-      echo "  Ready to install. Run:"
-      echo "    nifty-install"
+      echo "  Ready. Edit config:"
+      echo "    nano /var/nifty-filter/nifty-filter.hcl"
       echo ""
     else
       echo ""

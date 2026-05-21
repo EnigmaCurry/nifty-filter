@@ -144,25 +144,17 @@ default 8 GB `/var` disk.
 
 ### 4. Configure the router
 
-SSH keys are pre-installed (collected from your workstation agent and
-the PVE host's `/root/.ssh/`) — connect directly:
+The router boots with a full `vlan_router.hcl` config — interface MACs
+are patched automatically from fw_cfg at first boot. SSH in to review
+or edit the config:
 
 ```bash
 just pve-ssh pve-router 10.99.0.1
+sudo nano /var/nifty-filter/nifty-filter.hcl
 ```
 
-Run the configuration wizard:
-
-```bash
-nifty-install
-```
-
-The wizard prompts for hostname, WAN/LAN interfaces, VLANs, subnets,
-DHCP pools, and DNS servers. It writes the configuration and reboots
-(interface renaming requires a reboot to take effect).
-
-To enable ACME + mTLS, copy the dashboard client cert/key to the
-router and add a `dashboard_tls` block to the HCL config:
+To enable ACME + mTLS, copy the dashboard client cert/key from the
+Step-CA VM and add a `dashboard_tls` block to the HCL config:
 
 ```hcl
 dashboard_tls {
