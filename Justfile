@@ -124,6 +124,22 @@ release:
     git tag "v${CURRENT_VERSION}"; \
     git push "${GIT_REMOTE}" tag "v${CURRENT_VERSION}";
 
+# Test SSH connection to Proxmox VE host and print instance info
+pve-test pve_host:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    REMOTE="root@{{pve_host}}"
+    echo "Connecting to {{pve_host}}..."
+    ssh ${REMOTE} '
+        echo "User: $(whoami)"
+        echo "Host: $(hostname)"
+        echo "PVE version: $(pveversion)"
+        echo "Uptime:$(uptime)"
+        echo ""
+        echo "VMs:"
+        qm list 2>/dev/null || echo "  (none)"
+    '
+
 # Build PVE disk image (pre-partitioned, ready to import)
 pve-image:
     #!/usr/bin/env bash

@@ -151,7 +151,18 @@ The router uses PCI passthrough NICs for WAN, trunk, and management.
 The infra VLAN uses a virtual NIC on an isolated bridge (`vmbr2`)
 shared between the router and infrastructure VMs.
 
-### 1. Deploy Step-CA (infra-CA)
+### 1. Test the PVE connection
+
+Verify you can reach the Proxmox host and that your SSH key works:
+
+```bash
+just pve-test pve-router
+```
+
+This prints the logged-in user, PVE version, uptime, and any existing
+VMs.
+
+### 2. Deploy Step-CA (infra-CA)
 
 The CA VM deploys first — it has no external dependencies (the
 container image is built by Nix, no registry pull needed).
@@ -181,7 +192,7 @@ scp user@10.99.2.3:/var/lib/step-ca/client-certs/service-monitor/ ./
 scp user@10.99.2.3:/var/lib/step-ca/client-certs/traefik/ ./
 ```
 
-### 2. Deploy the router
+### 3. Deploy the router
 
 ```bash
 just pve-install pve-router
@@ -205,7 +216,7 @@ two disks: a boot+root disk (read-only NixOS system) and a `/var` disk
 RAM, and serial console (no VGA). Set `VAR_SIZE` to override the
 default 8 GB `/var` disk.
 
-### 3. Configure the router
+### 4. Configure the router
 
 SSH keys are pre-installed (collected from your workstation agent and
 the PVE host's `/root/.ssh/`) — connect directly:
@@ -239,7 +250,7 @@ dashboard_tls {
 Then reboot. The dashboard will obtain its server cert from Step-CA via
 ACME and require mTLS client certificates on all HTTPS endpoints.
 
-### 4. Deploy infra-services
+### 5. Deploy infra-services
 
 With the router online as a gateway, deploy the services VM:
 
