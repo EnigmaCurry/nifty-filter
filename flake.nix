@@ -94,6 +94,7 @@
 
       nixosModules.default = import ./nix/module.nix self;
       nixosModules.services = import ./nix/services/containers/default.nix;
+      nixosModules.step-ca = import ./nix/services/step-ca.nix;
 
       devShells = forAllSystems (system:
         let pkgs = pkgsFor system;
