@@ -158,7 +158,7 @@ an entry to your `~/.ssh/config`:
 
 ```
 Host pve-router
-    HostName 192.168.1.100   # your Proxmox host IP
+    HostName 192.168.1.100   # your Proxmox host IP on the management interface (vmbr0)
     User root
 ```
 
