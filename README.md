@@ -21,7 +21,7 @@ On your workstation:
  * Clone this repo.
  * Install [Nix](https://nixos.org/download/) and [just](https://github.com/casey/just).
  * Ensure your ssh-agent is running and that `ssh-add -L` returns at least one loaded key.
- * Ensure you can login to your PVE host (test `ssh root@<proxmox-host> whoami`).
+ * Ensure you can login to your PVE host as root via SSH.
 
 ## Example network
 
