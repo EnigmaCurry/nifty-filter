@@ -142,22 +142,47 @@ matches before acting, so you cannot accidentally destroy the wrong VM.
 
 ## Deploying to Proxmox VE
 
-This walkthrough covers a full deployment from scratch. The example
-uses PCI passthrough NICs, but virtual bridge NICs (`vmbr*`) or a mix
-of both also work.
+A full deployment consists of three VMs on the infra VLAN, deployed in
+order. The example uses PCI passthrough NICs for the router, but
+virtual bridge NICs (`vmbr*`) or a mix of both also work.
 
-### 1. Destroy any existing VM (optional)
+| VM | VMID | IP | Purpose |
+|----|------|----|---------|
+| infra-CA | 100 | 10.99.2.3 | Step-CA private PKI (ACME + mTLS certs) |
+| nifty-filter | 101 | 10.99.0.1 | Router, firewall, dashboard |
+| infra-services | 202 | 10.99.2.2 | Traefik, Technitium DNS, DDNS, NTP |
 
-If you are rebuilding, tear down the old VM first:
+### 1. Deploy Step-CA (infra-CA)
+
+The CA VM deploys first — it has no external dependencies (the
+container image is built by Nix, no registry pull needed).
 
 ```bash
-just pve-destroy pve-router 101 nifty-filter
+just pve-install-step-ca pve-router 10.99.2.3
 ```
 
-### 2. Create and boot the VM
+This creates the infra bridge (`vmbr2`), adds a NIC to the router VM
+slot, and creates a minimal VM (1 CPU, 512 MB, 4 GB disk). On first
+boot, Step-CA bootstraps automatically: generates a root CA, enables
+ACME, and issues client certificates for dashboard, service-monitor,
+and traefik.
 
-`pve-install` is interactive — it connects to the PVE host, queries
-available VM IDs and network devices, and walks you through the setup:
+After boot, copy the root CA cert and client certs from the CA VM:
+
+```bash
+# Root CA cert (add to your Nix config for security.pki.certificateFiles)
+scp user@10.99.2.3:/var/lib/step-ca/certs/root_ca.crt ./
+
+# Dashboard client cert (copy to router VM later)
+scp user@10.99.2.3:/var/lib/step-ca/client-certs/dashboard/cert.pem ./dashboard-cert.pem
+scp user@10.99.2.3:/var/lib/step-ca/client-certs/dashboard/key.pem ./dashboard-key.pem
+
+# Service-monitor + traefik client certs (copy to infra-services VM later)
+scp user@10.99.2.3:/var/lib/step-ca/client-certs/service-monitor/ ./
+scp user@10.99.2.3:/var/lib/step-ca/client-certs/traefik/ ./
+```
+
+### 2. Deploy the router
 
 ```bash
 just pve-install pve-router
@@ -181,7 +206,7 @@ two disks: a boot+root disk (read-only NixOS system) and a `/var` disk
 RAM, and serial console (no VGA). Set `VAR_SIZE` to override the
 default 8 GB `/var` disk.
 
-### 3. SSH in and configure
+### 3. Configure the router
 
 SSH keys are pre-installed (collected from your workstation agent and
 the PVE host's `/root/.ssh/`) — connect directly:
@@ -199,6 +224,52 @@ nifty-install
 The wizard prompts for hostname, WAN/LAN interfaces, VLANs, subnets,
 DHCP pools, and DNS servers. It writes the configuration and reboots
 (interface renaming requires a reboot to take effect).
+
+To enable ACME + mTLS, copy the dashboard client cert/key to the
+router and add a `dashboard_tls` block to the HCL config:
+
+```hcl
+dashboard_tls {
+  acme_directory_url = "https://10.99.2.3:9443/acme/acme/directory"
+  client_cert        = "/var/lib/nifty-dashboard/client-cert.pem"
+  client_key         = "/var/lib/nifty-dashboard/client-key.pem"
+  sans               = ["router.nifty.internal"]
+}
+```
+
+Then reboot. The dashboard will obtain its server cert from Step-CA via
+ACME and require mTLS client certificates on all HTTPS endpoints.
+
+### 4. Deploy infra-services
+
+With the router online as a gateway, deploy the services VM:
+
+```bash
+just pve-install-services pve-router 10.99.2.2
+```
+
+This creates the infra-services VM (2 CPU, 2 GB, 8 GB disk) with
+Traefik, Technitium DNS, DDNS updater, Chrony NTP, and the
+service-monitor. Container images are pulled from the registry via the
+router gateway.
+
+### Upgrading
+
+Rebuild and upgrade any VM in place (preserves `/var`):
+
+```bash
+just pve-upgrade-step-ca pve-router      # Upgrade Step-CA
+just pve-upgrade pve-router              # Upgrade router
+just pve-upgrade-services pve-router     # Upgrade infra-services
+```
+
+### Destroying VMs
+
+```bash
+just pve-destroy pve-router 100 infra-CA        # Step-CA
+just pve-destroy pve-router 101 nifty-filter     # Router
+just pve-destroy pve-router 202 infra-services   # Services
+```
 
 ## Deploying to bare metal
 
