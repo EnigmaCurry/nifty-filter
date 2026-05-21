@@ -10,6 +10,7 @@ dashboard_tls {
   acme_directory_url = "https://10.99.2.3:9443/acme/acme/directory"
   client_cert        = "/var/lib/nifty-dashboard/client-cert.pem"
   client_key         = "/var/lib/nifty-dashboard/client-key.pem"
+  ca_cert            = "/var/lib/nifty-dashboard/step-ca-root.crt"
   sans               = ["router.nifty.internal"]
 }
 

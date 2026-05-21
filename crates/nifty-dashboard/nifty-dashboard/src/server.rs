@@ -87,6 +87,7 @@ pub async fn run(
     auth_config: AuthConfig,
     client_cert_path: Option<PathBuf>,
     client_key_path: Option<PathBuf>,
+    client_ca_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     // Install the ring crypto provider before any rustls usage
     rustls::crypto::ring::default_provider()
@@ -170,7 +171,10 @@ pub async fn run(
         TlsConfig::RustlsFiles {
             cert_path,
             key_path,
-        } => serve_rustls_files(addr, app, deletion_abort, shutdown_tx, public_port, cert_path, key_path).await?,
+        } => {
+            let ca = client_ca_path.clone().context("--tls-client-ca is required for mTLS")?;
+            serve_rustls_files(addr, app, deletion_abort, shutdown_tx, public_port, cert_path, key_path, ca).await?
+        }
 
         TlsConfig::AcmeTlsAlpn01 {
             directory_url,
@@ -188,6 +192,7 @@ pub async fn run(
                 cache_dir,
                 domains,
                 contact_email,
+                client_ca_path.clone(),
             )
             .await?
         }
@@ -210,6 +215,7 @@ pub async fn run(
                 domains,
                 contact_email,
                 acme_dns_api_base,
+                client_ca_path.clone().context("--tls-client-ca is required for mTLS")?,
             )
             .await?
         }
@@ -308,18 +314,21 @@ fn build_app(
     .into()
 }
 
-/// Build a client certificate verifier from the system trust store.
-/// Used for mTLS: incoming connections must present a cert signed by a trusted CA.
-fn build_mtls_client_verifier() -> anyhow::Result<Arc<dyn rustls::server::danger::ClientCertVerifier>> {
+/// Build a client certificate verifier using only the Step-CA root cert.
+/// The CA cert path comes from TLS_CLIENT_CA env var or the --tls-client-ca flag.
+/// Only clients with certs signed by this specific CA are accepted.
+fn build_mtls_client_verifier(ca_cert_path: &std::path::Path) -> anyhow::Result<Arc<dyn rustls::server::danger::ClientCertVerifier>> {
+    let ca_pem = std::fs::read(ca_cert_path)
+        .with_context(|| format!("failed to read CA cert '{}'", ca_cert_path.display()))?;
     let mut root_store = rustls::RootCertStore::empty();
-    let native = rustls_native_certs::load_native_certs();
-    for cert in native.certs {
-        root_store
-            .add(cert)
-            .context("failed to add system root cert")?;
+    let certs = rustls_pemfile::certs(&mut &ca_pem[..])
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to parse CA cert PEM")?;
+    for cert in certs {
+        root_store.add(cert).context("failed to add CA cert to root store")?;
     }
     if root_store.is_empty() {
-        anyhow::bail!("system trust store is empty — cannot verify client certificates");
+        anyhow::bail!("no certificates found in CA cert file '{}'", ca_cert_path.display());
     }
     let verifier = WebPkiClientVerifier::builder(Arc::new(root_store))
         .build()
@@ -371,8 +380,9 @@ fn build_services_client(
 async fn rustls_config_with_mtls(
     cert_pem: Vec<u8>,
     key_pem: Vec<u8>,
+    ca_cert_path: &std::path::Path,
 ) -> anyhow::Result<RustlsConfig> {
-    let client_verifier = build_mtls_client_verifier()?;
+    let client_verifier = build_mtls_client_verifier(ca_cert_path)?;
 
     let certs = rustls_pemfile::certs(&mut &cert_pem[..])
         .collect::<Result<Vec<_>, _>>()
@@ -426,6 +436,7 @@ async fn serve_rustls_files(
     public_port: u16,
     cert_path: PathBuf,
     key_path: PathBuf,
+    client_ca_path: PathBuf,
 ) -> anyhow::Result<()> {
     info!(
         "loading TLS certificate from '{}' and key from '{}'",
@@ -437,7 +448,7 @@ async fn serve_rustls_files(
     let cert_pem = read_tls_file(&cert_path).await?;
     let key_pem = read_private_tls_file(&key_path).await?;
 
-    let rustls_config = rustls_config_with_mtls(cert_pem, key_pem).await?;
+    let rustls_config = rustls_config_with_mtls(cert_pem, key_pem, &client_ca_path).await?;
 
     info!("listening on https://{addr} (manual certs, mTLS)");
 
@@ -463,6 +474,7 @@ async fn serve_acme_tls_alpn01(
     cache_dir: PathBuf,
     domains: Vec<String>,
     contact_email: Option<String>,
+    client_ca_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     create_private_dir_all_0700(&cache_dir)
         .await
@@ -504,7 +516,9 @@ async fn serve_acme_tls_alpn01(
         cfg.state()
     };
 
-    let client_verifier = build_mtls_client_verifier()?;
+    let client_verifier = build_mtls_client_verifier(
+        client_ca_path.as_ref().context("--tls-client-ca is required for mTLS")?,
+    )?;
     let rustls_config = RustlsServerConfig::builder()
         .with_client_cert_verifier(client_verifier)
         .with_cert_resolver(state.resolver());
@@ -543,6 +557,7 @@ async fn serve_acme_dns01(
     domains: Vec<String>,
     contact_email: Option<String>,
     acme_dns_api_base: String,
+    client_ca_path: PathBuf,
 ) -> anyhow::Result<()> {
     create_private_dir_all_0700(&cache_dir)
         .await
@@ -565,7 +580,7 @@ async fn serve_acme_dns01(
     )
     .await?;
 
-    let rustls_config = rustls_config_with_mtls(cert_pem, key_pem).await?;
+    let rustls_config = rustls_config_with_mtls(cert_pem, key_pem, &client_ca_path).await?;
 
     info!("listening on https://{addr} (ACME dns-01, mTLS)");
 
