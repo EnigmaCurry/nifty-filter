@@ -88,6 +88,11 @@ pub async fn run(
     client_cert_path: Option<PathBuf>,
     client_key_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    // Install the ring crypto provider before any rustls usage
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls crypto provider");
+
     log_startup(&db_url)?;
 
     // Database pool and migration
