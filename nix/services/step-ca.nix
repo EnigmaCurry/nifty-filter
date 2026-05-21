@@ -37,13 +37,9 @@ let
   hostCertsDir = "${hostDataDir}/certs";
   hostClientCertsDir = "${hostDataDir}/client-certs";
 
-  # Common podman run prefix for step-cli commands against the volume
-  stepRun = ''${pkgs.podman}/bin/podman run --rm \
-    -v step-ca-data:/home/step \
-    -e STEPPATH=/home/step \
-    -e HOME=/home/step \
-    --entrypoint ${pkgs.step-cli}/bin/step \
-    nifty-step-ca:latest'';
+  # Run step-cli directly on the host with STEPPATH pointing to the volume.
+  # This avoids container networking issues when talking to the Step-CA container.
+  stepRun = "STEPPATH=$MOUNT HOME=$MOUNT ${pkgs.step-cli}/bin/step";
 
   portStr = toString cfg.port;
 in
@@ -112,7 +108,7 @@ in
         Type = "oneshot";
         RemainAfterExit = true;
       };
-      path = [ pkgs.podman pkgs.openssl ];
+      path = [ pkgs.podman pkgs.openssl pkgs.step-cli ];
       script = let
         dnsFlags = concatStringsSep "," cfg.dnsNames;
       in ''
@@ -147,7 +143,7 @@ in
           --dns="${dnsFlags}" \
           --address=":${portStr}" \
           --deployment-type=standalone \
-          --password-file=/home/step/secrets/password \
+          --password-file="$MOUNT/secrets/password" \
           --acme
 
         # Copy root CA cert to host for operator access.
@@ -212,7 +208,7 @@ in
         Type = "oneshot";
         RemainAfterExit = true;
       };
-      path = [ pkgs.podman pkgs.openssl pkgs.coreutils ];
+      path = [ pkgs.podman pkgs.openssl pkgs.coreutils pkgs.step-cli ];
       script = let
         certNames = cfg.clientCerts;
         issueOne = name: ''
@@ -235,12 +231,12 @@ in
             MOUNT=$(podman volume inspect step-ca-data --format '{{.Mountpoint}}')
             mkdir -p "$MOUNT/client-certs"
             ${stepRun} ca certificate "$CN" \
-              "/home/step/client-certs/${name}-cert.pem" \
-              "/home/step/client-certs/${name}-key.pem" \
+              "$MOUNT/client-certs/${name}-cert.pem" \
+              "$MOUNT/client-certs/${name}-key.pem" \
               --ca-url="https://127.0.0.1:${portStr}" \
-              --root=/home/step/certs/root_ca.crt \
+              --root="$MOUNT/certs/root_ca.crt" \
               --provisioner="${cfg.provisioner}" \
-              --provisioner-password-file=/home/step/secrets/password \
+              --provisioner-password-file="$MOUNT/secrets/password" \
               --not-after=8760h
             cp "$MOUNT/client-certs/${name}-cert.pem" "$DIR/cert.pem"
             cp "$MOUNT/client-certs/${name}-key.pem" "$DIR/key.pem"
@@ -266,7 +262,7 @@ in
       description = "Renew client certificates approaching expiry";
       after = [ "podman-step-ca.service" ];
       serviceConfig.Type = "oneshot";
-      path = [ pkgs.podman pkgs.openssl pkgs.coreutils ];
+      path = [ pkgs.podman pkgs.openssl pkgs.coreutils pkgs.step-cli ];
       script = let
         renewOne = name: ''
           DIR="${hostClientCertsDir}/${name}"
@@ -275,10 +271,10 @@ in
               echo "Renewing cert for ${name}.${cfg.domain}..."
               MOUNT=$(podman volume inspect step-ca-data --format '{{.Mountpoint}}')
               ${stepRun} ca renew \
-                "/home/step/client-certs/${name}-cert.pem" \
-                "/home/step/client-certs/${name}-key.pem" \
+                "$MOUNT/client-certs/${name}-cert.pem" \
+                "$MOUNT/client-certs/${name}-key.pem" \
                 --ca-url="https://127.0.0.1:${portStr}" \
-                --root=/home/step/certs/root_ca.crt \
+                --root="$MOUNT/certs/root_ca.crt" \
                 --force
               cp "$MOUNT/client-certs/${name}-cert.pem" "$DIR/cert.pem"
               cp "$MOUNT/client-certs/${name}-key.pem" "$DIR/key.pem"
