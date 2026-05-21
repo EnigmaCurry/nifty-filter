@@ -122,14 +122,7 @@ a managed switch:
 | lab | 40 | `10.99.40.0/24` + `fd00:40::/64` | Lab (dual-stack). Full internet on IPv4 and IPv6, SSH to router. |
 
 The management interface (`10.99.0.0/24`) provides out-of-band access
-to the router from the Proxmox host. Three VMs provide the
-infrastructure:
-
-| VM | VMID | IP | Role |
-|----|------|----|------|
-| infra-CA | 100 | `10.99.2.3` | Step-CA private PKI — issues TLS and mTLS certificates |
-| nifty-filter | 101 | `10.99.0.1` | Router, firewall, nifty-dashboard |
-| infra-services | 202 | `10.99.2.2` | Traefik reverse proxy, Technitium DNS, DDNS updater, Chrony NTP |
+to the router from the Proxmox host.
 
 ## Deploying to Proxmox VE
 
