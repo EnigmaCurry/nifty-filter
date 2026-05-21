@@ -20,7 +20,7 @@ On your workstation:
 
  * Clone this repo.
  * Install [Nix](https://nixos.org/download/) and [just](https://github.com/casey/just).
- * Ensure your ssh-agent is running and that `ssh-add -L` returns at least one loaded key.
+ * Ensure your ssh-agent is running and that `ssh-add -L` returns at least one loaded key. All agent keys are installed on the VMs during creation.
  * Ensure you can login to your PVE host as root via SSH.
 
 ## Example network
