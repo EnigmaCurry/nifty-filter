@@ -1047,6 +1047,102 @@ pve-install-services pve_host ip bridge="vmbr2" vm_name="infra-services" router_
     BACKEND=proxmox PVE_HOST="${PVE_HOST}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw \
         just create-batch "${VM_NAME}" "podman,nifty-services" "2048" "2" "8G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
 
+# Set up Step-CA VM on the infra bridge, then create it via nixos-vm-template.
+# Deploy this BEFORE the router or infra-services VMs.
+# The infra bridge (vmbr2) must already exist (run pve-install-services first, or create it manually).
+pve-install-step-ca pve_host ip bridge="vmbr2" vm_name="infra-CA" router_vmid="101" pve_storage="local-lvm" pve_vmid="100":
+    #!/usr/bin/env bash
+    set -eo pipefail
+
+    PVE_HOST="{{pve_host}}"
+    REMOTE="root@${PVE_HOST}"
+    VM_NAME="{{vm_name}}"
+    BRIDGE="{{bridge}}"
+    # Accept bare IP or CIDR; default to /24
+    IP_RAW="{{ip}}"
+    IP_ADDR="${IP_RAW%%/*}"
+    STATIC_IP="${IP_ADDR}/24"
+    GATEWAY="$(echo "${IP_ADDR}" | sed 's/\.[0-9]*$/.1/')"
+
+    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
+    if [ ! -f "${VM_TEMPLATE_DIR}/Justfile" ]; then
+        echo "ERROR: nixos-vm-template not found at ${VM_TEMPLATE_DIR}"
+        echo "Set NIXOS_VM_TEMPLATE to the correct path."
+        exit 1
+    fi
+
+    SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/nifty-step-ca-%C -o ControlPersist=60"
+
+    echo "Connecting to ${PVE_HOST}..."
+    ssh ${SSH_OPTS} -fN ${REMOTE}
+    trap 'ssh ${SSH_OPTS} -O exit ${REMOTE} 2>/dev/null || true' EXIT
+
+    # --- Ensure the infra bridge exists ---
+    if ! ssh ${SSH_OPTS} ${REMOTE} "ip link show ${BRIDGE}" &>/dev/null; then
+        echo "Creating isolated bridge ${BRIDGE} on ${PVE_HOST}..."
+        ssh ${SSH_OPTS} ${REMOTE} "printf '\nauto %s\niface %s inet manual\n    bridge-ports none\n    bridge-stp off\n    bridge-fd 0\n' '${BRIDGE}' '${BRIDGE}' >> /etc/network/interfaces && ifup ${BRIDGE}"
+        echo "  ${BRIDGE} created."
+    else
+        echo "Bridge ${BRIDGE} already exists."
+    fi
+
+    # --- Add a NIC to the router VM on this bridge (if not already present) ---
+    ROUTER_CONFIG=$(ssh ${SSH_OPTS} ${REMOTE} "qm config {{router_vmid}}")
+    if ! echo "${ROUTER_CONFIG}" | grep -q "bridge=${BRIDGE}"; then
+        NEXT_NET=1
+        while echo "${ROUTER_CONFIG}" | grep -q "^net${NEXT_NET}:"; do
+            NEXT_NET=$((NEXT_NET + 1))
+        done
+        echo "Adding net${NEXT_NET} (bridge=${BRIDGE}) to router VM {{router_vmid}}..."
+        ssh ${SSH_OPTS} ${REMOTE} "qm set {{router_vmid}} --net${NEXT_NET} virtio,bridge=${BRIDGE}"
+        INFRA_MAC=$(ssh ${SSH_OPTS} ${REMOTE} "qm config {{router_vmid}}" | grep "^net${NEXT_NET}:" | grep -oP 'virtio=\K[^,]+')
+        echo "  Router NIC added (MAC: ${INFRA_MAC})."
+        echo "  Add this to your nifty-filter.hcl:"
+        echo ""
+        echo "    vlan \"infra\" {"
+        echo "      id = 2"
+        echo "      interface {"
+        echo "        mac  = \"${INFRA_MAC}\""
+        echo "        name = \"infra\""
+        echo "      }"
+        echo "      ..."
+        echo "    }"
+        echo ""
+    else
+        echo "Router VM {{router_vmid}} already has a NIC on ${BRIDGE}."
+    fi
+
+    # Close PVE SSH before handing off to nixos-vm-template
+    ssh ${SSH_OPTS} -O exit ${REMOTE} 2>/dev/null || true
+    trap - EXIT
+
+    # --- Create the Step-CA VM via nixos-vm-template (proxmox backend) ---
+    echo ""
+    echo "Creating Step-CA VM via nixos-vm-template..."
+    cd "${VM_TEMPLATE_DIR}"
+    mkdir -p "${VM_TEMPLATE_DIR}/machines/${VM_NAME}"
+    echo "{{pve_vmid}}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/vmid"
+
+    # PVE firewall: Step-CA only needs SSH + ACME port
+    printf '%s\n' 22 9443 > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/tcp_ports"
+    printf '%s\n' > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/udp_ports"
+
+    BACKEND=proxmox PVE_HOST="${PVE_HOST}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw \
+        just create-batch "${VM_NAME}" "podman,step-ca" "512" "1" "4G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
+
+# Upgrade Step-CA VM (delegates to nixos-vm-template proxmox backend)
+pve-upgrade-step-ca pve_host vm_name="infra-CA" pve_storage="local-lvm":
+    #!/usr/bin/env bash
+    set -eo pipefail
+    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
+    if [ ! -f "${VM_TEMPLATE_DIR}/Justfile" ]; then
+        echo "ERROR: nixos-vm-template not found at ${VM_TEMPLATE_DIR}"
+        echo "Set NIXOS_VM_TEMPLATE to the correct path."
+        exit 1
+    fi
+    cd "${VM_TEMPLATE_DIR}"
+    BACKEND=proxmox PVE_HOST="{{pve_host}}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw just upgrade "{{vm_name}}"
+
 # Upgrade infra-services VM (delegates to nixos-vm-template proxmox backend)
 pve-upgrade-services pve_host vm_name="infra-services" pve_storage="local-lvm":
     #!/usr/bin/env bash
