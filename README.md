@@ -138,10 +138,14 @@ Splitting the infrastructure across separate VMs provides several
 benefits: each VM can be upgraded and rebooted independently without
 disrupting the others, smaller images build and boot faster, and
 kernel-level isolation limits the blast radius if any single service is
-compromised. The CA runs on its own VM so that its private keys are
-never co-located with application workloads. With long-lived
-certificates, the CA VM can be shut down entirely between renewals to
-further limit access to the CA.
+compromised. Because these VMs communicate over the network, they need
+a way to cryptographically verify each other's identity. Step-CA
+provides a private certificate authority that issues TLS server
+certificates (via ACME) and mTLS client certificates so that every
+connection between VMs is authenticated. The CA runs on its own VM so
+that its private keys are never co-located with application workloads.
+With long-lived certificates, the CA VM can be shut down entirely
+between renewals to further limit access to the CA.
 
 The router uses PCI passthrough NICs for WAN, trunk, and management.
 The infra VLAN uses a virtual NIC on an isolated bridge (`vmbr2`)
