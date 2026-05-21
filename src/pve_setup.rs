@@ -135,7 +135,7 @@ fn list_bridges(ssh_opts: &str, remote: &str) -> Vec<Bridge> {
 fn pick_nic(label: &str, ssh_opts: &str, remote: &str) -> (String, String) {
     let nic_type = prompt_select(
         &format!("{label} NIC type:"),
-        vec!["Virtual (bridge)".to_string(), "PCI passthrough".to_string()],
+        vec!["PCI passthrough".to_string(), "Virtual (bridge)".to_string()],
     );
 
     if nic_type.starts_with("PCI") {
