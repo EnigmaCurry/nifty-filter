@@ -165,7 +165,7 @@ Host pve-router
 Then verify the connection:
 
 ```bash
-just pve-test pve-router
+just pve-status pve-router
 ```
 
 This prints the logged-in user, PVE version, uptime, and any existing

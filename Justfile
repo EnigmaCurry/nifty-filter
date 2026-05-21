@@ -125,7 +125,7 @@ release:
     git push "${GIT_REMOTE}" tag "v${CURRENT_VERSION}";
 
 # Test SSH connection to Proxmox VE host and print instance info
-pve-test pve_host:
+pve-status pve_host:
     #!/usr/bin/env bash
     set -eo pipefail
     REMOTE="root@{{pve_host}}"
