@@ -134,6 +134,13 @@ A full deployment consists of three VMs, deployed in order.
 | nifty-filter | 101 | 10.99.0.1 | Router, firewall, dashboard |
 | infra-services | 202 | 10.99.2.2 | Traefik, Technitium DNS, DDNS, NTP |
 
+Splitting the infrastructure across separate VMs provides several
+benefits: each VM can be upgraded and rebooted independently without
+disrupting the others, smaller images build and boot faster, and
+kernel-level isolation limits the blast radius if any single service is
+compromised. The CA runs on its own VM so that its private keys are
+never co-located with application workloads.
+
 The router uses PCI passthrough NICs for WAN, trunk, and management.
 The infra VLAN uses a virtual NIC on an isolated bridge (`vmbr2`)
 shared between the router and infrastructure VMs.
