@@ -123,10 +123,10 @@ services {
     # Define all of your extra zones here
     zone "nifty.internal" {
       A = {
-        "@" = "10.99.0.1" # apex domain points to the nifty-dashboard
+        "@" = "10.99.0.1"  # apex domain points to the nifty-dashboard
         ddns = "10.99.2.2" # ddns-updater web dashboard on infra-services VM
-        dns = "10.99.2.2" # dns domain points to technitium infra-services VM
-        ntp = "10.99.2.2" # ntp points to chrony on the infra-services VM
+        dns = "10.99.2.2"  # dns domain points to technitium infra-services VM
+        ntp = "10.99.2.2"  # ntp points to chrony on the infra-services VM
       }
     }
   }

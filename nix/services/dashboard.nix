@@ -98,7 +98,7 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "network.target" "nifty-filter.service" ];
 
-    path = [ pkgs.systemd ];
+    path = [ pkgs.systemd pkgs.avahi ];
     environment.ROOT_DIR = "/var/lib/private/nifty-dashboard";
     environment.SODOLA_STATE_FILE = "/run/nifty-filter/sodola-switch.json";
     environment.NIFTY_CONFIG_FILE = hclFile;
@@ -124,6 +124,8 @@ in
         hclFile
         "/run/nifty-filter"
         "/run/nifty-state"
+        "/run/avahi-daemon"
+        "/run/dbus/system_bus_socket"
         "/run/dnsmasq"
         "/var/lib/dnsmasq"
       ];

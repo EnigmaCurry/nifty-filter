@@ -422,7 +422,7 @@ pub fn generate_avahi(config: &HclConfig, output: &str) -> Result<(), String> {
     writeln!(out, "use-ipv4=yes").ok();
     writeln!(out, "use-ipv6=yes").ok();
     writeln!(out, "allow-interfaces={}", ifaces.join(",")).ok();
-    writeln!(out, "enable-dbus=no").ok();
+    writeln!(out, "enable-dbus=yes").ok();
     writeln!(out).ok();
     writeln!(out, "[publish]").ok();
     writeln!(out, "publish-addresses=no").ok();
@@ -849,7 +849,7 @@ vlan "guest" {
         assert!(content.contains("allow-interfaces=trusted,iot"));
         assert!(content.contains("enable-reflector=yes"));
         assert!(content.contains("publish-addresses=no"));
-        assert!(content.contains("enable-dbus=no"));
+        assert!(content.contains("enable-dbus=yes"));
     }
 
     #[test]

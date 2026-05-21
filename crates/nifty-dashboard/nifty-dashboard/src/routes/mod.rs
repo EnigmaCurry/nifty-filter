@@ -29,6 +29,7 @@ pub mod events;
 pub mod healthz;
 pub mod hello;
 pub mod login;
+pub mod mdns;
 pub mod qos;
 pub mod services;
 pub mod services_config;

@@ -184,9 +184,15 @@
     client_id: string;
   }
 
+  interface DnsListenAddress {
+    address: string;
+    interface: string | null;
+  }
+
   interface DnsmasqData {
     config_found: boolean;
     upstream_dns: string[];
+    dns_listen_addresses: DnsListenAddress[];
     interfaces: DnsmasqInterface[];
     static_hosts: DhcpHost[];
     leases: DhcpLease[];
@@ -203,8 +209,8 @@
   }
 
   type Tab = "config" | "state" | "updates" | "about";
-  type StateSubTab = "interfaces" | "nftables" | "dns" | "qos" | "switch" | "services";
-  type DnsSubTab = "dnsmasq" | "technitium" | "ddns";
+  type StateSubTab = "interfaces" | "nftables" | "dns" | "dhcp" | "qos" | "switch" | "services";
+  type DnsSubTab = "dnsmasq" | "technitium" | "ddns" | "mdns";
 
   interface TechnitiumForwarderInfo {
     forwarders: string[];
@@ -248,6 +254,24 @@
     error?: string;
   }
 
+  interface MdnsService {
+    interface: string;
+    protocol: string;
+    name: string;
+    service_type: string;
+    domain: string;
+    hostname: string;
+    address: string;
+    port: number;
+  }
+
+  interface MdnsData {
+    interfaces: string[];
+    services: MdnsService[];
+    active: boolean;
+    error?: string;
+  }
+
   interface ServiceInfo {
     name: string;
     active_state: string;
@@ -280,6 +304,7 @@
   let technitiumData = $state<TechnitiumData | null>(null);
   let technitiumError = $state<string | null>(null);
   let ddnsData = $state<DdnsData | null>(null);
+  let mdnsData = $state<MdnsData | null>(null);
   let servicesData = $state<ServicesData | null>(null);
   let updatesData = $state<UpdatesData | null>(null);
   let loading = $state(true);
@@ -320,7 +345,7 @@
     const tab = parts[0];
     const validTabs: Tab[] = ["config", "state", "updates", "about"];
     if (validTabs.includes(tab as Tab)) {
-      const validStateSubs: StateSubTab[] = ["interfaces", "nftables", "dns", "qos", "switch", "services"];
+      const validStateSubs: StateSubTab[] = ["interfaces", "nftables", "dns", "dhcp", "qos", "switch", "services"];
       // Support legacy dnsmasq/technitium hash routes
       let stateSub: StateSubTab = "interfaces";
       let dnsSub: DnsSubTab = "dnsmasq";
@@ -334,9 +359,12 @@
         } else if (parts[1] === "ddns") {
           stateSub = "dns";
           dnsSub = "ddns";
+        } else if (parts[1] === "mdns") {
+          stateSub = "dns";
+          dnsSub = "mdns";
         } else if (parts[1] === "dns") {
           stateSub = "dns";
-          const validDnsSubs: DnsSubTab[] = ["dnsmasq", "technitium", "ddns"];
+          const validDnsSubs: DnsSubTab[] = ["dnsmasq", "technitium", "ddns", "mdns"];
           dnsSub = validDnsSubs.includes(parts[2] as DnsSubTab) ? parts[2] as DnsSubTab : "dnsmasq";
         } else if (validStateSubs.includes(parts[1] as StateSubTab)) {
           stateSub = parts[1] as StateSubTab;
@@ -477,6 +505,7 @@
     { id: "interfaces", label: "Interfaces", condition: () => (data?.interfaces.length ?? 0) > 0 },
     { id: "nftables", label: "Netfilter", condition: () => (data?.nft_chains.length ?? 0) > 0 },
     { id: "dns", label: "DNS", condition: () => dnsmasqData != null || technitiumData != null || technitiumError != null || ddnsData != null },
+    { id: "dhcp", label: "DHCP", condition: () => dnsmasqData != null && (dnsmasqData.interfaces.length > 0 || dnsmasqData.static_hosts.length > 0 || dnsmasqData.leases.length > 0) },
     { id: "qos", label: "QoS", condition: () => qosData != null },
     { id: "switch", label: "Switch", condition: () => data?.switch != null },
     { id: "services", label: "Services", condition: () => servicesData != null },
@@ -486,6 +515,7 @@
     { id: "dnsmasq", label: "Dnsmasq", condition: () => dnsmasqData != null },
     { id: "technitium", label: "Technitium", condition: () => technitiumData != null || technitiumError != null },
     { id: "ddns", label: "DDNS", condition: () => ddnsData != null },
+    { id: "mdns", label: "mDNS", condition: () => mdnsData != null },
   ];
 
   function formatUptime(seconds: number): string {
@@ -747,6 +777,21 @@
     } catch {}
   }
 
+  async function fetchMdns() {
+    try {
+      const res = await fetch("/api/mdns", { credentials: "include" });
+      if (res.ok) {
+        const body = await res.json();
+        const d = body.data ?? null;
+        if (d?.interfaces?.length > 0) {
+          mdnsData = d;
+        } else {
+          mdnsData = null;
+        }
+      }
+    } catch {}
+  }
+
   async function fetchServices() {
     try {
       const res = await fetch("/api/services", { credentials: "include" });
@@ -784,12 +829,13 @@
     fetchDnsmasq();
     fetchTechnitium();
     fetchDdns();
+    fetchMdns();
     fetchServices();
     fetchUpdates();
     fetchStatus();
     const interval = setInterval(() => {
       if (!connected) return;
-      fetchStatus(); fetchQos(); fetchDnsmasq(); fetchTechnitium(); fetchDdns(); fetchServices();
+      fetchStatus(); fetchQos(); fetchDnsmasq(); fetchTechnitium(); fetchDdns(); fetchMdns(); fetchServices();
     }, 15000);
 
     // SSE with reconnection logic
@@ -799,7 +845,7 @@
     let retryDelay = 2000;
 
     function fetchAll() {
-      fetchStatus(); fetchConfig(); fetchQos(); fetchDnsmasq(); fetchTechnitium(); fetchDdns(); fetchServices(); fetchUpdates(); fetchAbout();
+      fetchStatus(); fetchConfig(); fetchQos(); fetchDnsmasq(); fetchTechnitium(); fetchDdns(); fetchMdns(); fetchServices(); fetchUpdates(); fetchAbout();
     }
 
     function scheduleReconnect(delay: number) {
@@ -1372,7 +1418,7 @@
         </div>
 
         {#if dnsSubTab === "dnsmasq" && dnsmasqData}
-        <p class="text-sm text-muted-foreground mb-4">Per-VLAN DNS service offered via DHCP to all clients.</p>
+        <p class="text-sm text-muted-foreground mb-4">Per-VLAN DNS resolver provided to clients via DHCP.</p>
         <div class="space-y-4">
           <!-- Upstream DNS -->
           {#if dnsmasqData.upstream_dns.length > 0}
@@ -1390,40 +1436,26 @@
           </Card.Root>
           {/if}
 
-          <!-- Per-interface DHCP config -->
-          {#if dnsmasqData.interfaces.length > 0}
+          <!-- DNS Listen Addresses -->
+          {#if dnsmasqData.dns_listen_addresses.length > 0}
           <Card.Root>
             <Card.Header class="pb-2">
-              <Card.Title>DHCP Interfaces</Card.Title>
+              <Card.Title>Listen Addresses</Card.Title>
             </Card.Header>
             <Card.Content>
               <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                   <thead>
                     <tr class="border-b border-border text-left text-muted-foreground">
-                      <th class="py-2 pr-4">Interface</th>
-                      <th class="py-2 pr-4">Router</th>
-                      <th class="py-2 pr-4">Pool</th>
-                      <th class="py-2 pr-4">DNS</th>
-                      <th class="py-2 pr-4">Lease</th>
-                      <th class="py-2">IPv6</th>
+                      <th class="py-2 pr-4">Address</th>
+                      <th class="py-2">Interface</th>
                     </tr>
                   </thead>
                   <tbody class="font-mono">
-                    {#each dnsmasqData.interfaces as iface}
+                    {#each dnsmasqData.dns_listen_addresses as listen}
                       <tr class="border-b border-border/50">
-                        <td class="py-2 pr-4 font-semibold">{iface.name}</td>
-                        <td class="py-2 pr-4">{iface.dhcp_router ?? "-"}</td>
-                        <td class="py-2 pr-4">{iface.pool_start && iface.pool_end ? `${iface.pool_start} – ${iface.pool_end}` : "-"}</td>
-                        <td class="py-2 pr-4">{iface.dhcp_dns ?? "-"}</td>
-                        <td class="py-2 pr-4">{iface.lease_time ?? "-"}</td>
-                        <td class="py-2">
-                          {#if iface.pool_start_v6}
-                            <span class="text-green-400" title="{iface.pool_start_v6} – {iface.pool_end_v6}">DHCPv6{iface.ra_enabled ? " + RA" : ""}</span>
-                          {:else}
-                            -
-                          {/if}
-                        </td>
+                        <td class="py-2 pr-4">{listen.address}</td>
+                        <td class="py-2 text-muted-foreground">{listen.interface ?? "-"}</td>
                       </tr>
                     {/each}
                   </tbody>
@@ -1432,74 +1464,6 @@
             </Card.Content>
           </Card.Root>
           {/if}
-
-          <!-- Static hosts -->
-          {#if dnsmasqData.static_hosts.length > 0}
-          <Card.Root>
-            <Card.Header class="pb-2">
-              <Card.Title>Static Leases</Card.Title>
-            </Card.Header>
-            <Card.Content>
-              <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="border-b border-border text-left text-muted-foreground">
-                      <th class="py-2 pr-4">MAC</th>
-                      <th class="py-2 pr-4">IP</th>
-                      <th class="py-2">Hostname</th>
-                    </tr>
-                  </thead>
-                  <tbody class="font-mono">
-                    {#each dnsmasqData.static_hosts as host}
-                      <tr class="border-b border-border/50">
-                        <td class="py-2 pr-4">{host.mac}</td>
-                        <td class="py-2 pr-4">{host.ip}</td>
-                        <td class="py-2">{host.hostname ?? "-"}</td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
-              </div>
-            </Card.Content>
-          </Card.Root>
-          {/if}
-
-          <!-- Active leases per VLAN -->
-          {#each dnsmasqData.interfaces as iface}
-            {@const subnet = iface.dhcp_router ? iface.dhcp_router.split('.').slice(0, 3).join('.') + '.' : null}
-            {@const ifaceLeases = subnet ? dnsmasqData.leases.filter(l => l.ip.startsWith(subnet)) : []}
-            {#if ifaceLeases.length > 0}
-            <Card.Root>
-              <Card.Header class="pb-2">
-                <Card.Title>Active Leases — {iface.name}</Card.Title>
-              </Card.Header>
-              <Card.Content>
-                <div class="overflow-x-auto">
-                  <table class="w-full text-sm">
-                    <thead>
-                      <tr class="border-b border-border text-left text-muted-foreground">
-                        <th class="py-2 pr-4">IP</th>
-                        <th class="py-2 pr-4">MAC</th>
-                        <th class="py-2 pr-4">Hostname</th>
-                        <th class="py-2">Expires</th>
-                      </tr>
-                    </thead>
-                    <tbody class="font-mono">
-                      {#each ifaceLeases as lease}
-                        <tr class="border-b border-border/50">
-                          <td class="py-2 pr-4">{lease.ip}</td>
-                          <td class="py-2 pr-4">{lease.mac}</td>
-                          <td class="py-2 pr-4">{lease.hostname === "*" ? "-" : lease.hostname}</td>
-                          <td class="py-2">{lease.expires === "0" ? "static" : new Date(parseInt(lease.expires) * 1000).toLocaleString()}</td>
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                </div>
-              </Card.Content>
-            </Card.Root>
-            {/if}
-          {/each}
 
           {#if !dnsmasqData.config_found}
           <Card.Root>
@@ -1658,7 +1622,198 @@
           <p class="text-muted-foreground text-sm">No DDNS records found.</p>
           {/if}
         </div>
+
+        {:else if dnsSubTab === "mdns" && mdnsData}
+        <p class="text-sm text-muted-foreground mb-4">Reflects mDNS (.local) service discovery between VLANs.</p>
+        <div class="space-y-4">
+          <!-- Reflector status -->
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>Reflector</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="flex items-center gap-4 text-sm">
+                <div>
+                  <span class="text-muted-foreground">Status</span>
+                  <p class="{mdnsData.active ? 'text-green-400' : 'text-red-400'}">{mdnsData.active ? "Active" : "Inactive"}</p>
+                </div>
+                <div>
+                  <span class="text-muted-foreground">Reflecting between</span>
+                  <div class="flex flex-wrap gap-2 mt-1">
+                    {#each mdnsData.interfaces as iface}
+                      <span class="font-mono bg-muted px-2 py-1 rounded">{iface}</span>
+                    {/each}
+                  </div>
+                </div>
+              </div>
+            </Card.Content>
+          </Card.Root>
+
+          <!-- Discovered services -->
+          {#if mdnsData.services.length > 0}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>Discovered Services</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="py-2 pr-4">Name</th>
+                      <th class="py-2 pr-4">Service Type</th>
+                      <th class="py-2 pr-4">Address</th>
+                      <th class="py-2 pr-4">Port</th>
+                      <th class="py-2 pr-4">Interface</th>
+                      <th class="py-2">Hostname</th>
+                    </tr>
+                  </thead>
+                  <tbody class="font-mono">
+                    {#each mdnsData.services as svc}
+                      <tr class="border-b border-border/50">
+                        <td class="py-2 pr-4 font-semibold">{svc.name}</td>
+                        <td class="py-2 pr-4">
+                          <span class="{svc.service_type.includes('_tcp') ? 'text-cyan-400' : 'text-amber-400'}">{svc.service_type}</span>
+                        </td>
+                        <td class="py-2 pr-4">{svc.address}</td>
+                        <td class="py-2 pr-4">{svc.port}</td>
+                        <td class="py-2 pr-4">{svc.interface}</td>
+                        <td class="py-2 text-muted-foreground">{svc.hostname}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {:else}
+          <Card.Root>
+            <Card.Content class="py-4">
+              <p class="text-muted-foreground text-sm">No mDNS services discovered yet.</p>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+
+          {#if mdnsData.error}
+          <p class="text-yellow-400 text-sm">{mdnsData.error}</p>
+          {/if}
+        </div>
         {/if}
+
+        {:else if stateSubTab === "dhcp" && dnsmasqData}
+        <p class="text-sm text-muted-foreground mb-4">Per-VLAN DHCP address assignment managed by dnsmasq.</p>
+        <div class="space-y-4">
+          <!-- Per-interface DHCP config -->
+          {#if dnsmasqData.interfaces.length > 0}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>DHCP Interfaces</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="py-2 pr-4">Interface</th>
+                      <th class="py-2 pr-4">Router</th>
+                      <th class="py-2 pr-4">Pool</th>
+                      <th class="py-2 pr-4">DNS</th>
+                      <th class="py-2 pr-4">Lease</th>
+                      <th class="py-2">IPv6</th>
+                    </tr>
+                  </thead>
+                  <tbody class="font-mono">
+                    {#each dnsmasqData.interfaces as iface}
+                      <tr class="border-b border-border/50">
+                        <td class="py-2 pr-4 font-semibold">{iface.name}</td>
+                        <td class="py-2 pr-4">{iface.dhcp_router ?? "-"}</td>
+                        <td class="py-2 pr-4">{iface.pool_start && iface.pool_end ? `${iface.pool_start} – ${iface.pool_end}` : "-"}</td>
+                        <td class="py-2 pr-4">{iface.dhcp_dns ?? "-"}</td>
+                        <td class="py-2 pr-4">{iface.lease_time ?? "-"}</td>
+                        <td class="py-2">
+                          {#if iface.pool_start_v6}
+                            <span class="text-green-400" title="{iface.pool_start_v6} – {iface.pool_end_v6}">DHCPv6{iface.ra_enabled ? " + RA" : ""}</span>
+                          {:else}
+                            -
+                          {/if}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+
+          <!-- Static hosts -->
+          {#if dnsmasqData.static_hosts.length > 0}
+          <Card.Root>
+            <Card.Header class="pb-2">
+              <Card.Title>Static Leases</Card.Title>
+            </Card.Header>
+            <Card.Content>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="py-2 pr-4">MAC</th>
+                      <th class="py-2 pr-4">IP</th>
+                      <th class="py-2">Hostname</th>
+                    </tr>
+                  </thead>
+                  <tbody class="font-mono">
+                    {#each dnsmasqData.static_hosts as host}
+                      <tr class="border-b border-border/50">
+                        <td class="py-2 pr-4">{host.mac}</td>
+                        <td class="py-2 pr-4">{host.ip}</td>
+                        <td class="py-2">{host.hostname ?? "-"}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </Card.Content>
+          </Card.Root>
+          {/if}
+
+          <!-- Active leases per VLAN -->
+          {#each dnsmasqData.interfaces as iface}
+            {@const subnet = iface.dhcp_router ? iface.dhcp_router.split('.').slice(0, 3).join('.') + '.' : null}
+            {@const ifaceLeases = subnet ? dnsmasqData.leases.filter(l => l.ip.startsWith(subnet)) : []}
+            {#if ifaceLeases.length > 0}
+            <Card.Root>
+              <Card.Header class="pb-2">
+                <Card.Title>Active Leases — {iface.name}</Card.Title>
+              </Card.Header>
+              <Card.Content>
+                <div class="overflow-x-auto">
+                  <table class="w-full text-sm">
+                    <thead>
+                      <tr class="border-b border-border text-left text-muted-foreground">
+                        <th class="py-2 pr-4">IP</th>
+                        <th class="py-2 pr-4">MAC</th>
+                        <th class="py-2 pr-4">Hostname</th>
+                        <th class="py-2">Expires</th>
+                      </tr>
+                    </thead>
+                    <tbody class="font-mono">
+                      {#each ifaceLeases as lease}
+                        <tr class="border-b border-border/50">
+                          <td class="py-2 pr-4">{lease.ip}</td>
+                          <td class="py-2 pr-4">{lease.mac}</td>
+                          <td class="py-2 pr-4">{lease.hostname === "*" ? "-" : lease.hostname}</td>
+                          <td class="py-2">{lease.expires === "0" ? "static" : new Date(parseInt(lease.expires) * 1000).toLocaleString()}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              </Card.Content>
+            </Card.Root>
+            {/if}
+          {/each}
+        </div>
 
         {:else if stateSubTab === "qos" && qosData}
         {#if !qosData.configured && !qosData.active}

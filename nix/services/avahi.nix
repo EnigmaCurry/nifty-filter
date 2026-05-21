@@ -15,10 +15,13 @@
     description = "avahi-daemon privilege separation user";
   };
 
+  # Register avahi's D-Bus policy so avahi-browse can query the daemon
+  services.dbus.packages = [ pkgs.avahi ];
+
   systemd.services.nifty-avahi = {
     description = "avahi-daemon mDNS reflector";
     wantedBy = [ "multi-user.target" ];
-    after = [ "nifty-network.service" "nifty-filter.service" ];
+    after = [ "nifty-network.service" "nifty-filter.service" "dbus.service" ];
 
     serviceConfig = {
       Type = "simple";

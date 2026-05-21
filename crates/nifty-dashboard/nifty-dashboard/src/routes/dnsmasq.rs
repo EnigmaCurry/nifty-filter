@@ -23,12 +23,20 @@ struct DnsmasqResponse {
     config_found: bool,
     /// Upstream DNS servers
     upstream_dns: Vec<String>,
+    /// All addresses the DNS server listens on
+    dns_listen_addresses: Vec<DnsListenAddress>,
     /// Per-interface DHCP configuration
     interfaces: Vec<DnsmasqInterface>,
     /// Static DHCP host reservations
     static_hosts: Vec<DhcpHost>,
     /// Active DHCP leases
     leases: Vec<DhcpLease>,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct DnsListenAddress {
+    address: String,
+    interface: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -76,11 +84,12 @@ struct DhcpLease {
 async fn get_dnsmasq(_state: State<AppState>) -> ApiJson<DnsmasqResponse> {
     let (config, leases) = tokio::join!(read_dnsmasq_config(), read_leases());
 
-    let (config_found, upstream_dns, interfaces, static_hosts) = config.unwrap_or_default();
+    let (config_found, upstream_dns, dns_listen_addresses, interfaces, static_hosts) = config.unwrap_or_default();
 
     json_ok(DnsmasqResponse {
         config_found,
         upstream_dns,
+        dns_listen_addresses,
         interfaces,
         static_hosts,
         leases,
@@ -89,16 +98,18 @@ async fn get_dnsmasq(_state: State<AppState>) -> ApiJson<DnsmasqResponse> {
 
 // --- Data collectors ---
 
-async fn read_dnsmasq_config() -> Option<(bool, Vec<String>, Vec<DnsmasqInterface>, Vec<DhcpHost>)> {
+async fn read_dnsmasq_config() -> Option<(bool, Vec<String>, Vec<DnsListenAddress>, Vec<DnsmasqInterface>, Vec<DhcpHost>)> {
     let contents = match tokio::fs::read_to_string("/run/dnsmasq/dnsmasq.conf").await {
         Ok(c) => c,
-        Err(_) => return Some((false, vec![], vec![], vec![])),
+        Err(_) => return Some((false, vec![], vec![], vec![], vec![])),
     };
 
     let mut upstream_dns = Vec::new();
+    let mut dns_listen_addresses: Vec<DnsListenAddress> = Vec::new();
     let mut interfaces: Vec<DnsmasqInterface> = Vec::new();
     let mut static_hosts = Vec::new();
     let mut current_iface: Option<&mut DnsmasqInterface> = None;
+    let mut current_iface_name: Option<String> = None;
 
     for line in contents.lines() {
         let line = line.trim();
@@ -123,8 +134,18 @@ async fn read_dnsmasq_config() -> Option<(bool, Vec<String>, Vec<DnsmasqInterfac
                 ra_enabled: false,
             });
             current_iface = interfaces.last_mut();
+            current_iface_name = Some(val.to_string());
         } else if let Some(val) = line.strip_prefix("listen-address=") {
-            // Skip localhost listeners
+            // Collect all listen addresses for the DNS listen table
+            dns_listen_addresses.push(DnsListenAddress {
+                address: val.to_string(),
+                interface: if val == "127.0.0.1" || val == "::1" {
+                    Some("loopback".to_string())
+                } else {
+                    current_iface_name.clone()
+                },
+            });
+            // Also set on the interface (skip localhost)
             if val != "127.0.0.1" && val != "::1" {
                 if let Some(ref mut iface) = current_iface {
                     iface.listen_address = Some(val.to_string());
@@ -189,7 +210,7 @@ async fn read_dnsmasq_config() -> Option<(bool, Vec<String>, Vec<DnsmasqInterfac
         }
     }
 
-    Some((true, upstream_dns, interfaces, static_hosts))
+    Some((true, upstream_dns, dns_listen_addresses, interfaces, static_hosts))
 }
 
 async fn read_leases() -> Vec<DhcpLease> {
