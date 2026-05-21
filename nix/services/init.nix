@@ -28,7 +28,7 @@ in
       chown root:wheel ${configDir}
       chmod 0770 ${configDir}
       ${acl}/bin/setfacl -m g:nifty-config:rx ${configDir}
-      cp ${../examples/vlan_router.hcl} ${hclFile}
+      cp ${../../examples/vlan_router.hcl} ${hclFile}
       chmod 0660 ${hclFile}
       chown root:wheel ${hclFile}
       ${acl}/bin/setfacl -m g:nifty-config:r ${hclFile}
