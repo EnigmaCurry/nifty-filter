@@ -5,16 +5,11 @@
 # To reconfigure: edit the HCL file and reboot
 { config, pkgs, lib, ... }:
 
-let
-  # Step-CA root certificate — add to system trust store if present.
-  # Place the cert at certs/step-ca-root.crt after deploying the infra-CA VM.
-  stepCaRootCert = ../../certs/step-ca-root.crt;
-  hasStepCaRoot = builtins.pathExists stepCaRootCert;
-in
-
 {
   # Trust the Step-CA root certificate system-wide (for ACME, mTLS, curl, etc.)
-  security.pki.certificateFiles = lib.optional hasStepCaRoot stepCaRootCert;
+  # This file is created by: just pve-distribute-certs <pve-host>
+  # Commit it to the repo after the first Step-CA deployment.
+  security.pki.certificateFiles = [ ../../certs/step-ca-root.crt ];
 
   system.stateVersion = "25.05";
   networking.hostName = "nifty-filter";
