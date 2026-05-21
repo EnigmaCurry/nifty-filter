@@ -246,7 +246,7 @@ in
               --root="$MOUNT/certs/root_ca.crt" \
               --provisioner="${cfg.provisioner}" \
               --provisioner-password-file="$MOUNT/secrets/password" \
-              --not-after=8760h
+              --not-after=24h
             cp "$MOUNT/client-certs/${name}-cert.pem" "$DIR/cert.pem"
             cp "$MOUNT/client-certs/${name}-key.pem" "$DIR/key.pem"
             chmod 644 "$DIR/cert.pem"
