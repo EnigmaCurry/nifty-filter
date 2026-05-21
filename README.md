@@ -153,7 +153,16 @@ shared between the router and infrastructure VMs.
 
 ### 1. Test the PVE connection
 
-Verify you can reach the Proxmox host and that your SSH key works:
+All `pve-*` commands take an SSH host alias as the first argument. Add
+an entry to your `~/.ssh/config`:
+
+```
+Host pve-router
+    HostName 192.168.1.100   # your Proxmox host IP
+    User root
+```
+
+Then verify the connection:
 
 ```bash
 just pve-test pve-router
