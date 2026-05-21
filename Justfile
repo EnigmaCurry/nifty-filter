@@ -492,18 +492,8 @@ pve-install pve_host:
         fi
     done
 
-    # --- Collect SSH keys ---
-    echo "Collecting SSH keys..."
-    WORKSTATION_KEYS="$(ssh-add -L 2>/dev/null || true)"
-    if [ -z "${WORKSTATION_KEYS}" ]; then
-        echo "ERROR: No keys found in SSH agent (ssh-add -L returned nothing)"
-        exit 1
-    fi
-    PVE_KEYS="$(ssh ${SSH_OPTS} ${REMOTE} 'cat /root/.ssh/id_ed25519.pub /root/.ssh/id_rsa.pub 2>/dev/null || true')"
-    NIFTY_SSH_KEYS="$(echo -e "${WORKSTATION_KEYS}\n${PVE_KEYS}" | sort -u | grep -v '^$')"
+    # NIFTY_SSH_KEYS is set by pve-setup (selected interactively)
     export NIFTY_SSH_KEYS
-    KEY_COUNT=$(echo "${NIFTY_SSH_KEYS}" | wc -l)
-    echo "  ${KEY_COUNT} SSH key(s) collected"
 
     # --- Build PVE disk image ---
     echo "Building PVE disk image..."
