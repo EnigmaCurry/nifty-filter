@@ -122,10 +122,7 @@ a managed switch:
 | lab | 40 | `10.99.40.0/24` + `fd00:40::/64` | Lab (dual-stack). Full internet on IPv4 and IPv6, SSH to router. |
 
 The management interface (`10.99.0.0/24`) provides out-of-band access
-to the router from the Proxmox host. The router uses PCI passthrough
-NICs for WAN, trunk, and management. The infra VLAN uses a virtual NIC
-on an isolated bridge (`vmbr2`) shared between the router and
-infrastructure VMs.
+to the router from the Proxmox host.
 
 ## Deploying to Proxmox VE
 
@@ -136,6 +133,10 @@ A full deployment consists of three VMs, deployed in order.
 | infra-CA | 100 | 10.99.2.3 | Step-CA private PKI (ACME + mTLS certs) |
 | nifty-filter | 101 | 10.99.0.1 | Router, firewall, dashboard |
 | infra-services | 202 | 10.99.2.2 | Traefik, Technitium DNS, DDNS, NTP |
+
+The router uses PCI passthrough NICs for WAN, trunk, and management.
+The infra VLAN uses a virtual NIC on an isolated bridge (`vmbr2`)
+shared between the router and infrastructure VMs.
 
 ### 1. Deploy Step-CA (infra-CA)
 
