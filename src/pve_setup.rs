@@ -234,7 +234,7 @@ pub fn run(pve_host: &str) {
 
     loop {
         eprintln!();
-        if !prompt_confirm("Add another NIC?", false) {
+        if !prompt_confirm("Add another NIC? (mgmt + infra bridges are added automatically)", false) {
             break;
         }
         let extra_nic = pick_nic("Additional", ssh_opts, &remote);
@@ -248,6 +248,7 @@ pub fn run(pve_host: &str) {
     eprintln!("  VM ID:    {vmid}");
     eprintln!("  VM Name:  {vm_name}");
     eprintln!("  NICs:     {}", nics.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>().join(" "));
+    eprintln!("  Auto:     mgmt (bridge), infra (vmbr2)");
     eprintln!();
 
     if !prompt_confirm("Proceed with install?", true) {
