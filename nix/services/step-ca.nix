@@ -67,8 +67,8 @@ in
 
     dnsNames = mkOption {
       type = types.listOf types.str;
-      default = [ "localhost" ];
-      example = [ "localhost" "10.99.2.3" ];
+      default = [ "localhost" "127.0.0.1" ];
+      example = [ "localhost" "127.0.0.1" "10.99.2.3" ];
       description = "DNS names and IP addresses for the CA certificate SANs.";
     };
 
