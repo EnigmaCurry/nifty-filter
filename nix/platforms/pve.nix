@@ -179,7 +179,7 @@
         { print }
       ' "$HCL" > "$HCL.tmp"
       mv "$HCL.tmp" "$HCL"
-      chmod 0644 "$HCL"
+      chmod 0664 "$HCL"
       chown root:wheel "$HCL"
       rm -f "$IFACES_FILE"
 

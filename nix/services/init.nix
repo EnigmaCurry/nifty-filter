@@ -24,7 +24,7 @@
       chown root:wheel ${configDir}
       chmod 0755 ${configDir}
       cp ${../../examples/vlan_router.hcl} ${hclFile}
-      chmod 0644 ${hclFile}
+      chmod 0664 ${hclFile}
       chown root:wheel ${hclFile}
       mkdir -p ${configDir}/ssh
       chmod 0700 ${configDir}/ssh
