@@ -106,40 +106,6 @@ On your workstation:
  * Ensure your ssh-agent is running and that `ssh-add -L` returns at least one loaded key.
  * Ensure you can login to your PVE host (test `ssh root@<proxmox-host> whoami`).
 
-## Justfile commands
-
-Run `just help` to list all available targets. The key commands are
-summarized below.
-
-### Build
-
-| Command | Description |
-|---------|-------------|
-| `just pve-image` | Build a PVE disk image (pre-partitioned, ready to import) |
-| `just iso` | Build the NixOS router ISO image (fits on a CD-ROM or any USB) |
-| `just iso-big` | Build ISO with full hardware support (linux-firmware + all drivers; fits on a DVD) |
-| `just clean-nix` | Remove build artifacts and run garbage collection |
-
-### Proxmox VE lifecycle
-
-These commands manage the full VM lifecycle on a Proxmox VE host. Each
-`pve-*` command that takes a `vmid` and `vm_name` verifies the name
-matches before acting, so you cannot accidentally destroy the wrong VM.
-
-| Command | Description |
-|---------|-------------|
-| `just pve-install <pve-host>` | Interactive: build disk image, upload, create and start a VM |
-| `just pve-ssh <pve-host> <target-ip> [user]` | SSH to VM via PVE jump host |
-| `just pve-start <pve-host> <vmid> <vm-name>` | Start a VM |
-| `just pve-stop <pve-host> <vmid> <vm-name>` | Gracefully stop a VM |
-| `just pve-destroy <pve-host> <vmid> <vm-name>` | Destroy a VM (stops first if running) |
-
-### Upgrade and maintenance
-
-| Command | Description |
-|---------|-------------|
-| `just upgrade <router-ip>` | Build locally, rsync to router, reboot |
-
 ## Deploying to Proxmox VE
 
 A full deployment consists of three VMs on the infra VLAN, deployed in
