@@ -42,6 +42,18 @@ in
       type = lib.types.package;
       description = "The nifty-service-monitor package";
     };
+
+    clientCertPath = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Path to client certificate PEM for mTLS.";
+    };
+
+    clientKeyPath = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Path to client key PEM for mTLS.";
+    };
   };
 
   config = lib.mkIf (cfg.enable && cfg.service-monitor.enable) {
@@ -70,12 +82,18 @@ in
         "--traefik-dynamic-dir" "/traefik-dynamic"
       ] ++ lib.optionals cfg.ddns.enable [
         "--ddns-config-path" "/ddns/config.json"
+      ] ++ lib.optionals (cfg.service-monitor.clientCertPath != null) [
+        "--client-cert" "/mtls/client-cert.pem"
+        "--client-key" "/mtls/client-key.pem"
       ];
       volumes = [
         "service-monitor-data:/data"
         "traefik-dynamic:/traefik-dynamic"
       ] ++ lib.optionals cfg.ddns.enable [
         "/var/lib/ddns-updater:/ddns"
+      ] ++ lib.optionals (cfg.service-monitor.clientCertPath != null) [
+        "${cfg.service-monitor.clientCertPath}:/mtls/client-cert.pem:ro"
+        "${cfg.service-monitor.clientKeyPath}:/mtls/client-key.pem:ro"
       ];
       extraOptions = [
         "--network=host"

@@ -15,8 +15,10 @@ let
   cfg = config.services.nifty-services;
   traefikCfg = cfg.traefik;
 
+  useAcme = traefikCfg.tls.acmeUrl != null;
+
   # TLS certificate config — must live in Traefik's dynamic config (not static).
-  # Service routers are written at runtime by the service-monitor.
+  # Only used in self-signed mode; ACME mode uses certificatesResolvers instead.
   tlsConfig = {
     tls.certificates = [
       {
@@ -41,6 +43,8 @@ let
       };
       websecure = {
         address = ":443";
+      } // lib.optionalAttrs useAcme {
+        http.tls.certResolver = "step-ca";
       };
     } // lib.optionalAttrs traefikCfg.dashboard.enable {
       traefik = {
@@ -57,12 +61,19 @@ let
       dashboard = true;
       insecure = true;
     };
+  } // lib.optionalAttrs useAcme {
+    certificatesResolvers.step-ca.acme = {
+      caServer = traefikCfg.tls.acmeUrl;
+      storage = "/acme/acme.json";
+      tlsChallenge = {};
+    };
   };
 
   staticConfigFile = pkgs.writeText "traefik.yml"
     (builtins.toJSON staticConfig);
 
   certDir = "/var/lib/traefik/certs";
+  acmeDir = "/var/lib/traefik/acme";
 in
 {
   options.services.nifty-services.traefik = {
@@ -90,11 +101,26 @@ in
       };
     };
 
+    tls = {
+      acmeUrl = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "https://10.99.2.3:9443/acme/acme/directory";
+        description = "Step-CA ACME directory URL. When set, Traefik uses ACME instead of self-signed certs.";
+      };
+
+      caCertPath = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "Path to Step-CA root cert on the host (for LEGO_CA_CERTIFICATES).";
+      };
+    };
+
     cert = {
       subject = lib.mkOption {
         type = lib.types.str;
         default = "/CN=infra-services";
-        description = "Subject for the self-signed TLS certificate.";
+        description = "Subject for the self-signed TLS certificate (only used when tls.acmeUrl is null).";
       };
 
       days = lib.mkOption {
@@ -116,8 +142,9 @@ in
   };
 
   config = lib.mkIf (cfg.enable && traefikCfg.enable) {
-    # Generate self-signed certificate on first boot, persist in /var
-    systemd.services.traefik-selfsign-cert = {
+    # Generate self-signed certificate on first boot, persist in /var.
+    # Only used when ACME is not configured.
+    systemd.services.traefik-selfsign-cert = lib.mkIf (!useAcme) {
       description = "Generate self-signed TLS certificate for Traefik";
       wantedBy = [ "multi-user.target" ];
       before = [ "podman-traefik.service" ];
@@ -147,13 +174,14 @@ in
       '';
     };
 
-    # Seed the traefik-dynamic volume with TLS certificate references.
-    # Service-monitor writes router configs into the same volume at runtime.
+    # Seed the traefik-dynamic volume with TLS certificate references (self-signed only)
+    # and clean up stale files. Service-monitor writes route-*.yml at runtime.
     systemd.services.traefik-seed-dynamic = {
-      description = "Seed Traefik dynamic config volume with TLS config";
+      description = "Seed Traefik dynamic config volume";
       wantedBy = [ "multi-user.target" ];
       before = [ "podman-traefik.service" ];
-      after = [ "traefik-selfsign-cert.service" "podman-volumes.service" ];
+      after = (lib.optional (!useAcme) "traefik-selfsign-cert.service")
+        ++ [ "podman-volumes.service" ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -162,7 +190,12 @@ in
       script = ''
         podman volume exists traefik-dynamic || podman volume create traefik-dynamic
         MOUNT=$(podman volume inspect traefik-dynamic --format '{{.Mountpoint}}')
-        cp ${tlsConfigFile} "$MOUNT/tls.yml"
+        ${if useAcme then ''
+          # ACME mode: remove tls.yml if left over from self-signed mode
+          rm -f "$MOUNT/tls.yml"
+        '' else ''
+          cp ${tlsConfigFile} "$MOUNT/tls.yml"
+        ''}
         # Clean up stale files — only tls.yml and route-*.yml are managed
         for f in "$MOUNT"/*.yml; do
           [ -f "$f" ] || continue
@@ -175,24 +208,51 @@ in
       '';
     };
 
+    # Create ACME state directory for Traefik (ACME mode only)
+    systemd.services.traefik-acme-dir = lib.mkIf useAcme {
+      description = "Create Traefik ACME state directory";
+      wantedBy = [ "multi-user.target" ];
+      before = [ "podman-traefik.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
+        mkdir -p ${acmeDir}
+        chmod 700 ${acmeDir}
+      '';
+    };
+
     virtualisation.oci-containers.backend = "podman";
     virtualisation.oci-containers.containers.traefik = {
       image = traefikCfg.image;
       volumes = [
         "${staticConfigFile}:/etc/traefik/traefik.yml:ro"
         "traefik-dynamic:/etc/traefik/dynamic:ro"
+      ] ++ (if useAcme then [
+        "${acmeDir}:/acme"
+      ] ++ lib.optional (traefikCfg.tls.caCertPath != null)
+        "${traefikCfg.tls.caCertPath}:/etc/ssl/step-ca-root.crt:ro"
+      else [
         "${certDir}:/certs:ro"
-      ];
+      ]);
+      environment = lib.optionalAttrs (useAcme && traefikCfg.tls.caCertPath != null) {
+        LEGO_CA_CERTIFICATES = "/etc/ssl/step-ca-root.crt";
+      };
       extraOptions = [
         "--network=host"
       ];
       dependsOn = [];
     };
 
-    # Ensure cert and dynamic config seeding run before traefik starts
+    # Ensure cert/config seeding runs before traefik starts
     systemd.services.podman-traefik = {
-      after = [ "traefik-selfsign-cert.service" "traefik-seed-dynamic.service" ];
-      requires = [ "traefik-selfsign-cert.service" "traefik-seed-dynamic.service" ];
+      after = (lib.optional (!useAcme) "traefik-selfsign-cert.service")
+        ++ (lib.optional useAcme "traefik-acme-dir.service")
+        ++ [ "traefik-seed-dynamic.service" ];
+      requires = (lib.optional (!useAcme) "traefik-selfsign-cert.service")
+        ++ (lib.optional useAcme "traefik-acme-dir.service")
+        ++ [ "traefik-seed-dynamic.service" ];
     };
 
     networking.firewall.allowedTCPPorts = [ 80 443 ]

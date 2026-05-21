@@ -2,6 +2,15 @@
 # Four VLANs: trusted (10), iot (20), guest (30), lab (40)
 # Load via: nifty-filter nftables --config vlan_router.hcl
 
+# Dashboard TLS (Step-CA ACME + mTLS):
+# Uncomment after deploying the infra-CA VM and copying certs to the router.
+# dashboard_tls {
+#   acme_directory_url = "https://10.99.2.3:9443/acme/acme/directory"
+#   client_cert        = "/var/lib/nifty-dashboard/client-cert.pem"
+#   client_key         = "/var/lib/nifty-dashboard/client-key.pem"
+#   sans               = ["router.nifty.internal"]
+# }
+
 # Enable VLAN support, which requires a *managed* switch:
 vlan_aware_switch = true
 
