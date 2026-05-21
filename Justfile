@@ -258,11 +258,22 @@ upgrade host:
 pve-upgrade-menu pve_host:
     #!/usr/bin/env bash
     set -eo pipefail
+    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
     CHOICE=$(script-wizard choose "What to upgrade?" \
+        "Step-CA VM" \
         "Router VM (full rebuild + reboot)" \
         "Services VM (including technitium)" \
         "Dashboard only (no reboot)")
     case "${CHOICE}" in
+        "Step-CA VM"*)
+            echo "Pulling latest nifty-filter..."
+            git pull
+            echo "Pulling latest nixos-vm-template..."
+            git -C "${VM_TEMPLATE_DIR}" pull
+            echo "Updating nifty-filter flake input..."
+            nix flake update nifty-filter --flake "${VM_TEMPLATE_DIR}"
+            just pve-upgrade-step-ca "{{pve_host}}"
+            ;;
         "Router VM"*)
             echo "Pulling latest nifty-filter..."
             git pull
@@ -271,9 +282,10 @@ pve-upgrade-menu pve_host:
         "Services VM"*)
             echo "Pulling latest nifty-filter..."
             git pull
-            VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
             echo "Pulling latest nixos-vm-template..."
             git -C "${VM_TEMPLATE_DIR}" pull
+            echo "Updating nifty-filter flake input..."
+            nix flake update nifty-filter --flake "${VM_TEMPLATE_DIR}"
             just pve-upgrade-services "{{pve_host}}"
             ;;
         "Dashboard only"*)
