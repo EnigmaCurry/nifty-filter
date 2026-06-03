@@ -70,15 +70,13 @@ running example.
 flowchart TB
     ISP1((ISP_1))
     ISP2((ISP_2))
+
     Workstation["Workstation<br/>192.168.100.1"]
     PVE["Proxmox VE Host<br/>192.168.100.2"]
-    MGMT["Router Management<br/>vmbr1<br/>10.99.0.0/24"]
 
     Workstation -- "USB NIC<br/>192.168.100.0/24" --- PVE
-    PVE -- "10.99.0.2" --- MGMT
-    MGMT -- "10.99.0.1" --- Router
 
-    subgraph Router[PVE Host]
+    subgraph RouterVM[Router VM / physical ports]
         direction LR
         TRUNK["TRUNK<br/>U:1<br/>T:10,20,30,40"]
         OPT1["OPT1<br/>empty"]
@@ -89,7 +87,16 @@ flowchart TB
     ISP1 --- WAN
     ISP2 --- WAN2
 
-    subgraph Switch[Sodola 8-port managed switch + SFP+ trunk]
+    subgraph MgmtPath[Management path]
+        direction LR
+        PVE_MGMT["PVE<br/>10.99.0.2"]
+        MGMT["Router Management<br/>vmbr1<br/>10.99.0.0/24<br/>router: 10.99.0.1"]
+    end
+
+    RouterVM --- MGMT
+    PVE --- PVE_MGMT --- MGMT
+
+    subgraph Switch[Switch]
         direction LR
         P1["1<br/>Admin<br/>U:10"]
         P2["2<br/>IoT<br/>U:20"]
@@ -99,7 +106,7 @@ flowchart TB
         P6["6<br/>Lab<br/>U:40"]
         P7["7<br/>2nd Switch<br/>T:20,40"]
         P8["8<br/>MGMT<br/>U:1"]
-        P9["9<br/>TRUNK<br/>U:1<br/>T:10,20,30,40"]
+        P9["9<br/>SFP trunk<br/>U:1<br/>T:10,20,30,40"]
     end
 
     TRUNK --- P9
@@ -130,7 +137,7 @@ flowchart TB
     P7 -.-> V40
     P8 -.-> V1
 
-    Router -. virtual NIC / bridge .-> V2
+    RouterVM -. "virtual NIC / bridge" .-> V2
 ```
 
 #### Management interfaces
