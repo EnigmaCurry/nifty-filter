@@ -896,6 +896,7 @@ fn app() {
                 "dashboard-tls-acme-email" => hcl_config.dashboard_tls.as_ref().and_then(|t| t.acme_email.clone()),
                 "dashboard-tls-client-cert" => hcl_config.dashboard_tls.as_ref().map(|t| t.client_cert.clone()),
                 "dashboard-tls-client-key" => hcl_config.dashboard_tls.as_ref().map(|t| t.client_key.clone()),
+                "dashboard-tls-ca-cert" => hcl_config.dashboard_tls.as_ref().map(|t| t.ca_cert.clone()),
                 "dashboard-tls-sans" => hcl_config.dashboard_tls.as_ref().and_then(|t| {
                     if t.sans.is_empty() { None } else { Some(t.sans.join(",")) }
                 }),

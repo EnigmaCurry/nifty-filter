@@ -80,6 +80,7 @@ pub fn serve(cfg: AppConfig, root_dir: PathBuf) -> Result<(), CliError> {
         plan.auth_config,
         cfg.tls.client_cert_path.clone(),
         cfg.tls.client_key_path.clone(),
+        cfg.tls.client_ca_path.clone(),
     ))
     .map_err(|e| {
         error!("server::run failed: {:#}", e);

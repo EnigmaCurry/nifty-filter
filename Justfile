@@ -1218,7 +1218,9 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
         ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/client-cert.pem > /dev/null && sudo chmod 644 /var/lib/nifty-dashboard/client-cert.pem"
     ca_cat /var/lib/step-ca/client-certs/dashboard/key.pem | \
         ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/client-key.pem > /dev/null && sudo chmod 600 /var/lib/nifty-dashboard/client-key.pem"
-    echo "  Dashboard certs installed on router."
+    ca_cat /var/lib/step-ca/certs/root_ca.crt | \
+        ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/step-ca-root.crt > /dev/null && sudo chmod 644 /var/lib/nifty-dashboard/step-ca-root.crt"
+    echo "  Dashboard certs + CA root installed on router."
 
     # --- Copy service-monitor + traefik client certs to infra-services ---
     if ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "true" 2>/dev/null; then

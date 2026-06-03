@@ -133,6 +133,11 @@ pub struct TlsConfig {
     /// Path to client key PEM for mTLS.
     #[arg(long = "tls-client-key", env = "TLS_CLIENT_KEY")]
     pub client_key_path: Option<PathBuf>,
+
+    /// Path to CA certificate PEM for mTLS client verification.
+    /// Only clients with certs signed by this CA are accepted.
+    #[arg(long = "tls-client-ca", env = "TLS_CLIENT_CA")]
+    pub client_ca_path: Option<PathBuf>,
 }
 
 impl TlsConfig {
