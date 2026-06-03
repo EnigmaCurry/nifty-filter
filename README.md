@@ -70,8 +70,10 @@ running example.
 flowchart TB
     ISP1((ISP_1))
     ISP2((ISP_2))
+    Workstation["Workstation<br/>192.168.100.1"]
 
-    subgraph Router[Router]
+    subgraph PVE["Proxmox VE Host<br/>USB NIC: 192.168.100.2"]
+    subgraph Router[Router VM]
         direction LR
         TRUNK["TRUNK<br/>U:1<br/>T:10,20,30,40"]
         OPT1["OPT1<br/>empty"]
@@ -124,6 +126,13 @@ flowchart TB
     P8 -.-> V1
 
     Router -. virtual NIC / bridge .-> V2
+
+    MGMT["Router Management<br/>vmbr1<br/>10.99.0.0/24"]
+    PVE -- "10.99.0.2" --- MGMT
+    Router -- "10.99.0.1" --- MGMT
+
+    Workstation -- "USB NIC<br/>192.168.100.0/24" --- PVE
+    end
 ```
 
 #### Management interfaces
