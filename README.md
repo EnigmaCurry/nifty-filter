@@ -72,6 +72,11 @@ flowchart TB
     ISP2((ISP_2))
     Workstation["Workstation<br/>192.168.100.1"]
     PVE["Proxmox VE Host<br/>192.168.100.2"]
+    MGMT["Router Management<br/>vmbr1<br/>10.99.0.0/24"]
+
+    Workstation -- "USB NIC<br/>192.168.100.0/24" --- PVE
+    PVE -- "10.99.0.2" --- MGMT
+    MGMT -- "10.99.0.1" --- Router
 
     subgraph Router[Router]
         direction LR
@@ -126,12 +131,6 @@ flowchart TB
     P8 -.-> V1
 
     Router -. virtual NIC / bridge .-> V2
-
-    MGMT["Router Management<br/>vmbr1<br/>10.99.0.0/24"]
-    PVE -- "10.99.0.2" --- MGMT
-    Router -- "10.99.0.1" --- MGMT
-
-    Workstation -- "USB NIC<br/>192.168.100.0/24" --- PVE
 ```
 
 #### Management interfaces
