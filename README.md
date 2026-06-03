@@ -58,8 +58,20 @@ you to manage and update the PVE host over the direct USB link.
 
 The rest of this document uses the
 [`examples/vlan_router.hcl`](examples/vlan_router.hcl) config as a
-running example. It defines a VLAN-aware router with five VLANs behind
-a managed switch:
+running example. The network has three layers: a direct USB link for
+PVE administration, a virtual management bridge for the router VM, and
+the VLANs that carry production traffic.
+
+#### Management interfaces
+
+| Network | Subnet | Purpose |
+|---------|--------|---------|
+| PVE management | `192.168.100.0/24` | Direct USB NIC link between workstation (`192.168.100.1`) and PVE host (`192.168.100.2`). SSH administration and SOCKS proxy for apt. |
+| Router management | `10.99.0.0/24` | Virtual bridge (`vmbr1`) between PVE and the router VM. Out-of-band access to the router from the Proxmox host. |
+
+#### VLANs
+
+Five VLANs behind a managed switch:
 
 | VLAN | ID | Subnet | Purpose |
 |------|----|--------|---------|
@@ -68,9 +80,6 @@ a managed switch:
 | iot | 20 | `10.99.20.0/24` | IoT jail. DHCP only, no internet, no router access beyond DHCP/DNS. mDNS reflected to trusted. |
 | guest | 30 | `10.99.30.0/24` | Guest network. Internet access but no SSH or dashboard. |
 | lab | 40 | `10.99.40.0/24` + `fd00:40::/64` | Lab (dual-stack). Full internet on IPv4 and IPv6, SSH to router. |
-
-The management interface (`10.99.0.0/24`) provides out-of-band access
-to the router from the Proxmox host.
 
 ## Deploying to Proxmox VE
 
