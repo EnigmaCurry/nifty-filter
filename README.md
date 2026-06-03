@@ -30,7 +30,8 @@ Install [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/over
 on a dedicated router machine. During the installer you must assign a
 network interface to `vmbr0` (the management bridge). We recommend
 using an **external USB network adapter** for this so that all onboard
-NICs remain available for PCI passthrough to the router VM. Later on,
+NICs remain available for PCI passthrough to the router VM. This lets
+you isolate PVE from the network by unplugging the USB NIC. Later on,
 you can add a route to PVE from your trusted VLAN, but the USB NIC
 adds an emergency fallback.
 
