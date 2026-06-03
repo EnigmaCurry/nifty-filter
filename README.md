@@ -1,8 +1,9 @@
 # nifty-filter
 
-A declarative NixOS router distribution. Configure your network with a
-single HCL file — VLANs, firewall rules, DHCP, DNS, QoS, and
-infrastructure services — and deploy immutable VM images to Proxmox VE.
+A declarative NixOS router distribution. Define your entire network
+in a single HCL config file (VLANs, firewall rules, DHCP, DNS, QoS,
+and infrastructure services) and deploy immutable VM images to Proxmox
+VE.
 
 The root filesystem is read-only. All configuration lives on a
 writable `/var` partition. Upgrades replace the entire system image
