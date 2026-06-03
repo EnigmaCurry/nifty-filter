@@ -1209,7 +1209,7 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
     # --- Copy root CA cert to workstation (for Nix build) ---
     echo "Fetching root CA cert..."
     ca_cat /var/lib/step-ca/certs/root_ca.crt > certs/step-ca-root.crt
-    echo "  Saved to certs/step-ca-root.crt (used by security.pki.certificateFiles in Nix build)"
+    echo "  Saved to certs/step-ca-root.crt"
 
     # --- Copy dashboard client cert to router ---
     echo "Copying dashboard client cert to router (${ROUTER_IP})..."

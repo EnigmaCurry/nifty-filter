@@ -7,7 +7,7 @@
 
 {
   # Trust the Step-CA root certificate system-wide (for ACME, mTLS, curl, etc.)
-  # This file is created by: just pve-distribute-certs <pve-host>
+  # Created by: just pve-distribute-certs <pve-host>
   security.pki.certificateFiles =
     let certPath = ../certs/step-ca-root.crt;
     in lib.optional (builtins.pathExists certPath) certPath;
