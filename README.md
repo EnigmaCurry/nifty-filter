@@ -56,11 +56,11 @@ you to manage and update the PVE host over the direct USB link.
 
 ## Example network
 
-The network has three layers: 
+The layers of the network are: 
 
- - A direct USB link for PVE administration.
- - A virtual management bridge for the router VM.
- - The VLANs that carry production traffic on the managed switch.
+ - A direct USB link for PVE administration from your workstation.
+ - A virtual management bridge for the PVE host to talk to the router VM.
+ - The VLANs defined by the router that carry production traffic on the managed switch.
 
 The rest of this document uses the
 [`examples/vlan_router.hcl`](examples/vlan_router.hcl) config as a
@@ -74,8 +74,6 @@ running example.
 | Router management | `10.99.0.0/24`     | Virtual bridge (`vmbr1`) between PVE and the router VM. Out-of-band access to the router from the Proxmox host.                       |
 
 #### VLANs
-
-Five VLANs behind a managed switch:
 
 | VLAN    | ID | Subnet                           | Purpose                                                                                                                             |
 |---------|----|----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
