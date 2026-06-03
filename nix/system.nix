@@ -8,8 +8,9 @@
 {
   # Trust the Step-CA root certificate system-wide (for ACME, mTLS, curl, etc.)
   # This file is created by: just pve-distribute-certs <pve-host>
-  # Commit it to the repo after the first Step-CA deployment.
-  security.pki.certificateFiles = [ ../certs/step-ca-root.crt ];
+  security.pki.certificateFiles =
+    let certPath = ../certs/step-ca-root.crt;
+    in lib.optional (builtins.pathExists certPath) certPath;
 
   system.stateVersion = "25.05";
   networking.hostName = "nifty-filter";
