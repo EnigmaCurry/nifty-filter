@@ -56,40 +56,44 @@ you to manage and update the PVE host over the direct USB link.
 
 ## Example network
 
+The network has three layers: 
+
+ - A direct USB link for PVE administration.
+ - A virtual management bridge for the router VM.
+ - The VLANs that carry production traffic on the managed switch.
+
 The rest of this document uses the
 [`examples/vlan_router.hcl`](examples/vlan_router.hcl) config as a
-running example. The network has three layers: a direct USB link for
-PVE administration, a virtual management bridge for the router VM, and
-the VLANs that carry production traffic.
+running example.
 
 #### Management interfaces
 
-| Network | Subnet | Purpose |
-|---------|--------|---------|
-| PVE management | `192.168.100.0/24` | Direct USB NIC link between workstation (`192.168.100.1`) and PVE host (`192.168.100.2`). SSH administration and SOCKS proxy for apt. |
-| Router management | `10.99.0.0/24` | Virtual bridge (`vmbr1`) between PVE and the router VM. Out-of-band access to the router from the Proxmox host. |
+| Network           | Subnet             | Purpose                                                                                                                               |
+|-------------------|--------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| PVE management    | `192.168.100.0/24` | Direct USB NIC link between workstation (`192.168.100.1`) and PVE host (`192.168.100.2`). SSH administration and SOCKS proxy for apt. |
+| Router management | `10.99.0.0/24`     | Virtual bridge (`vmbr1`) between PVE and the router VM. Out-of-band access to the router from the Proxmox host.                       |
 
 #### VLANs
 
 Five VLANs behind a managed switch:
 
-| VLAN | ID | Subnet | Purpose |
-|------|----|--------|---------|
-| infra | 2 | `10.99.2.0/24` | Infrastructure services (Step-CA, Traefik, DNS, NTP). Uses a dedicated virtual NIC on an isolated bridge — not on the trunk/switch. |
-| trusted | 10 | `10.99.10.0/24` | Trusted devices. Full internet, SSH to router, dashboard access. mDNS reflected to IoT. |
-| iot | 20 | `10.99.20.0/24` | IoT jail. DHCP only, no internet, no router access beyond DHCP/DNS. mDNS reflected to trusted. |
-| guest | 30 | `10.99.30.0/24` | Guest network. Internet access but no SSH or dashboard. |
-| lab | 40 | `10.99.40.0/24` + `fd00:40::/64` | Lab (dual-stack). Full internet on IPv4 and IPv6, SSH to router. |
+| VLAN    | ID | Subnet                           | Purpose                                                                                                                             |
+|---------|----|----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
+| infra   | 2  | `10.99.2.0/24`                   | Infrastructure services (Step-CA, Traefik, DNS, NTP). Uses a dedicated virtual NIC on an isolated bridge — not on the trunk/switch. |
+| trusted | 10 | `10.99.10.0/24`                  | Trusted devices. Full internet, SSH to router, dashboard access. mDNS reflected to IoT.                                             |
+| iot     | 20 | `10.99.20.0/24`                  | IoT jail. DHCP only, no internet, no router access beyond DHCP/DNS. mDNS reflected to trusted.                                      |
+| guest   | 30 | `10.99.30.0/24`                  | Guest network. Internet access but no SSH or dashboard.                                                                             |
+| lab     | 40 | `10.99.40.0/24` + `fd00:40::/64` | Lab (dual-stack). Full internet on IPv4 and IPv6, SSH to router.                                                                    |
 
 ## Deploying to Proxmox VE
 
 A full deployment consists of three VMs, deployed in order.
 
-| VM | VMID | IP | Purpose |
-|----|------|----|---------|
-| infra-CA | 100 | 10.99.2.3 | Step-CA private PKI (ACME + mTLS certs) |
-| nifty-filter | 101 | 10.99.0.1 | Router, firewall, dashboard |
-| infra-services | 202 | 10.99.2.2 | Traefik, Technitium DNS, DDNS, NTP |
+| VM             | VMID | IP        | Purpose                                 |
+|----------------|------|-----------|-----------------------------------------|
+| infra-CA       | 100  | 10.99.2.3 | Step-CA private PKI (ACME + mTLS certs) |
+| nifty-filter   | 101  | 10.99.0.1 | Router, firewall, dashboard             |
+| infra-services | 202  | 10.99.2.2 | Traefik, Technitium DNS, DDNS, NTP      |
 
 Splitting the infrastructure across separate VMs provides several
 benefits: each VM can be upgraded and rebooted independently without
@@ -266,24 +270,24 @@ prompt. Reboot again to return to normal read-only mode.
 
 ### Filesystem layout
 
-| Mount | Mode | Purpose |
-|-------|------|---------|
-| `/` | read-only | NixOS system, nifty-filter binary, all services |
-| `/var` | read-write | Router config, DHCP leases, SSH keys, logs |
-| `/boot` | read-write | EFI system partition, kernel, bootloader |
-| `/tmp` | tmpfs | Scratch (cleared on reboot) |
-| `/home` | bind from `/var/home` | User home directories |
+| Mount   | Mode                  | Purpose                                         |
+|---------|-----------------------|-------------------------------------------------|
+| `/`     | read-only             | NixOS system, nifty-filter binary, all services |
+| `/var`  | read-write            | Router config, DHCP leases, SSH keys, logs      |
+| `/boot` | read-write            | EFI system partition, kernel, bootloader        |
+| `/tmp`  | tmpfs                 | Scratch (cleared on reboot)                     |
+| `/home` | bind from `/var/home` | User home directories                           |
 
 ### Boot services
 
-| Service | Purpose | Config source |
-|---------|---------|---------------|
-| `nifty-link` | Renames interfaces by MAC address | `nifty-filter.hcl` |
-| `nifty-hostname` | Sets hostname | `nifty-filter.hcl` |
-| `nifty-network` | Configures WAN (DHCP) and LAN (static IP) | `nifty-filter.hcl` |
-| `nifty-filter-init` | Seeds default config on first boot | -- |
-| `nifty-filter` | Generates and applies nftables rules | `nifty-filter.hcl` |
-| `nifty-dnsmasq` | DHCP and DNS server | `nifty-filter.hcl` |
+| Service             | Purpose                                   | Config source      |
+|---------------------|-------------------------------------------|--------------------|
+| `nifty-link`        | Renames interfaces by MAC address         | `nifty-filter.hcl` |
+| `nifty-hostname`    | Sets hostname                             | `nifty-filter.hcl` |
+| `nifty-network`     | Configures WAN (DHCP) and LAN (static IP) | `nifty-filter.hcl` |
+| `nifty-filter-init` | Seeds default config on first boot        | --                 |
+| `nifty-filter`      | Generates and applies nftables rules      | `nifty-filter.hcl` |
+| `nifty-dnsmasq`     | DHCP and DNS server                       | `nifty-filter.hcl` |
 
 ### Configuration files
 
