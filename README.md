@@ -15,14 +15,41 @@ while preserving state.
 ## Prerequisites
 
  * You need a workstation (Linux/macOS) to build images.
- * You need a separate Proxmox VE host to run the router.
+ * You need a dedicated router machine running Proxmox VE.
 
-On your workstation:
+### Workstation
 
  * Clone this repo.
  * Install [Nix](https://nixos.org/download/) and [just](https://github.com/casey/just).
  * Ensure your ssh-agent is running and that `ssh-add -L` returns at least one loaded key. All agent keys are installed on the VMs during creation.
  * Ensure you can login to your PVE host as root via SSH.
+
+### Proxmox VE Host
+
+Install [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/overview)
+on a dedicated router machine. During the installer you must assign a
+network interface to `vmbr0` (the management bridge). We recommend
+using an **external USB network adapter** for this so that all onboard
+NICs remain available for PCI passthrough to the router VM.
+
+The USB NIC does not need normal internet access — it only needs a
+direct link to your workstation for SSH administration. Connect it
+directly to your workstation (or through a small unmanaged switch) and
+assign a static IP on both ends. From there, an SSH SOCKS proxy
+through the workstation provides outbound access for Debian package
+upgrades on the PVE host:
+
+```bash
+# On the workstation, start a SOCKS proxy:
+ssh -D 1080 root@<pve-ip>
+
+# On the PVE host, use the proxy for apt:
+echo 'Acquire::http::Proxy "socks5h://127.0.0.1:1080";' > /etc/apt/apt.conf.d/99proxy
+apt update && apt full-upgrade
+```
+
+This keeps every onboard NIC free for passthrough while still allowing
+you to manage and update the PVE host over the direct USB link.
 
 ## Example network
 
