@@ -78,7 +78,7 @@ flowchart TB
     PVE -- "10.99.0.2" --- MGMT
     MGMT -- "10.99.0.1" --- Router
 
-    subgraph Router[Router]
+    subgraph Router[PVE Host]
         direction LR
         TRUNK["TRUNK<br/>U:1<br/>T:10,20,30,40"]
         OPT1["OPT1<br/>empty"]
