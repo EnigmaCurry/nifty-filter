@@ -89,7 +89,7 @@ flowchart TB
     ISP1 --- WAN
     ISP2 --- WAN2
 
-    subgraph Switch[8-port switch + SFP+ uplink]
+    subgraph Switch[Sodola 8-port managed switch + SFP+ trunk]
         direction LR
         P1["1<br/>Admin<br/>U:10"]
         P2["2<br/>IoT<br/>U:20"]
