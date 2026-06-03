@@ -141,7 +141,7 @@ pve-status pve_host:
     '
 
 # Build PVE disk image (pre-partitioned, ready to import)
-pve-image:
+pve-image pve_host="":
     #!/usr/bin/env bash
     set -eo pipefail
     KEYS="$(ssh-add -L 2>/dev/null || true)"
@@ -150,6 +150,7 @@ pve-image:
         exit 1
     fi
     export NIFTY_SSH_KEYS="${KEYS}"
+    NIFTY_PVE_HOST="{{pve_host}}" \
     NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" \
         nix build .#pve-image --impure
     echo ""
@@ -326,6 +327,7 @@ pve-upgrade pve_host vmid vm_name target_ip="10.99.0.1":
     trap 'ssh ${SSH_OPTS} ${PROXY} -O exit ${REMOTE} 2>/dev/null || true' EXIT
 
     echo "Building system closure..."
+    NIFTY_PVE_HOST="${PVE_HOST}" \
     nix build .#nixosConfigurations.pve-router-x86_64.config.system.build.toplevel --impure
     SYSTEM_PATH="$(readlink -f result)"
     echo "System: ${SYSTEM_PATH}"
@@ -510,6 +512,7 @@ pve-install pve_host:
     # --- Build PVE disk image ---
     echo "Building PVE disk image..."
     nix flake update
+    NIFTY_PVE_HOST="${PVE_HOST}" \
     NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" \
         nix build .#pve-image --impure
     IMAGE_PATH="$(find result/ -maxdepth 1 -type f \( -name '*.raw' -o -name '*.img' \) | head -1)"
@@ -1208,8 +1211,9 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
 
     # --- Copy root CA cert to workstation (for Nix build) ---
     echo "Fetching root CA cert..."
-    ca_cat /var/lib/step-ca/certs/root_ca.crt > certs/step-ca-root.crt
-    echo "  Saved to certs/step-ca-root.crt"
+    mkdir -p "certs/${PVE_HOST}"
+    ca_cat /var/lib/step-ca/certs/root_ca.crt > "certs/${PVE_HOST}/step-ca-root.crt"
+    echo "  Saved to certs/${PVE_HOST}/step-ca-root.crt"
 
     # --- Copy dashboard client cert to router ---
     echo "Copying dashboard client cert to router (${ROUTER_IP})..."
@@ -1243,7 +1247,7 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
     fi
 
     echo ""
-    echo "Done. Root CA cert saved to certs/step-ca-root.crt"
+    echo "Done. Root CA cert saved to certs/${PVE_HOST}/step-ca-root.crt"
     echo "Rebuild the router to trust it: just pve-upgrade ${PVE_HOST} 101 nifty-filter"
     echo "Or restart the dashboard if already rebuilt: ssh ${JUMP_TO_ROUTER} ${ROUTER} sudo systemctl restart nifty-dashboard"
 

@@ -1,4 +1,4 @@
 target
 
 .#*
-certs/step-ca-root.crt
+certs/*/
