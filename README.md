@@ -49,7 +49,9 @@ apt update && apt full-upgrade
 ```
 
 This keeps every onboard NIC free for passthrough while still allowing
-you to manage and update the PVE host over the direct USB link.
+you to manage and update the PVE host over the direct USB link. Later
+on, you can add a route to PVE from your trusted VLAN, but the USB
+NIC adds an emergency fallback.
 
 ## Example network
 
