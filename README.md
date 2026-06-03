@@ -30,7 +30,9 @@ Install [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/over
 on a dedicated router machine. During the installer you must assign a
 network interface to `vmbr0` (the management bridge). We recommend
 using an **external USB network adapter** for this so that all onboard
-NICs remain available for PCI passthrough to the router VM.
+NICs remain available for PCI passthrough to the router VM. Later on,
+you can add a route to PVE from your trusted VLAN, but the USB NIC
+adds an emergency fallback.
 
 The USB NIC does not need normal internet access — it only needs a
 direct link to your workstation for SSH administration. Connect it
@@ -49,9 +51,7 @@ apt update && apt full-upgrade
 ```
 
 This keeps every onboard NIC free for passthrough while still allowing
-you to manage and update the PVE host over the direct USB link. Later
-on, you can add a route to PVE from your trusted VLAN, but the USB
-NIC adds an emergency fallback.
+you to manage and update the PVE host over the direct USB link.
 
 ## Example network
 
