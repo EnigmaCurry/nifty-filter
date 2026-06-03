@@ -66,6 +66,66 @@ The rest of this document uses the
 [`examples/vlan_router.hcl`](examples/vlan_router.hcl) config as a
 running example.
 
+```mermaid
+flowchart TB
+    ISP1((ISP_1))
+    ISP2((ISP_2))
+
+    subgraph Router[Router]
+        direction LR
+        TRUNK["TRUNK<br/>U:1<br/>T:10,20,30,40"]
+        OPT1["OPT1<br/>empty"]
+        WAN[WAN]
+        WAN2[WAN2]
+    end
+
+    ISP1 --- WAN
+    ISP2 --- WAN2
+
+    subgraph Switch[8-port switch + SFP+ uplink]
+        direction LR
+        P1["1<br/>Admin<br/>U:10"]
+        P2["2<br/>IoT<br/>U:20"]
+        P3["3<br/>Guest<br/>U:30"]
+        P4["4<br/>Guest<br/>U:30"]
+        P5["5<br/>Lab<br/>U:40"]
+        P6["6<br/>Lab<br/>U:40"]
+        P7["7<br/>2nd Switch<br/>T:20,40"]
+        P8["8<br/>MGMT<br/>U:1"]
+        P9["9<br/>TRUNK<br/>U:1<br/>T:10,20,30,40"]
+    end
+
+    TRUNK --- P9
+
+    subgraph VLANs[Logical VLANs / subnets]
+        direction LR
+
+        V1["VLAN 1<br/>native / MGMT<br/>reserved<br/>switch management<br/>192.168.2.1"]
+
+        V2["VLAN 2<br/>Infrastructure<br/>virtual / not on switch<br/>10.99.2.1/24<br/>Services VM: 10.99.2.2<br/>DNS / NTP / Traefik"]
+
+        V10["VLAN 10<br/>trusted / Admin<br/>10.99.10.1/24<br/>DHCP: 10.99.10.100-250<br/>Internet: yes"]
+
+        V20["VLAN 20<br/>IoT<br/>10.99.20.1/24<br/>DHCP: 10.99.20.100-250<br/>Internet: no"]
+
+        V30["VLAN 30<br/>Guest<br/>10.99.30.1/24<br/>DHCP: 10.99.30.100-250<br/>Internet: yes"]
+
+        V40["VLAN 40<br/>Lab<br/>10.99.40.1/24<br/>IPv6: fd00:40::1/64<br/>DHCP: 10.99.40.100-250<br/>Internet: yes"]
+    end
+
+    P1 -.-> V10
+    P2 -.-> V20
+    P3 -.-> V30
+    P4 -.-> V30
+    P5 -.-> V40
+    P6 -.-> V40
+    P7 -.-> V20
+    P7 -.-> V40
+    P8 -.-> V1
+
+    Router -. virtual NIC / bridge .-> V2
+```
+
 #### Management interfaces
 
 | Network           | Subnet             | Purpose                                                                                                                               |
