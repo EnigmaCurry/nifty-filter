@@ -297,7 +297,7 @@ pve-upgrade-menu pve_host:
     esac
 
 # Upgrade a remote router VM via PVE jump host (builds locally, stages for next reboot)
-pve-upgrade pve_host vmid vm_name target_ip="10.99.0.1":
+pve-upgrade pve_host vmid="101" vm_name="nifty-filter" target_ip="10.99.0.1":
     #!/usr/bin/env bash
     set -eo pipefail
 
