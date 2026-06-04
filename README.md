@@ -268,7 +268,19 @@ Step-CA and require mTLS client certificates on all HTTPS endpoints.
 If the dashboard is in a restart loop waiting for certs, it will pick
 them up automatically.
 
-### 5. Deploy infra-services
+### 5. Verify router internet connectivity
+
+Before deploying VMs that depend on the router as a gateway, verify it
+has working WAN connectivity:
+
+```bash
+ssh -J root@pve-router admin@10.99.0.1 'ping -c1 1.1.1.1 && curl -sI https://cache.nixos.org | head -1'
+```
+
+You should see a successful ping and an HTTP 200 response. If not,
+check the router's WAN interface and NAT configuration.
+
+### 6. Deploy infra-services
 
 With the router online as a gateway, deploy the services VM:
 
