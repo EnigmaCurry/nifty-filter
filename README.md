@@ -293,6 +293,30 @@ Traefik, Technitium DNS, DDNS updater, Chrony NTP, and the
 service-monitor. Container images are pulled from the registry via the
 router gateway.
 
+### Custom domain
+
+All VMs default to the domain `nifty.internal`. To use a different
+domain, set `NIFTY_DOMAIN` when building or upgrading:
+
+```bash
+NIFTY_DOMAIN=mynet.internal just pve-upgrade-step-ca pve-router
+NIFTY_DOMAIN=mynet.internal just pve-upgrade-services pve-router
+```
+
+The domain is used for client certificate CNs (e.g.
+`service-monitor.mynet.internal`), `/etc/hosts` entries on the
+infrastructure VMs, and DNS zone names. The router reads its domain
+from `services.host.domain` in the HCL config.
+
+Additional env vars for overriding defaults at build time:
+
+| Variable | Default | Description |
+|---|---|---|
+| `NIFTY_DOMAIN` | `nifty.internal` | Base domain for certs, DNS, and host entries |
+| `NIFTY_STEP_CA_IP` | `10.99.2.3` | Step-CA VM IP |
+| `NIFTY_ROUTER_IP` | `10.99.2.1` | Router IP on the infra VLAN |
+| `NIFTY_SERVICES_IP` | `10.99.2.2` | Services VM IP |
+
 ### Upgrading
 
 Rebuild and upgrade any VM in place (preserves `/var`):
