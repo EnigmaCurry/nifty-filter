@@ -26,5 +26,18 @@ in
       default = "nifty.internal";
       description = "Base domain for infrastructure services (e.g. Technitium becomes dns.<domain>).";
     };
+
+    routerIp = mkOption {
+      type = types.str;
+      default = "";
+      example = "10.99.2.1";
+      description = "Router IP on the infrastructure VLAN. Used for /etc/hosts.";
+    };
+  };
+
+  config = lib.mkIf cfg.enable {
+    networking.hosts = lib.mkIf (cfg.routerIp != "") {
+      ${cfg.routerIp} = [ "router.${cfg.domain}" ];
+    };
   };
 }
