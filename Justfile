@@ -151,6 +151,7 @@ pve-image pve_host="":
     fi
     export NIFTY_SSH_KEYS="${KEYS}"
     NIFTY_PVE_HOST="{{pve_host}}" \
+    NIFTY_STEP_CA_ROOT_CERT="$(pwd)/certs/{{pve_host}}/step-ca-root.crt" \
     NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" \
         nix build .#pve-image --impure
     echo ""
@@ -328,6 +329,7 @@ pve-upgrade pve_host vmid="101" vm_name="nifty-filter" target_ip="10.99.0.1":
 
     echo "Building system closure..."
     NIFTY_PVE_HOST="${PVE_HOST}" \
+    NIFTY_STEP_CA_ROOT_CERT="$(pwd)/certs/${PVE_HOST}/step-ca-root.crt" \
     nix build .#nixosConfigurations.pve-router-x86_64.config.system.build.toplevel --impure
     SYSTEM_PATH="$(readlink -f result)"
     echo "System: ${SYSTEM_PATH}"
@@ -513,6 +515,7 @@ pve-install pve_host:
     echo "Building PVE disk image..."
     nix flake update
     NIFTY_PVE_HOST="${PVE_HOST}" \
+    NIFTY_STEP_CA_ROOT_CERT="$(pwd)/certs/${PVE_HOST}/step-ca-root.crt" \
     NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" \
         nix build .#pve-image --impure
     IMAGE_PATH="$(find result/ -maxdepth 1 -type f \( -name '*.raw' -o -name '*.img' \) | head -1)"

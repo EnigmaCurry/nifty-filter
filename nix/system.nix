@@ -9,11 +9,11 @@
   # Trust the Step-CA root certificate system-wide (for ACME, mTLS, curl, etc.)
   # Created by: just pve-distribute-certs <pve-host>
   # Cert is stored per deployment: certs/<pve-host>/step-ca-root.crt
+  # Read via absolute path so .gitignore'd certs are visible to the flake.
   security.pki.certificateFiles =
     let
-      pveHost = builtins.getEnv "NIFTY_PVE_HOST";
-      certPath = ../certs + "/${pveHost}/step-ca-root.crt";
-    in lib.optional (pveHost != "" && builtins.pathExists certPath) certPath;
+      certPath = builtins.getEnv "NIFTY_STEP_CA_ROOT_CERT";
+    in lib.optional (certPath != "" && builtins.pathExists certPath) certPath;
 
   system.stateVersion = "25.05";
   networking.hostName = "nifty-filter";
