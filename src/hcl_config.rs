@@ -70,12 +70,13 @@ pub struct DashboardTlsConfig {
 /// Interface configuration: each interface is a labeled block with a name
 /// and an optional MAC address for renaming.
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct InterfacesConfig {
     pub trunk: InterfaceEntry,
     pub wan: InterfaceEntry,
     #[serde(default)]
     pub mgmt: Option<MgmtInterfaceEntry>,
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, InterfaceEntry>,
 }
 
 /// A single interface entry with a name and optional MAC for .link generation.

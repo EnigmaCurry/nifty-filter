@@ -140,6 +140,24 @@ flowchart TB
     RouterVM -. "virtual NIC / bridge" .-> V2
 ```
 
+```mermaid
+flowchart TB
+    subgraph PVE["Proxmox VE Host"]
+        direction LR
+
+        StepCA["VM: Step-CA<br/>mTLS Certificate Authority<br/>ACME endpoint<br/>10.99.2.3:9443"]
+
+        NiftyFilter["VM: nifty-filter<br/>Router / firewall / dashboard<br/>gets client cert from Step-CA"]
+
+        InfraServices["VM: infra-services<br/>DNS / NTP / Traefik / monitoring<br/>gets client cert from Step-CA"]
+    end
+
+    StepCA --- NiftyFilter
+    StepCA --- InfraServices
+    NiftyFilter --- InfraServices
+```
+
+
 #### Management interfaces
 
 | Network           | Subnet             | Purpose                                                                                                                               |
