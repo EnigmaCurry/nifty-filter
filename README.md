@@ -9,7 +9,7 @@ The root filesystem is read-only. All configuration lives on a
 writable `/var` partition. Upgrades replace the entire system image
 while preserving state.
 
-> nifty-filter is in active development and should be used for research
+> nifty-filter is in development and should be used for research
 > purposes only. Use it at your own risk.
 
 ## Prerequisites
@@ -218,6 +218,11 @@ slot, and creates a minimal VM (1 CPU, 512 MB, 4 GB disk). On first
 boot, Step-CA bootstraps automatically: generates a root CA, enables
 ACME, and issues client certificates for dashboard, service-monitor,
 and traefik.
+
+> **Note:** You cannot SSH into the CA VM yet — it sits on the isolated
+> infra bridge (`vmbr2`) and the router VM (which serves as the jump
+> host) hasn't been deployed. Step-CA needs no manual setup; it will be
+> reachable once the router is online.
 
 ### 3. Deploy the router
 
