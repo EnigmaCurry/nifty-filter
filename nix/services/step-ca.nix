@@ -92,20 +92,12 @@ in
       description = "CN prefixes for client certificates to auto-issue (prefixed with domain).";
     };
 
-    routerIp = mkOption {
-      type = types.str;
-      default = "";
-      example = "10.99.2.1";
-      description = "Router IP on the infrastructure VLAN. Used for /etc/hosts so ACME challenges can resolve router.<domain>.";
-    };
   };
 
   config = mkIf cfg.enable {
-    # Static host entries so ACME challenges and inter-VM communication
-    # work without depending on DNS (which may not be running yet).
-    networking.hosts = lib.mkIf (cfg.routerIp != "") {
-      ${cfg.routerIp} = [ "router.${cfg.domain}" ];
-    };
+    # Static host entries for inter-VM resolution without DNS.
+    # Entries are provided via machines/<name>/hosts in nixos-vm-template,
+    # which copies them to /var/identity/hosts at install time.
 
     # Load the Nix-built image into podman before anything else.
     systemd.services.load-step-ca-image = {
