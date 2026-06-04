@@ -114,7 +114,7 @@ fn format_error(e: &reqwest::Error) -> String {
 }
 
 async fn fetch_config(client: &reqwest::Client, router_url: &str) -> Result<ServicesConfig, String> {
-    let url = format!("{router_url}/api/services-config");
+    let url = format!("{router_url}/internal/services-config");
     let resp = client
         .get(&url)
         .send()
@@ -239,7 +239,7 @@ async fn main() -> ExitCode {
 
     // Spawn SSE listener for real-time config change notifications
     let (sse_tx, mut sse_rx) = mpsc::channel::<()>(1);
-    let sse_url = format!("{}/api/services-config/events", cli.router_url);
+    let sse_url = format!("{}/internal/services-config/events", cli.router_url);
     tokio::spawn(sse_listener(client.clone(), sse_url, sse_tx));
 
     let mut state = ServiceState {

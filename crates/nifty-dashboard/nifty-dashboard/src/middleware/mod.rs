@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod csrf_protection;
+pub mod mtls;
 pub mod oidc;
 pub mod require_role;
 pub mod require_subnet;

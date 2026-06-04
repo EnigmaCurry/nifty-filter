@@ -70,11 +70,11 @@ async fn get_services_config(_state: State<AppState>) -> ApiJson<ServicesConfigR
 /// SSE endpoint for services-config change notifications.
 ///
 /// Emits a `config-changed` event whenever the HCL config file is modified.
-/// Protected by the same `require_subnet` middleware as the GET endpoint.
+/// Protected by mTLS policy at /internal/*.
 pub async fn sse_handler(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    tracing::info!("SSE client connected to /api/services-config/events");
+    tracing::info!("SSE client connected to /internal/services-config/events");
     let config_rx = state.config_changed_tx.subscribe();
 
     let stream = BroadcastStream::new(config_rx).filter_map(|result| async move {

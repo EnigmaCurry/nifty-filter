@@ -138,6 +138,14 @@ pub struct TlsConfig {
     /// Only clients with certs signed by this CA are accepted.
     #[arg(long = "tls-client-ca", env = "TLS_CLIENT_CA")]
     pub client_ca_path: Option<PathBuf>,
+
+    /// mTLS authorization policies as a JSON array.
+    /// Each element: {"name": "...", "cn": ["..."], "paths": ["..."]}.
+    /// Policies are evaluated in order — first path match wins.
+    /// Empty cn list means the matched paths are public (no cert required).
+    /// Requests matching no policy are denied.
+    #[arg(long = "tls-mtls-policies", env = "TLS_MTLS_POLICIES")]
+    pub mtls_policies: Option<String>,
 }
 
 impl TlsConfig {

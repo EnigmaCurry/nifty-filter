@@ -3,15 +3,31 @@
 # Load via: nifty-filter nftables --config vlan_router.hcl
 
 # Dashboard TLS (Step-CA ACME + mTLS):
-# The dashboard obtains its server cert from Step-CA via ACME and requires
-# mTLS client certificates on all HTTPS endpoints.
-# Copy client certs from the infra-CA VM to the paths below.
+# The dashboard obtains its server cert from Step-CA via ACME.
+# Inbound mTLS policies control which clients can reach which paths.
+# The dashboard's own client cert is used for outbound connections to the apps VM.
 dashboard_tls {
   acme_directory_url = "https://10.99.2.3:9443/acme/acme/directory"
   client_cert        = "/var/lib/nifty-dashboard/client-cert.pem"
   client_key         = "/var/lib/nifty-dashboard/client-key.pem"
   ca_cert            = "/var/lib/nifty-dashboard/step-ca-root.crt"
   sans               = ["router.nifty.internal"]
+
+  mtls {
+    # All paths require a matching policy — unmatched requests are denied (403).
+    # Policies are evaluated in order; first match wins.
+    # A policy with an empty cn list allows unauthenticated access.
+
+    policy "apps" {
+      cn    = ["service-monitor.nifty.internal"]
+      paths = ["/internal/*"]
+    }
+
+    policy "public" {
+      cn    = []
+      paths = ["/*"]
+    }
+  }
 }
 
 # Enable VLAN support, which requires a *managed* switch:

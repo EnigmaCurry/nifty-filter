@@ -1,6 +1,7 @@
 use crate::{
     config::AuthConfig,
     middleware::{
+        mtls::MtlsConfig,
         oidc::{OidcConfig, build_oidc_auth_layer},
         trusted_forwarded_for::TrustedForwardedForConfig,
         trusted_header_auth::ForwardAuthConfig,
@@ -10,6 +11,7 @@ use crate::{
     tls::{
         dns::{AcmeDnsProvider, obtain_certificate_with_dns01},
         http_redirect::HttpRedirectAcceptor,
+        mtls::{CertCaptureAcceptor, PeerCertMap},
         self_signed_cache::{delete_cached_pair, read_private_tls_file, read_tls_file},
     },
     util::write_files::{atomic_write_file_0600, create_private_dir_all_0700},
@@ -88,6 +90,7 @@ pub async fn run(
     client_cert_path: Option<PathBuf>,
     client_key_path: Option<PathBuf>,
     client_ca_path: Option<PathBuf>,
+    mtls_policies: Vec<crate::middleware::mtls::MtlsPolicy>,
 ) -> anyhow::Result<()> {
     // Install the ring crypto provider before any rustls usage
     rustls::crypto::ring::default_provider()
@@ -147,6 +150,18 @@ pub async fn run(
         client_cert_path.as_deref(),
         client_key_path.as_deref(),
     )?;
+
+    // mTLS peer cert map — shared between the TLS acceptor and the middleware.
+    let peer_certs: PeerCertMap = std::sync::Arc::new(dashmap::DashMap::new());
+    let mtls_config = if client_ca_path.is_some() && !mtls_policies.is_empty() {
+        Some(MtlsConfig {
+            peer_certs: peer_certs.clone(),
+            policies: mtls_policies,
+        })
+    } else {
+        None
+    };
+
     let state = AppState {
         db,
         auth_config,
@@ -162,6 +177,7 @@ pub async fn run(
         oidc_auth_layer,
         state,
         session_layer,
+        mtls_config,
     );
 
     // Serve based on TLS mode
@@ -172,8 +188,7 @@ pub async fn run(
             cert_path,
             key_path,
         } => {
-            let ca = client_ca_path.clone().context("--tls-client-ca is required for mTLS")?;
-            serve_rustls_files(addr, app, deletion_abort, shutdown_tx, public_port, cert_path, key_path, ca).await?
+            serve_rustls_files(addr, app, deletion_abort, shutdown_tx, public_port, cert_path, key_path, client_ca_path.clone(), peer_certs).await?
         }
 
         TlsConfig::AcmeTlsAlpn01 {
@@ -193,6 +208,7 @@ pub async fn run(
                 domains,
                 contact_email,
                 client_ca_path.clone(),
+                peer_certs,
             )
             .await?
         }
@@ -215,7 +231,8 @@ pub async fn run(
                 domains,
                 contact_email,
                 acme_dns_api_base,
-                client_ca_path.clone().context("--tls-client-ca is required for mTLS")?,
+                client_ca_path.clone(),
+                peer_certs,
             )
             .await?
         }
@@ -301,8 +318,9 @@ fn build_app(
     oidc_auth_layer: Option<axum_oidc::OidcAuthLayer<axum_oidc::EmptyAdditionalClaims>>,
     state: AppState,
     session_layer: SessionManagerLayer<SqliteStore>,
+    mtls_config: Option<MtlsConfig>,
 ) -> axum::Router {
-    router(
+    let mut app: axum::Router = router(
         forward_auth_cfg,
         forward_for_cfg,
         oidc_cfg,
@@ -311,7 +329,17 @@ fn build_app(
     )
     .layer(session_layer)
     .with_state(state)
-    .into()
+    .into();
+
+    // mTLS middleware — outermost layer so it runs before any other processing.
+    if let Some(mtls) = mtls_config {
+        app = app.layer(axum::middleware::from_fn_with_state(
+            mtls,
+            crate::middleware::mtls::require_mtls,
+        ));
+    }
+
+    app
 }
 
 /// Build a client certificate verifier using only the Step-CA root cert.
@@ -331,6 +359,7 @@ fn build_mtls_client_verifier(ca_cert_path: &std::path::Path) -> anyhow::Result<
         anyhow::bail!("no certificates found in CA cert file '{}'", ca_cert_path.display());
     }
     let verifier = WebPkiClientVerifier::builder(Arc::new(root_store))
+        .allow_unauthenticated()
         .build()
         .context("failed to build client certificate verifier")?;
     Ok(verifier)
@@ -436,7 +465,8 @@ async fn serve_rustls_files(
     public_port: u16,
     cert_path: PathBuf,
     key_path: PathBuf,
-    client_ca_path: PathBuf,
+    client_ca_path: Option<PathBuf>,
+    peer_certs: PeerCertMap,
 ) -> anyhow::Result<()> {
     info!(
         "loading TLS certificate from '{}' and key from '{}'",
@@ -448,20 +478,37 @@ async fn serve_rustls_files(
     let cert_pem = read_tls_file(&cert_path).await?;
     let key_pem = read_private_tls_file(&key_path).await?;
 
-    let rustls_config = rustls_config_with_mtls(cert_pem, key_pem, &client_ca_path).await?;
+    if let Some(ref ca_path) = client_ca_path {
+        let rustls_config = rustls_config_with_mtls(cert_pem, key_pem, ca_path).await?;
+        info!("listening on https://{addr} (manual certs, mTLS)");
 
-    info!("listening on https://{addr} (manual certs, mTLS)");
+        let inner = RustlsAcceptor::new(rustls_config)
+            .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+        let acceptor = CertCaptureAcceptor::new(inner, peer_certs);
 
-    let acceptor = RustlsAcceptor::new(rustls_config)
-        .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+        serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
+            axum_server::bind(addr)
+                .acceptor(acceptor)
+                .handle(handle)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        })
+        .await
+    } else {
+        let rustls_config = RustlsConfig::from_pem(cert_pem, key_pem).await
+            .context("failed to build TLS config from PEM files")?;
+        info!("listening on https://{addr} (manual certs, no mTLS)");
 
-    serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
-        axum_server::bind(addr)
-            .acceptor(acceptor)
-            .handle(handle)
-            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-    })
-    .await
+        let acceptor = RustlsAcceptor::new(rustls_config)
+            .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+
+        serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
+            axum_server::bind(addr)
+                .acceptor(acceptor)
+                .handle(handle)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        })
+        .await
+    }
 }
 
 async fn serve_acme_tls_alpn01(
@@ -475,6 +522,7 @@ async fn serve_acme_tls_alpn01(
     domains: Vec<String>,
     contact_email: Option<String>,
     client_ca_path: Option<PathBuf>,
+    peer_certs: PeerCertMap,
 ) -> anyhow::Result<()> {
     create_private_dir_all_0700(&cache_dir)
         .await
@@ -516,12 +564,16 @@ async fn serve_acme_tls_alpn01(
         cfg.state()
     };
 
-    let client_verifier = build_mtls_client_verifier(
-        client_ca_path.as_ref().context("--tls-client-ca is required for mTLS")?,
-    )?;
-    let rustls_config = RustlsServerConfig::builder()
-        .with_client_cert_verifier(client_verifier)
-        .with_cert_resolver(state.resolver());
+    let rustls_config = if let Some(ref ca_path) = client_ca_path {
+        let client_verifier = build_mtls_client_verifier(ca_path)?;
+        RustlsServerConfig::builder()
+            .with_client_cert_verifier(client_verifier)
+            .with_cert_resolver(state.resolver())
+    } else {
+        RustlsServerConfig::builder()
+            .with_no_client_auth()
+            .with_cert_resolver(state.resolver())
+    };
 
     let acme_acceptor = state.axum_acceptor(Arc::new(rustls_config));
     let acceptor = HttpRedirectAcceptor::new(acme_acceptor, public_port);
@@ -536,6 +588,13 @@ async fn serve_acme_tls_alpn01(
     });
 
     info!("listening on https://{addr} (ACME)");
+
+    // NOTE: CertCaptureAcceptor is not applied here because the ACME acceptor
+    // returns an opaque stream type. The mTLS middleware will see an empty cert
+    // map for ACME TLS-ALPN-01 connections — use serve_rustls_files or
+    // serve_acme_dns01 for full mTLS middleware support, or handle this path
+    // when the ACME acceptor's stream type is known.
+    let _ = peer_certs;
 
     serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
         axum_server::bind(addr)
@@ -557,7 +616,8 @@ async fn serve_acme_dns01(
     domains: Vec<String>,
     contact_email: Option<String>,
     acme_dns_api_base: String,
-    client_ca_path: PathBuf,
+    client_ca_path: Option<PathBuf>,
+    peer_certs: PeerCertMap,
 ) -> anyhow::Result<()> {
     create_private_dir_all_0700(&cache_dir)
         .await
@@ -580,20 +640,37 @@ async fn serve_acme_dns01(
     )
     .await?;
 
-    let rustls_config = rustls_config_with_mtls(cert_pem, key_pem, &client_ca_path).await?;
+    if let Some(ref ca_path) = client_ca_path {
+        let rustls_config = rustls_config_with_mtls(cert_pem, key_pem, ca_path).await?;
+        info!("listening on https://{addr} (ACME dns-01, mTLS)");
 
-    info!("listening on https://{addr} (ACME dns-01, mTLS)");
+        let inner = RustlsAcceptor::new(rustls_config)
+            .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+        let acceptor = CertCaptureAcceptor::new(inner, peer_certs);
 
-    let acceptor = RustlsAcceptor::new(rustls_config)
-        .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+        serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
+            axum_server::bind(addr)
+                .acceptor(acceptor)
+                .handle(handle)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        })
+        .await
+    } else {
+        let rustls_config = RustlsConfig::from_pem(cert_pem, key_pem).await
+            .context("failed to build TLS config from PEM")?;
+        info!("listening on https://{addr} (ACME dns-01, no mTLS)");
 
-    serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
-        axum_server::bind(addr)
-            .acceptor(acceptor)
-            .handle(handle)
-            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-    })
-    .await
+        let acceptor = RustlsAcceptor::new(rustls_config)
+            .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+
+        serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
+            axum_server::bind(addr)
+                .acceptor(acceptor)
+                .handle(handle)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        })
+        .await
+    }
 }
 
 /// Common “axum_server + Handle + shutdown_signal” pattern used by HTTPS modes.

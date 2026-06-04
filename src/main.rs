@@ -900,6 +900,18 @@ fn app() {
                 "dashboard-tls-sans" => hcl_config.dashboard_tls.as_ref().and_then(|t| {
                     if t.sans.is_empty() { None } else { Some(t.sans.join(",")) }
                 }),
+                "dashboard-tls-mtls-policies" => hcl_config.dashboard_tls.as_ref().and_then(|t| {
+                    t.mtls.as_ref().map(|m| {
+                        let policies: Vec<serde_json::Value> = m.policy.iter().map(|(name, p)| {
+                            serde_json::json!({
+                                "name": name,
+                                "cn": p.cn,
+                                "paths": p.paths,
+                            })
+                        }).collect();
+                        serde_json::to_string(&policies).unwrap()
+                    })
+                }),
                 _ => {
                     eprintln!("Unknown key: {}", key);
                     exit(1);

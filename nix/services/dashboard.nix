@@ -118,13 +118,15 @@ in
           CLIENT_KEY=$(${nfGet} dashboard-tls-client-key)
           CA_CERT=$(${nfGet} dashboard-tls-ca-cert)
           SANS=$(${nfGet} dashboard-tls-sans)
+          MTLS_POLICIES=$(${nfGet} dashboard-tls-mtls-policies || true)
           exec ${dashExec} serve --net-listen-ip 0.0.0.0 --net-listen-port "$DASH_PORT" \
             --tls-mode acme \
             --tls-acme-directory-url "$ACME_URL" \
             --tls-client-cert "$CLIENT_CERT" \
             --tls-client-key "$CLIENT_KEY" \
             --tls-client-ca "$CA_CERT" \
-            ''${SANS:+--tls-san "$SANS"}
+            ''${SANS:+--tls-san "$SANS"} \
+            ''${MTLS_POLICIES:+--tls-mtls-policies "$MTLS_POLICIES"}
         else
           exec ${dashExec} serve --net-listen-ip 0.0.0.0 --net-listen-port "$DASH_PORT"
         fi

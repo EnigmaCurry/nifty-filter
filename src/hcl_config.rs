@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use serde::de::{self, Deserializer};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -65,6 +66,34 @@ pub struct DashboardTlsConfig {
     /// SANs for ACME cert requests
     #[serde(default)]
     pub sans: Vec<String>,
+    /// mTLS authorization policies
+    #[serde(default)]
+    pub mtls: Option<MtlsHclConfig>,
+}
+
+/// mTLS authorization configuration.
+/// Policies are evaluated in order — first match wins.
+/// Requests that match no policy are denied (403).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtlsHclConfig {
+    /// Named policies. Order is preserved (first match wins).
+    #[serde(default)]
+    pub policy: IndexMap<String, MtlsPolicyHclConfig>,
+}
+
+/// A single mTLS authorization policy.
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtlsPolicyHclConfig {
+    /// Allowed client certificate CN patterns.
+    /// Supports exact match and wildcard prefix (`*.example.com`).
+    /// Empty list means the path is public (no client cert required).
+    #[serde(default)]
+    pub cn: Vec<String>,
+    /// URL path patterns this policy applies to.
+    /// Supports exact match and glob suffix (`/internal/*`).
+    pub paths: Vec<String>,
 }
 
 /// Interface configuration: each interface is a labeled block with a name

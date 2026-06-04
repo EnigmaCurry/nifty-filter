@@ -81,11 +81,23 @@ pub fn serve(cfg: AppConfig, root_dir: PathBuf) -> Result<(), CliError> {
         cfg.tls.client_cert_path.clone(),
         cfg.tls.client_key_path.clone(),
         cfg.tls.client_ca_path.clone(),
+        parse_mtls_policies(&cfg.tls.mtls_policies)?,
     ))
     .map_err(|e| {
         error!("server::run failed: {:#}", e);
         CliError::RuntimeError(format!("{:#}", e))
     })
+}
+
+fn parse_mtls_policies(
+    json: &Option<String>,
+) -> Result<Vec<crate::middleware::mtls::MtlsPolicy>, CliError> {
+    match json {
+        Some(s) if !s.is_empty() => serde_json::from_str(s).map_err(|e| {
+            CliError::InvalidArgs(format!("invalid --tls-mtls-policies JSON: {e}"))
+        }),
+        _ => Ok(vec![]),
+    }
 }
 
 fn parse_listen_addr(cfg: &AppConfig) -> Result<SocketAddr, CliError> {
