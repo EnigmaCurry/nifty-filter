@@ -1188,12 +1188,13 @@ pve-install-step-ca pve_host ip bridge="vmbr2" vm_name="infra-CA" router_vmid="1
     printf '%s\n' 22 9443 > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/tcp_ports"
     printf '%s\n' > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/udp_ports"
 
-    # /etc/hosts entries so Step-CA can resolve the router for ACME challenges
-    NIFTY_DOMAIN="${NIFTY_DOMAIN:-nifty.internal}"
-    echo "${GATEWAY} router.${NIFTY_DOMAIN}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/hosts"
+    # DNS: use Technitium on infra-services so Step-CA can resolve .internal
+    # domains for ACME challenges (with public DNS fallback)
+    SERVICES_IP="$(echo "${IP_ADDR}" | sed 's/\.[0-9]*$/.2/')"
+    printf 'nameserver %s\nnameserver 1.1.1.1\n' "${SERVICES_IP}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/resolv.conf"
 
-    # DNS: use the router's dnsmasq so Step-CA can resolve .internal domains
-    echo "${GATEWAY}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/resolv.conf"
+    # Remove stale static hosts if upgrading from an older install
+    rm -f "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/hosts"
 
     BACKEND=proxmox PVE_HOST="${PVE_HOST}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw \
         just create-batch "${VM_NAME}" "podman,step-ca" "512" "1" "4G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
