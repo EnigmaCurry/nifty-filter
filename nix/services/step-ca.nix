@@ -180,6 +180,7 @@ in
           --root="/home/step/certs/root_ca.crt" \
           --key="/home/step/secrets/root_ca_key" \
           --key-password-file="/home/step/secrets/password" \
+          --provisioner-password-file="/home/step/secrets/password" \
           --acme
 
         # Fix paths in ca.json to be container-relative (/home/step/...)
