@@ -1257,6 +1257,17 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
         echo "Run this again after deploying infra-services."
     fi
 
+    # --- Copy CA root cert into nixos-vm-template machine dirs for upgrades ---
+    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
+    if [ -d "${VM_TEMPLATE_DIR}/machines" ]; then
+        for vm in infra-CA infra-services; do
+            if [ -d "${VM_TEMPLATE_DIR}/machines/${vm}" ]; then
+                cp "certs/${PVE_HOST}/step-ca-root.crt" "${VM_TEMPLATE_DIR}/machines/${vm}/ca-cert.pem"
+                echo "  CA cert copied to nixos-vm-template machines/${vm}/ca-cert.pem"
+            fi
+        done
+    fi
+
     echo ""
     echo "Done. Root CA cert saved to certs/${PVE_HOST}/step-ca-root.crt"
     echo "Rebuild the router to trust it: just pve-upgrade ${PVE_HOST} 101 nifty-filter"
