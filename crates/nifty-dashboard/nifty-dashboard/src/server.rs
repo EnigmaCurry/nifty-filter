@@ -576,7 +576,8 @@ async fn serve_acme_tls_alpn01(
     };
 
     let acme_acceptor = state.axum_acceptor(Arc::new(rustls_config));
-    let acceptor = HttpRedirectAcceptor::new(acme_acceptor, public_port);
+    let inner = HttpRedirectAcceptor::new(acme_acceptor, public_port);
+    let acceptor = CertCaptureAcceptor::new(inner, peer_certs);
 
     tokio::spawn(async move {
         while let Some(res) = state.next().await {
@@ -587,14 +588,7 @@ async fn serve_acme_tls_alpn01(
         }
     });
 
-    info!("listening on https://{addr} (ACME)");
-
-    // NOTE: CertCaptureAcceptor is not applied here because the ACME acceptor
-    // returns an opaque stream type. The mTLS middleware will see an empty cert
-    // map for ACME TLS-ALPN-01 connections — use serve_rustls_files or
-    // serve_acme_dns01 for full mTLS middleware support, or handle this path
-    // when the ACME acceptor's stream type is known.
-    let _ = peer_certs;
+    info!("listening on https://{addr} (ACME, mTLS)");
 
     serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
         axum_server::bind(addr)
