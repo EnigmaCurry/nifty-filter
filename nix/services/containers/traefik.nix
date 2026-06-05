@@ -214,7 +214,7 @@ in
           [ -f "$f" ] || continue
           base=$(basename "$f")
           case "$base" in
-            tls.yml|route-*.yml) ;;
+            tls.yml|route-*.yml|mtls-options.yml) ;;
             *) echo "Removing stale dynamic config: $base"; rm -f "$f" ;;
           esac
         done
