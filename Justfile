@@ -1258,6 +1258,10 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
         ca_cat /var/lib/step-ca/client-certs/traefik/key.pem | \
             ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo tee /var/lib/traefik-certs/key.pem > /dev/null && sudo chmod 600 /var/lib/traefik-certs/key.pem"
         echo "  Traefik certs installed."
+
+        # Clear Traefik ACME cache so it requests a fresh cert from the new CA
+        ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo rm -f /var/lib/traefik/acme/acme.json && sudo systemctl restart podman-traefik"
+        echo "  Traefik ACME cache cleared and restarted."
     else
         echo "Infra-services VM (${SERVICES_IP}) not reachable — skipping."
         echo "Run this again after deploying infra-services."
