@@ -146,7 +146,7 @@ in
         echo "Bootstrapping Step-CA..."
 
         # Generate a random password for the CA keys.
-        mkdir -p "$MOUNT/secrets"
+        mkdir -p "$MOUNT/secrets" "$MOUNT/certs"
         openssl rand -base64 32 > "$MOUNT/secrets/password"
         chmod 600 "$MOUNT/secrets/password"
 
