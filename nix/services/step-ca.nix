@@ -1,8 +1,8 @@
 # Step-CA private PKI module
 #
 # Runs Smallstep Step-CA as a podman container on a dedicated VM.
-# Bootstraps the CA on first boot, issues client certificates for
-# inter-service mTLS, and handles renewal via a daily timer.
+# Bootstraps a 100-year root+intermediate CA on first boot, issues
+# client certificates for inter-service mTLS, and handles renewal.
 #
 # Host paths for operator access (SCP to other VMs):
 #   /var/lib/step-ca/certs/root_ca.crt              — root CA cert
@@ -150,7 +150,17 @@ in
         openssl rand -base64 32 > "$MOUNT/secrets/password"
         chmod 600 "$MOUNT/secrets/password"
 
-        # Initialize the CA (in container so ca.json gets container-relative paths).
+        # Create 100-year root CA cert (step ca init defaults to ~10 years).
+        ${stepRunContainer} certificate create \
+          "${cfg.caName} Root CA" \
+          "/home/step/certs/root_ca.crt" \
+          "/home/step/secrets/root_ca_key" \
+          --profile root-ca \
+          --not-after=876000h \
+          --password-file="/home/step/secrets/password" \
+          --force
+
+        # Initialize the CA with the pre-created 100-year root cert.
         ${stepRunContainer} ca init \
           --name="${cfg.caName}" \
           --provisioner="${cfg.provisioner}" \
@@ -158,11 +168,28 @@ in
           --address=":${portStr}" \
           --deployment-type=standalone \
           --password-file="/home/step/secrets/password" \
+          --root="/home/step/certs/root_ca.crt" \
+          --key="/home/step/secrets/root_ca_key" \
           --acme
 
         # Fix paths in ca.json to be container-relative (/home/step/...)
         sed -i "s|$MOUNT|/home/step|g" "$MOUNT/config/ca.json"
         sed -i "s|$MOUNT|/home/step|g" "$MOUNT/config/defaults.json"
+
+        # Replace the intermediate CA with a 100-year cert (init creates ~10 year).
+        INT_CERT=$(${pkgs.jq}/bin/jq -r '.crt' "$MOUNT/config/ca.json")
+        INT_KEY=$(${pkgs.jq}/bin/jq -r '.key' "$MOUNT/config/ca.json")
+        ${stepRunContainer} certificate create \
+          "${cfg.caName} Intermediate CA" \
+          "$INT_CERT" \
+          "$INT_KEY" \
+          --profile intermediate-ca \
+          --ca="/home/step/certs/root_ca.crt" \
+          --ca-key="/home/step/secrets/root_ca_key" \
+          --ca-password-file="/home/step/secrets/password" \
+          --not-after=876000h \
+          --password-file="/home/step/secrets/password" \
+          --force
 
         # Increase max cert duration to 100 years (private CA, long-lived certs).
         ${pkgs.jq}/bin/jq '.authority.provisioners |= map(
