@@ -293,6 +293,18 @@ Traefik, Technitium DNS, DDNS updater, Chrony NTP, and the
 service-monitor. Container images are pulled from the registry via the
 router gateway.
 
+### 7. Test the dashboard
+
+From a device on the trusted VLAN, open the dashboard in a browser:
+
+```
+https://10.99.10.1
+```
+
+Accept the self-signed certificate warning (the server cert is signed by
+your private Step-CA, which browsers don't trust by default). You should
+see the nifty-filter dashboard.
+
 ### Custom domain
 
 All VMs default to the domain `nifty.internal`. To use a different
