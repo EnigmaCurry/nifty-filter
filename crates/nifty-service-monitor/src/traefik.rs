@@ -69,7 +69,9 @@ fn write_route(dir: &Path, domain: &str, name: &str, route: &RouteConfig) {
                     "rule": rule,
                     "service": name,
                     "entryPoints": ["websecure"],
-                    "tls": {}
+                    "tls": {
+                        "certResolver": "step-ca"
+                    }
                 }
             },
             "services": {
