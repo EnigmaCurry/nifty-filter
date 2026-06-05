@@ -1300,6 +1300,16 @@ pve-upgrade-step-ca pve_host vm_name="infra-CA" pve_storage="local-lvm":
         echo "Set NIXOS_VM_TEMPLATE to the correct path."
         exit 1
     fi
+
+    # Ensure Step-CA DNS points at Technitium (derive services IP from static_ip)
+    MACHINE_DIR="${VM_TEMPLATE_DIR}/machines/{{vm_name}}"
+    mkdir -p "${MACHINE_DIR}"
+    if [ -f "${MACHINE_DIR}/static_ip" ]; then
+        IP_ADDR=$(grep '^address=' "${MACHINE_DIR}/static_ip" | cut -d= -f2 | cut -d/ -f1)
+        SERVICES_IP="$(echo "${IP_ADDR}" | sed 's/\.[0-9]*$/.2/')"
+        printf 'nameserver %s\nnameserver 1.1.1.1\n' "${SERVICES_IP}" > "${MACHINE_DIR}/resolv.conf"
+    fi
+
     cd "${VM_TEMPLATE_DIR}"
     BACKEND=proxmox PVE_HOST="{{pve_host}}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw just upgrade "{{vm_name}}"
 
