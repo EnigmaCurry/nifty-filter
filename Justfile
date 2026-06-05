@@ -1097,6 +1097,9 @@ pve-install-services pve_host ip bridge="vmbr2" vm_name="infra-services" router_
     NIFTY_DOMAIN="${NIFTY_DOMAIN:-nifty.internal}"
     echo "${GATEWAY} router.${NIFTY_DOMAIN}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/hosts"
 
+    # DNS: use the router's dnsmasq so services can resolve .internal domains
+    echo "${GATEWAY}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/resolv.conf"
+
     BACKEND=proxmox PVE_HOST="${PVE_HOST}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw \
         just create-batch "${VM_NAME}" "podman,nifty-services" "2048" "2" "8G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
 
@@ -1188,6 +1191,9 @@ pve-install-step-ca pve_host ip bridge="vmbr2" vm_name="infra-CA" router_vmid="1
     # /etc/hosts entries so Step-CA can resolve the router for ACME challenges
     NIFTY_DOMAIN="${NIFTY_DOMAIN:-nifty.internal}"
     echo "${GATEWAY} router.${NIFTY_DOMAIN}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/hosts"
+
+    # DNS: use the router's dnsmasq so Step-CA can resolve .internal domains
+    echo "${GATEWAY}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/resolv.conf"
 
     BACKEND=proxmox PVE_HOST="${PVE_HOST}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw \
         just create-batch "${VM_NAME}" "podman,step-ca" "512" "1" "4G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
