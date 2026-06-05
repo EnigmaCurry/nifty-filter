@@ -1188,50 +1188,62 @@ pve-install-step-ca pve_host ip bridge="vmbr2" vm_name="infra-CA" router_vmid="1
     printf '%s\n' 22 9443 > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/tcp_ports"
     printf '%s\n' > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/udp_ports"
 
-    # /etc/hosts entries so Step-CA can resolve the router for ACME challenges
-    NIFTY_DOMAIN="${NIFTY_DOMAIN:-nifty.internal}"
-    echo "${GATEWAY} router.${NIFTY_DOMAIN}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/hosts"
+    # DNS: use Technitium on infra-services so Step-CA can resolve .internal
+    # domains for ACME challenges (with public DNS fallback)
+    SERVICES_IP="$(echo "${IP_ADDR}" | sed 's/\.[0-9]*$/.2/')"
+    printf 'nameserver %s\nnameserver 1.1.1.1\n' "${SERVICES_IP}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/resolv.conf"
 
-    # DNS: use the router's dnsmasq so Step-CA can resolve .internal domains
-    echo "${GATEWAY}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/resolv.conf"
+    # Remove stale static hosts if upgrading from an older install
+    rm -f "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/hosts"
 
     BACKEND=proxmox PVE_HOST="${PVE_HOST}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw \
         just create-batch "${VM_NAME}" "podman,step-ca" "512" "1" "4G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
 
-# Copy TLS certs from Step-CA VM to router and infra-services VMs.
+# Copy TLS certs from Step-CA VM to all VMs (router + infra-services).
 # Jump chain: workstation → PVE host → router (mgmt) → infra VLAN VMs.
 pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" services_ip="10.99.2.2":
+    just pve-distribute-certs-ca "{{pve_host}}" "{{step_ca_ip}}" "{{router_ip}}"
+    just pve-distribute-certs-router "{{pve_host}}" "{{step_ca_ip}}" "{{router_ip}}"
+    just pve-distribute-certs-services "{{pve_host}}" "{{step_ca_ip}}" "{{router_ip}}" "{{services_ip}}"
+
+# Fetch root CA cert from Step-CA to workstation (for Nix builds).
+pve-distribute-certs-ca pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1":
     #!/usr/bin/env bash
     set -eo pipefail
-
-    PVE_HOST="{{pve_host}}"
-    STEP_CA_IP="{{step_ca_ip}}"
-    ROUTER_IP="{{router_ip}}"
-    SERVICES_IP="{{services_ip}}"
-
-    # Jump chain: PVE host → router (mgmt bridge) → infra VLAN
-    PVE="root@${PVE_HOST}"
-    ROUTER="admin@${ROUTER_IP}"
-    JUMP_TO_ROUTER="-J ${PVE}"
+    PVE="root@{{pve_host}}"
+    ROUTER="admin@{{router_ip}}"
     JUMP_TO_INFRA="-J ${PVE},${ROUTER}"
-
-    CA="admin@${STEP_CA_IP}"
-
-    echo "=== Distributing TLS certificates from Step-CA (${STEP_CA_IP}) ==="
-    echo "    Jump chain: ${PVE_HOST} → ${ROUTER_IP} → ${STEP_CA_IP}"
-    echo ""
-
-    # Helper: read a file from Step-CA via double jump
+    CA="admin@{{step_ca_ip}}"
     ca_cat() { ssh ${JUMP_TO_INFRA} ${CA} "sudo cat $1"; }
 
-    # --- Copy root CA cert to workstation (for Nix build) ---
-    echo "Fetching root CA cert..."
-    mkdir -p "certs/${PVE_HOST}"
-    ca_cat /var/lib/step-ca/certs/root_ca.crt > "certs/${PVE_HOST}/step-ca-root.crt"
-    echo "  Saved to certs/${PVE_HOST}/step-ca-root.crt"
+    echo "=== Fetching root CA cert from Step-CA ({{step_ca_ip}}) ==="
+    mkdir -p "certs/{{pve_host}}"
+    ca_cat /var/lib/step-ca/certs/root_ca.crt > "certs/{{pve_host}}/step-ca-root.crt"
+    echo "  Saved to certs/{{pve_host}}/step-ca-root.crt"
 
-    # --- Copy dashboard client cert to router ---
-    echo "Copying dashboard client cert to router (${ROUTER_IP})..."
+    # Copy CA root cert into nixos-vm-template machine dirs for upgrades
+    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
+    if [ -d "${VM_TEMPLATE_DIR}/machines" ]; then
+        for vm in infra-CA infra-services; do
+            if [ -d "${VM_TEMPLATE_DIR}/machines/${vm}" ]; then
+                cp "certs/{{pve_host}}/step-ca-root.crt" "${VM_TEMPLATE_DIR}/machines/${vm}/ca-cert.pem"
+                echo "  CA cert copied to nixos-vm-template machines/${vm}/ca-cert.pem"
+            fi
+        done
+    fi
+
+# Copy dashboard client certs + CA root to the router VM.
+pve-distribute-certs-router pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1":
+    #!/usr/bin/env bash
+    set -eo pipefail
+    PVE="root@{{pve_host}}"
+    ROUTER="admin@{{router_ip}}"
+    JUMP_TO_ROUTER="-J ${PVE}"
+    JUMP_TO_INFRA="-J ${PVE},${ROUTER}"
+    CA="admin@{{step_ca_ip}}"
+    ca_cat() { ssh ${JUMP_TO_INFRA} ${CA} "sudo cat $1"; }
+
+    echo "=== Distributing certs to router ({{router_ip}}) ==="
     ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo mkdir -p /var/lib/nifty-dashboard && sudo chown root:wheel /var/lib/nifty-dashboard && sudo chmod 755 /var/lib/nifty-dashboard"
     ca_cat /var/lib/step-ca/client-certs/dashboard/cert.pem | \
         ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/client-cert.pem > /dev/null && sudo chmod 644 /var/lib/nifty-dashboard/client-cert.pem"
@@ -1239,43 +1251,44 @@ pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" servi
         ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/client-key.pem > /dev/null && sudo chmod 600 /var/lib/nifty-dashboard/client-key.pem"
     ca_cat /var/lib/step-ca/certs/root_ca.crt | \
         ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/step-ca-root.crt > /dev/null && sudo chmod 644 /var/lib/nifty-dashboard/step-ca-root.crt"
-    echo "  Dashboard certs + CA root installed on router."
+    # Clear cached ACME server cert so dashboard requests a fresh one from the new CA.
+    ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo rm -f /var/lib/nifty-dashboard/tls-cache/cached_*"
+    echo "  Dashboard certs + CA root installed on router (ACME cache cleared)."
 
-    # --- Copy service-monitor + traefik client certs to infra-services ---
-    if ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "true" 2>/dev/null; then
-        echo "Copying service-monitor client cert to infra-services (${SERVICES_IP})..."
-        ca_cat /var/lib/step-ca/client-certs/service-monitor/cert.pem | \
-            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo mkdir -p /var/lib/service-monitor-certs && sudo tee /var/lib/service-monitor-certs/cert.pem > /dev/null"
-        ca_cat /var/lib/step-ca/client-certs/service-monitor/key.pem | \
-            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo tee /var/lib/service-monitor-certs/key.pem > /dev/null && sudo chmod 600 /var/lib/service-monitor-certs/key.pem"
-        echo "  Service-monitor certs installed."
+# Copy service-monitor + traefik client certs to infra-services VM.
+pve-distribute-certs-services pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" services_ip="10.99.2.2":
+    #!/usr/bin/env bash
+    set -eo pipefail
+    PVE="root@{{pve_host}}"
+    ROUTER="admin@{{router_ip}}"
+    JUMP_TO_INFRA="-J ${PVE},${ROUTER}"
+    CA="admin@{{step_ca_ip}}"
+    ca_cat() { ssh ${JUMP_TO_INFRA} ${CA} "sudo cat $1"; }
 
-        echo "Copying traefik client cert to infra-services (${SERVICES_IP})..."
-        ca_cat /var/lib/step-ca/client-certs/traefik/cert.pem | \
-            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo mkdir -p /var/lib/traefik-certs && sudo tee /var/lib/traefik-certs/cert.pem > /dev/null"
-        ca_cat /var/lib/step-ca/client-certs/traefik/key.pem | \
-            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo tee /var/lib/traefik-certs/key.pem > /dev/null && sudo chmod 600 /var/lib/traefik-certs/key.pem"
-        echo "  Traefik certs installed."
-    else
-        echo "Infra-services VM (${SERVICES_IP}) not reachable — skipping."
-        echo "Run this again after deploying infra-services."
+    echo "=== Distributing certs to infra-services ({{services_ip}}) ==="
+    if ! ssh ${JUMP_TO_INFRA} admin@{{services_ip}} "true" 2>/dev/null; then
+        echo "Infra-services VM ({{services_ip}}) not reachable — skipping."
+        echo "Run 'just pve-distribute-certs-services {{pve_host}}' after deploying infra-services."
+        exit 0
     fi
 
-    # --- Copy CA root cert into nixos-vm-template machine dirs for upgrades ---
-    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
-    if [ -d "${VM_TEMPLATE_DIR}/machines" ]; then
-        for vm in infra-CA infra-services; do
-            if [ -d "${VM_TEMPLATE_DIR}/machines/${vm}" ]; then
-                cp "certs/${PVE_HOST}/step-ca-root.crt" "${VM_TEMPLATE_DIR}/machines/${vm}/ca-cert.pem"
-                echo "  CA cert copied to nixos-vm-template machines/${vm}/ca-cert.pem"
-            fi
-        done
-    fi
+    echo "Copying service-monitor client cert..."
+    ca_cat /var/lib/step-ca/client-certs/service-monitor/cert.pem | \
+        ssh ${JUMP_TO_INFRA} admin@{{services_ip}} "sudo mkdir -p /var/lib/service-monitor-certs && sudo tee /var/lib/service-monitor-certs/cert.pem > /dev/null"
+    ca_cat /var/lib/step-ca/client-certs/service-monitor/key.pem | \
+        ssh ${JUMP_TO_INFRA} admin@{{services_ip}} "sudo tee /var/lib/service-monitor-certs/key.pem > /dev/null && sudo chmod 600 /var/lib/service-monitor-certs/key.pem"
+    echo "  Service-monitor certs installed."
 
-    echo ""
-    echo "Done. Root CA cert saved to certs/${PVE_HOST}/step-ca-root.crt"
-    echo "Rebuild the router to trust it: just pve-upgrade ${PVE_HOST} 101 nifty-filter"
-    echo "Or restart the dashboard if already rebuilt: ssh ${JUMP_TO_ROUTER} ${ROUTER} sudo systemctl restart nifty-dashboard"
+    echo "Copying traefik client cert..."
+    ca_cat /var/lib/step-ca/client-certs/traefik/cert.pem | \
+        ssh ${JUMP_TO_INFRA} admin@{{services_ip}} "sudo mkdir -p /var/lib/traefik-certs && sudo tee /var/lib/traefik-certs/cert.pem > /dev/null"
+    ca_cat /var/lib/step-ca/client-certs/traefik/key.pem | \
+        ssh ${JUMP_TO_INFRA} admin@{{services_ip}} "sudo tee /var/lib/traefik-certs/key.pem > /dev/null && sudo chmod 600 /var/lib/traefik-certs/key.pem"
+    echo "  Traefik certs installed."
+
+    # Clear Traefik ACME cache so it requests a fresh cert from the new CA
+    ssh ${JUMP_TO_INFRA} admin@{{services_ip}} "sudo rm -f /var/lib/traefik/acme/acme.json && sudo systemctl restart podman-traefik"
+    echo "  Traefik ACME cache cleared and restarted."
 
 # Upgrade Step-CA VM (delegates to nixos-vm-template proxmox backend)
 pve-upgrade-step-ca pve_host vm_name="infra-CA" pve_storage="local-lvm":
@@ -1287,6 +1300,16 @@ pve-upgrade-step-ca pve_host vm_name="infra-CA" pve_storage="local-lvm":
         echo "Set NIXOS_VM_TEMPLATE to the correct path."
         exit 1
     fi
+
+    # Ensure Step-CA DNS points at Technitium (derive services IP from static_ip)
+    MACHINE_DIR="${VM_TEMPLATE_DIR}/machines/{{vm_name}}"
+    mkdir -p "${MACHINE_DIR}"
+    if [ -f "${MACHINE_DIR}/static_ip" ]; then
+        IP_ADDR=$(grep '^address=' "${MACHINE_DIR}/static_ip" | cut -d= -f2 | cut -d/ -f1)
+        SERVICES_IP="$(echo "${IP_ADDR}" | sed 's/\.[0-9]*$/.2/')"
+        printf 'nameserver %s\nnameserver 1.1.1.1\n' "${SERVICES_IP}" > "${MACHINE_DIR}/resolv.conf"
+    fi
+
     cd "${VM_TEMPLATE_DIR}"
     BACKEND=proxmox PVE_HOST="{{pve_host}}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw just upgrade "{{vm_name}}"
 

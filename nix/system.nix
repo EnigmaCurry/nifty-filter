@@ -169,6 +169,7 @@
     tcpdump
     iproute2
     dig
+    openssl
   ];
 
   # Maintenance mode indicator — modify PS1 and show warning
