@@ -26,5 +26,6 @@ in
       default = "nifty.internal";
       description = "Base domain for infrastructure services (e.g. Technitium becomes dns.<domain>).";
     };
+
   };
 }

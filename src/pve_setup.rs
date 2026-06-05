@@ -1,6 +1,6 @@
 use std::process::{self, Command, Stdio};
 
-use inquire::{InquireError, Select, Text};
+use inquire::{InquireError, MultiSelect, Select, Text};
 
 fn die(msg: &str) -> ! {
     eprintln!("ERROR: {msg}");
@@ -135,7 +135,7 @@ fn list_bridges(ssh_opts: &str, remote: &str) -> Vec<Bridge> {
 fn pick_nic(label: &str, ssh_opts: &str, remote: &str) -> (String, String) {
     let nic_type = prompt_select(
         &format!("{label} NIC type:"),
-        vec!["Virtual (bridge)".to_string(), "PCI passthrough".to_string()],
+        vec!["PCI passthrough".to_string(), "Virtual (bridge)".to_string()],
     );
 
     if nic_type.starts_with("PCI") {
@@ -234,12 +234,71 @@ pub fn run(pve_host: &str) {
 
     loop {
         eprintln!();
-        if !prompt_confirm("Add another NIC?", false) {
+        if !prompt_confirm("Add another NIC? (mgmt + infra bridges are added automatically)", false) {
             break;
         }
         let extra_nic = pick_nic("Additional", ssh_opts, &remote);
         nics.push(extra_nic);
     }
+
+    // --- Collect and select SSH keys ---
+    eprintln!();
+    eprintln!("Collecting SSH keys...");
+    let agent_keys = Command::new("ssh-add")
+        .args(["-L"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if agent_keys.is_empty() {
+        die("No keys found in SSH agent (ssh-add -L returned nothing)");
+    }
+    let pve_keys = ssh_cmd(ssh_opts, &remote, "cat /root/.ssh/id_ed25519.pub /root/.ssh/id_rsa.pub 2>/dev/null || true");
+
+    let mut all_keys: Vec<String> = agent_keys
+        .lines()
+        .chain(pve_keys.lines())
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    all_keys.sort();
+    all_keys.dedup();
+
+    // Show a short label for each key (type + comment, or last 20 chars)
+    let key_labels: Vec<String> = all_keys
+        .iter()
+        .map(|k| {
+            let parts: Vec<&str> = k.split_whitespace().collect();
+            match parts.len() {
+                3.. => format!("{} {}", parts[0], parts[2]),
+                2 => format!("{} (no comment)", parts[0]),
+                _ => k.chars().take(60).collect(),
+            }
+        })
+        .collect();
+
+    let selected_indices = match MultiSelect::new("SSH keys to install on the VM:", key_labels.clone())
+        .with_default(&(0..key_labels.len()).collect::<Vec<_>>())
+        .prompt()
+    {
+        Ok(selected) => {
+            // Map selected labels back to indices
+            selected.iter().filter_map(|s| key_labels.iter().position(|l| l == s)).collect::<Vec<_>>()
+        }
+        Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+            eprintln!("Aborted.");
+            process::exit(1);
+        }
+        Err(e) => die(&format!("prompt error: {e}")),
+    };
+
+    if selected_indices.is_empty() {
+        die("At least one SSH key is required");
+    }
+
+    let selected_keys: Vec<&str> = selected_indices.iter().map(|&i| all_keys[i].as_str()).collect();
+    eprintln!("  {} SSH key(s) selected", selected_keys.len());
 
     // Summary
     eprintln!();
@@ -248,6 +307,8 @@ pub fn run(pve_host: &str) {
     eprintln!("  VM ID:    {vmid}");
     eprintln!("  VM Name:  {vm_name}");
     eprintln!("  NICs:     {}", nics.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>().join(" "));
+    eprintln!("  Auto:     mgmt (bridge), infra (vmbr2)");
+    eprintln!("  SSH keys: {}", selected_keys.len());
     eprintln!();
 
     if !prompt_confirm("Proceed with install?", true) {
@@ -271,4 +332,6 @@ pub fn run(pve_host: &str) {
     println!("NICS=({})", nics.iter().map(|(id, _)| format!("\"{}\"", id)).collect::<Vec<_>>().join(" "));
     println!("PVE_WAN_MAC=\"{wan_mac}\"");
     println!("PVE_TRUNK_MAC=\"{trunk_mac}\"");
+    // Output SSH keys as a single variable (newline-separated, quoted)
+    println!("NIFTY_SSH_KEYS=\"{}\"", selected_keys.join("\n"));
 }

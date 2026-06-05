@@ -1,6 +1,7 @@
 use crate::{
     config::AuthConfig,
     middleware::{
+        mtls::MtlsConfig,
         oidc::{OidcConfig, build_oidc_auth_layer},
         trusted_forwarded_for::TrustedForwardedForConfig,
         trusted_header_auth::ForwardAuthConfig,
@@ -9,10 +10,8 @@ use crate::{
     routes::router,
     tls::{
         dns::{AcmeDnsProvider, obtain_certificate_with_dns01},
-        generate::{
-            ensure_rustls_crypto_provider, load_or_generate_self_signed, renew_self_signed_loop,
-        },
         http_redirect::HttpRedirectAcceptor,
+        mtls::{CertCaptureAcceptor, PeerCertMap},
         self_signed_cache::{delete_cached_pair, read_private_tls_file, read_tls_file},
     },
     util::write_files::{atomic_write_file_0600, create_private_dir_all_0700},
@@ -21,8 +20,9 @@ use anyhow::Context;
 use axum_server::{Handle, accept::DefaultAcceptor, tls_rustls::{RustlsAcceptor, RustlsConfig}};
 use futures_util::StreamExt;
 use rustls::ServerConfig as RustlsServerConfig;
+use rustls::server::WebPkiClientVerifier;
 use sqlx::{ConnectOptions, SqlitePool, sqlite::SqliteConnectOptions};
-use std::{net::SocketAddr, path::PathBuf, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tokio::task::AbortHandle;
 use tokio_rustls_acme::{AcmeConfig, caches::DirCache};
 use tower_sessions::{
@@ -38,6 +38,9 @@ pub struct AppState {
     pub config_changed_tx: tokio::sync::broadcast::Sender<()>,
     pub shutdown_tx: tokio::sync::broadcast::Sender<()>,
     pub config_boot_values: Option<serde_json::Value>,
+    /// Shared HTTP client for outbound connections to services VM (Traefik).
+    /// Uses system roots for CA verification + optional mTLS client cert.
+    pub services_client: reqwest::Client,
 }
 
 #[derive(Clone, Debug)]
@@ -49,17 +52,7 @@ pub enum TlsConfig {
         cert_path: PathBuf,
         key_path: PathBuf,
     },
-    /// Self-signed TLS, generated at startup.
-    ///
-    /// If `cache_dir` is Some, certificates are stored/reused there.
-    /// If `cache_dir` is None, certificates are ephemeral (in-memory only).
-    SelfSigned {
-        cache_dir: Option<PathBuf>,
-        sans: Vec<String>,
-        leaf_valid_secs: u32,
-        ca_valid_secs: u32,
-    },
-    /// ACME (Let's Encrypt or other CA) via TLS-ALPN-01.
+    /// ACME (Let's Encrypt, Step-CA, or other CA) via TLS-ALPN-01.
     ///
     /// Certificates and account data are stored in `cache_dir`.
     AcmeTlsAlpn01 {
@@ -94,7 +87,16 @@ pub async fn run(
     session_check_secs: u64,
     tls_config: TlsConfig,
     auth_config: AuthConfig,
+    client_cert_path: Option<PathBuf>,
+    client_key_path: Option<PathBuf>,
+    client_ca_path: Option<PathBuf>,
+    mtls_policies: Vec<crate::middleware::mtls::MtlsPolicy>,
 ) -> anyhow::Result<()> {
+    // Install the ring crypto provider before any rustls usage
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls crypto provider");
+
     log_startup(&db_url)?;
 
     // Database pool and migration
@@ -144,12 +146,29 @@ pub async fn run(
     let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
 
     // Shared state + router
+    let services_client = build_services_client(
+        client_cert_path.as_deref(),
+        client_key_path.as_deref(),
+    )?;
+
+    // mTLS peer cert map — shared between the TLS acceptor and the middleware.
+    let peer_certs: PeerCertMap = std::sync::Arc::new(dashmap::DashMap::new());
+    let mtls_config = if client_ca_path.is_some() && !mtls_policies.is_empty() {
+        Some(MtlsConfig {
+            peer_certs: peer_certs.clone(),
+            policies: mtls_policies,
+        })
+    } else {
+        None
+    };
+
     let state = AppState {
         db,
         auth_config,
         config_changed_tx,
         shutdown_tx: shutdown_tx.clone(),
         config_boot_values,
+        services_client,
     };
     let app = build_app(
         forward_auth_cfg,
@@ -158,9 +177,8 @@ pub async fn run(
         oidc_auth_layer,
         state,
         session_layer,
+        mtls_config,
     );
-
-    ensure_rustls_crypto_provider();
 
     // Serve based on TLS mode
     match tls_config {
@@ -169,29 +187,8 @@ pub async fn run(
         TlsConfig::RustlsFiles {
             cert_path,
             key_path,
-        } => serve_rustls_files(addr, app, deletion_abort, shutdown_tx, public_port, cert_path, key_path).await?,
-
-        TlsConfig::SelfSigned {
-            cache_dir,
-            mut sans,
-            leaf_valid_secs,
-            ca_valid_secs,
         } => {
-            if sans.is_empty() {
-                sans.push("localhost".to_string());
-            }
-            serve_self_signed(
-                addr,
-                app,
-                deletion_abort,
-                shutdown_tx,
-                public_port,
-                cache_dir,
-                sans,
-                leaf_valid_secs,
-                ca_valid_secs,
-            )
-            .await?
+            serve_rustls_files(addr, app, deletion_abort, shutdown_tx, public_port, cert_path, key_path, client_ca_path.clone(), peer_certs).await?
         }
 
         TlsConfig::AcmeTlsAlpn01 {
@@ -210,6 +207,8 @@ pub async fn run(
                 cache_dir,
                 domains,
                 contact_email,
+                client_ca_path.clone(),
+                peer_certs,
             )
             .await?
         }
@@ -232,6 +231,8 @@ pub async fn run(
                 domains,
                 contact_email,
                 acme_dns_api_base,
+                client_ca_path.clone(),
+                peer_certs,
             )
             .await?
         }
@@ -317,8 +318,9 @@ fn build_app(
     oidc_auth_layer: Option<axum_oidc::OidcAuthLayer<axum_oidc::EmptyAdditionalClaims>>,
     state: AppState,
     session_layer: SessionManagerLayer<SqliteStore>,
+    mtls_config: Option<MtlsConfig>,
 ) -> axum::Router {
-    router(
+    let mut app: axum::Router = router(
         forward_auth_cfg,
         forward_for_cfg,
         oidc_cfg,
@@ -327,7 +329,103 @@ fn build_app(
     )
     .layer(session_layer)
     .with_state(state)
-    .into()
+    .into();
+
+    // mTLS middleware — outermost layer so it runs before any other processing.
+    if let Some(mtls) = mtls_config {
+        app = app.layer(axum::middleware::from_fn_with_state(
+            mtls,
+            crate::middleware::mtls::require_mtls,
+        ));
+    }
+
+    app
+}
+
+/// Build a client certificate verifier using only the Step-CA root cert.
+/// The CA cert path comes from TLS_CLIENT_CA env var or the --tls-client-ca flag.
+/// Only clients with certs signed by this specific CA are accepted.
+fn build_mtls_client_verifier(ca_cert_path: &std::path::Path) -> anyhow::Result<Arc<dyn rustls::server::danger::ClientCertVerifier>> {
+    let ca_pem = std::fs::read(ca_cert_path)
+        .with_context(|| format!("failed to read CA cert '{}'", ca_cert_path.display()))?;
+    let mut root_store = rustls::RootCertStore::empty();
+    let certs = rustls_pemfile::certs(&mut &ca_pem[..])
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to parse CA cert PEM")?;
+    for cert in certs {
+        root_store.add(cert).context("failed to add CA cert to root store")?;
+    }
+    if root_store.is_empty() {
+        anyhow::bail!("no certificates found in CA cert file '{}'", ca_cert_path.display());
+    }
+    let verifier = WebPkiClientVerifier::builder(Arc::new(root_store))
+        .allow_unauthenticated()
+        .build()
+        .context("failed to build client certificate verifier")?;
+    Ok(verifier)
+}
+
+/// Build a shared reqwest::Client for outbound connections to the services VM.
+/// Uses system roots for CA verification + optional mTLS client cert.
+fn build_services_client(
+    client_cert: Option<&std::path::Path>,
+    client_key: Option<&std::path::Path>,
+) -> anyhow::Result<reqwest::Client> {
+    let mut root_store = rustls::RootCertStore::empty();
+    let native = rustls_native_certs::load_native_certs();
+    for cert in native.certs {
+        root_store.add(cert).context("failed to add system root cert")?;
+    }
+
+    let tls_config = if let (Some(cert_path), Some(key_path)) = (client_cert, client_key) {
+        let cert_data = std::fs::read(cert_path)
+            .with_context(|| format!("failed to read client cert '{}'", cert_path.display()))?;
+        let key_data = std::fs::read(key_path)
+            .with_context(|| format!("failed to read client key '{}'", key_path.display()))?;
+        let certs = rustls_pemfile::certs(&mut &cert_data[..])
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to parse client cert PEM")?;
+        let key = rustls_pemfile::private_key(&mut &key_data[..])
+            .context("failed to parse client key PEM")?
+            .context("no private key found in client key PEM")?;
+        rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_client_auth_cert(certs, key)
+            .context("failed to configure client auth cert for outbound connections")?
+    } else {
+        rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth()
+    };
+
+    reqwest::Client::builder()
+        .use_preconfigured_tls(tls_config)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .context("failed to build services HTTP client")
+}
+
+/// Build a `RustlsConfig` from PEM cert/key with mTLS client verification enabled.
+async fn rustls_config_with_mtls(
+    cert_pem: Vec<u8>,
+    key_pem: Vec<u8>,
+    ca_cert_path: &std::path::Path,
+) -> anyhow::Result<RustlsConfig> {
+    let client_verifier = build_mtls_client_verifier(ca_cert_path)?;
+
+    let certs = rustls_pemfile::certs(&mut &cert_pem[..])
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to parse certificate PEM")?;
+    let key = rustls_pemfile::private_key(&mut &key_pem[..])
+        .context("failed to parse private key PEM")?
+        .context("no private key found in PEM")?;
+
+    let server_config = RustlsServerConfig::builder()
+        .with_client_cert_verifier(client_verifier)
+        .with_single_cert(certs, key)
+        .context("failed to build server TLS config with client auth")?;
+
+    Ok(RustlsConfig::from_config(Arc::new(server_config)))
 }
 
 async fn serve_http(
@@ -367,6 +465,8 @@ async fn serve_rustls_files(
     public_port: u16,
     cert_path: PathBuf,
     key_path: PathBuf,
+    client_ca_path: Option<PathBuf>,
+    peer_certs: PeerCertMap,
 ) -> anyhow::Result<()> {
     info!(
         "loading TLS certificate from '{}' and key from '{}'",
@@ -378,20 +478,37 @@ async fn serve_rustls_files(
     let cert_pem = read_tls_file(&cert_path).await?;
     let key_pem = read_private_tls_file(&key_path).await?;
 
-    let rustls_config = RustlsConfig::from_pem(cert_pem, key_pem).await?;
+    if let Some(ref ca_path) = client_ca_path {
+        let rustls_config = rustls_config_with_mtls(cert_pem, key_pem, ca_path).await?;
+        info!("listening on https://{addr} (manual certs, mTLS)");
 
-    info!("listening on https://{addr}");
+        let inner = RustlsAcceptor::new(rustls_config)
+            .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+        let acceptor = CertCaptureAcceptor::new(inner, peer_certs);
 
-    let acceptor = RustlsAcceptor::new(rustls_config)
-        .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+        serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
+            axum_server::bind(addr)
+                .acceptor(acceptor)
+                .handle(handle)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        })
+        .await
+    } else {
+        let rustls_config = RustlsConfig::from_pem(cert_pem, key_pem).await
+            .context("failed to build TLS config from PEM files")?;
+        info!("listening on https://{addr} (manual certs, no mTLS)");
 
-    serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
-        axum_server::bind(addr)
-            .acceptor(acceptor)
-            .handle(handle)
-            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-    })
-    .await
+        let acceptor = RustlsAcceptor::new(rustls_config)
+            .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+
+        serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
+            axum_server::bind(addr)
+                .acceptor(acceptor)
+                .handle(handle)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        })
+        .await
+    }
 }
 
 async fn serve_acme_tls_alpn01(
@@ -404,9 +521,9 @@ async fn serve_acme_tls_alpn01(
     cache_dir: PathBuf,
     domains: Vec<String>,
     contact_email: Option<String>,
+    client_ca_path: Option<PathBuf>,
+    peer_certs: PeerCertMap,
 ) -> anyhow::Result<()> {
-    use std::sync::Arc;
-
     create_private_dir_all_0700(&cache_dir)
         .await
         .map_err(|e| anyhow::anyhow!("TLS cache dir invalid: {e:#}"))?;
@@ -420,7 +537,21 @@ async fn serve_acme_tls_alpn01(
     );
 
     let mut state = {
+        // Build a rustls ClientConfig with native roots (includes Step-CA root
+        // from security.pki.certificateFiles). tokio-rustls-acme defaults to
+        // webpki-roots which only has public CAs.
+        let mut acme_root_store = rustls::RootCertStore::empty();
+        for cert in rustls_native_certs::load_native_certs().certs {
+            let _ = acme_root_store.add(cert);
+        }
+        let acme_client_config = Arc::new(
+            rustls::ClientConfig::builder()
+                .with_root_certificates(acme_root_store)
+                .with_no_client_auth(),
+        );
+
         let mut cfg = AcmeConfig::new(domains.clone())
+            .client_tls_config(acme_client_config)
             .cache(DirCache::new(cache_dir.clone()))
             .directory(directory_url.clone());
 
@@ -433,12 +564,20 @@ async fn serve_acme_tls_alpn01(
         cfg.state()
     };
 
-    let rustls_config = RustlsServerConfig::builder()
-        .with_no_client_auth()
-        .with_cert_resolver(state.resolver());
+    let rustls_config = if let Some(ref ca_path) = client_ca_path {
+        let client_verifier = build_mtls_client_verifier(ca_path)?;
+        RustlsServerConfig::builder()
+            .with_client_cert_verifier(client_verifier)
+            .with_cert_resolver(state.resolver())
+    } else {
+        RustlsServerConfig::builder()
+            .with_no_client_auth()
+            .with_cert_resolver(state.resolver())
+    };
 
     let acme_acceptor = state.axum_acceptor(Arc::new(rustls_config));
-    let acceptor = HttpRedirectAcceptor::new(acme_acceptor, public_port);
+    let inner = HttpRedirectAcceptor::new(acme_acceptor, public_port);
+    let acceptor = CertCaptureAcceptor::new(inner, peer_certs);
 
     tokio::spawn(async move {
         while let Some(res) = state.next().await {
@@ -449,7 +588,7 @@ async fn serve_acme_tls_alpn01(
         }
     });
 
-    info!("listening on https://{addr} (ACME)");
+    info!("listening on https://{addr} (ACME, mTLS)");
 
     serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
         axum_server::bind(addr)
@@ -471,6 +610,8 @@ async fn serve_acme_dns01(
     domains: Vec<String>,
     contact_email: Option<String>,
     acme_dns_api_base: String,
+    client_ca_path: Option<PathBuf>,
+    peer_certs: PeerCertMap,
 ) -> anyhow::Result<()> {
     create_private_dir_all_0700(&cache_dir)
         .await
@@ -493,20 +634,37 @@ async fn serve_acme_dns01(
     )
     .await?;
 
-    let rustls_config = RustlsConfig::from_pem(cert_pem, key_pem).await?;
+    if let Some(ref ca_path) = client_ca_path {
+        let rustls_config = rustls_config_with_mtls(cert_pem, key_pem, ca_path).await?;
+        info!("listening on https://{addr} (ACME dns-01, mTLS)");
 
-    info!("listening on https://{addr} (ACME dns-01)");
+        let inner = RustlsAcceptor::new(rustls_config)
+            .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+        let acceptor = CertCaptureAcceptor::new(inner, peer_certs);
 
-    let acceptor = RustlsAcceptor::new(rustls_config)
-        .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+        serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
+            axum_server::bind(addr)
+                .acceptor(acceptor)
+                .handle(handle)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        })
+        .await
+    } else {
+        let rustls_config = RustlsConfig::from_pem(cert_pem, key_pem).await
+            .context("failed to build TLS config from PEM")?;
+        info!("listening on https://{addr} (ACME dns-01, no mTLS)");
 
-    serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
-        axum_server::bind(addr)
-            .acceptor(acceptor)
-            .handle(handle)
-            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-    })
-    .await
+        let acceptor = RustlsAcceptor::new(rustls_config)
+            .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
+
+        serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
+            axum_server::bind(addr)
+                .acceptor(acceptor)
+                .handle(handle)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        })
+        .await
+    }
 }
 
 /// Common “axum_server + Handle + shutdown_signal” pattern used by HTTPS modes.
@@ -543,67 +701,6 @@ where
     shutdown_task.await?;
 
     Ok(())
-}
-
-async fn serve_self_signed(
-    addr: SocketAddr,
-    app: axum::Router,
-    deletion_abort: tokio::task::AbortHandle,
-    shutdown_tx: tokio::sync::broadcast::Sender<()>,
-    public_port: u16,
-    cache_dir: Option<PathBuf>,
-    sans: Vec<String>,
-    leaf_valid_secs: u32,
-    ca_valid_secs: u32,
-) -> anyhow::Result<()> {
-    let tls_material = load_or_generate_self_signed(
-        cache_dir.clone(),
-        sans.clone(),
-        leaf_valid_secs,
-        ca_valid_secs,
-    )
-    .await?;
-
-    let rustls_config = RustlsConfig::from_pem(
-        tls_material.chain_pem.clone(),
-        tls_material.leaf_key_pem.clone(),
-    )
-    .await?;
-
-    // Renew at ~80% lifetime: margin = 20% validity, capped at 10 minutes.
-    // Also ensure margin is strictly less than validity.
-    let validity = Duration::from_secs(leaf_valid_secs as u64);
-    let mut renew_margin =
-        Duration::from_secs((leaf_valid_secs as u64) / 5).max(Duration::from_secs(1));
-    renew_margin = renew_margin.min(Duration::from_secs(600));
-    if renew_margin >= validity {
-        // If validity is tiny, renew_margin must be < validity or we’ll loop.
-        renew_margin = validity
-            .saturating_sub(Duration::from_secs(1))
-            .max(Duration::from_secs(1));
-    }
-
-    tokio::spawn(renew_self_signed_loop(
-        rustls_config.clone(),
-        cache_dir,
-        sans,
-        leaf_valid_secs,
-        renew_margin,
-        tls_material.leaf_cert_pem,
-    ));
-
-    info!("listening on https://{addr} (self-signed)");
-
-    let acceptor = RustlsAcceptor::new(rustls_config)
-        .acceptor(HttpRedirectAcceptor::new(DefaultAcceptor::new(), public_port));
-
-    serve_with_handle(addr, deletion_abort, shutdown_tx, |handle| {
-        axum_server::bind(addr)
-            .acceptor(acceptor)
-            .handle(handle)
-            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-    })
-    .await
 }
 
 async fn load_or_request_dns01_cert(

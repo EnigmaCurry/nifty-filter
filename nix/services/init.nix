@@ -8,10 +8,6 @@
 
 { pkgs, nifty-filter, configDir, hclFile, ... }:
 
-let
-  acl = pkgs.acl;
-in
-
 {
   # Seed the default config on first boot if it doesn't exist
   systemd.services.nifty-filter-init = {
@@ -26,12 +22,10 @@ in
     script = ''
       mkdir -p ${configDir}
       chown root:wheel ${configDir}
-      chmod 0770 ${configDir}
-      ${acl}/bin/setfacl -m g:nifty-config:rx ${configDir}
-      cp ${../default-nifty-filter.hcl} ${hclFile}
-      chmod 0660 ${hclFile}
+      chmod 0755 ${configDir}
+      cp ${../../examples/vlan_router.hcl} ${hclFile}
+      chmod 0664 ${hclFile}
       chown root:wheel ${hclFile}
-      ${acl}/bin/setfacl -m g:nifty-config:r ${hclFile}
       mkdir -p ${configDir}/ssh
       chmod 0700 ${configDir}/ssh
     '';

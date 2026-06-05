@@ -23,10 +23,10 @@ axum = { version = "0.8.7", features = ["multipart"] }
 bcrypt = "0.17.1"
 bytes = "1.11.0"
 chrono = { version = "0.4.42", features = ["serde"] }
+dashmap = "6"
 dirs = "5.0.1"
 env_logger = "0.11.5"
 hcl-rs = "0.19"
-hex = "0.4"
 indexmap = { version = "2.12.1", features = ["serde"] }
 ipnetwork = "0.20.0"
 log = "0.4.22"
@@ -52,14 +52,14 @@ schemars = { version = "0.9", features = ["derive"] }
 api-doc-macros = { path = "../api-doc-macros" }
 app-macros = { path = "../app-macros" }
 axum-server = { version = "0.7.3", features = ["tls-rustls"] }
-rcgen = "0.14.5"
 x509-parser = "0.18.0"
+rustls-native-certs = "0.8"
 rustls-pemfile = "2.2.0"
+tokio-rustls = "0.26"
 tokio-rustls-acme = { version = "0.8.0", features = ["axum"] }
 rustls = { version = "0.23.35", default-features = false, features = ["ring"] }
 futures-util = "0.3.31"
 acme-dns-client = "0.1.2"
-sha2 = "0.10.9"
 base64 = "0.22.1"
 instant-acme = { version = "0.8.4", features = ["ring"] }
 url = "2.5.7"

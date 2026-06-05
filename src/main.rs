@@ -41,22 +41,11 @@ enum Commands {
 
     /// Install nifty-filter to disk from the live ISO
     #[cfg(feature = "nixos")]
-    Install {
-        /// Set a git remote for config updates
-        #[arg(long)]
-        git_remote: Option<String>,
-    },
+    Install,
 
     /// Reboot into maintenance mode (read-write root)
     #[cfg(feature = "nixos")]
     Maintenance,
-
-    /// Upgrade the system in place
-    #[cfg(feature = "nixos")]
-    Upgrade {
-        /// Target branch (overrides saved branch)
-        branch: Option<String>,
-    },
 
     /// Interactive PVE VM setup wizard (outputs shell variables)
     #[cfg(feature = "nixos")]
@@ -98,7 +87,7 @@ enum Commands {
         config: String,
     },
 
-    /// Print a config value by key (wan-name, trunk-name, mgmt-name, wan-mac, trunk-mac, mgmt-mac, mgmt-subnet, enable-ipv6, dashboard-port, iperf-port, mdns-interfaces)
+    /// Print a config value by key (wan-name, trunk-name, mgmt-name, wan-mac, trunk-mac, mgmt-mac, mgmt-subnet, enable-ipv6, dashboard-port, iperf-port, mdns-interfaces, dashboard-tls-enabled, dashboard-tls-acme-url, dashboard-tls-acme-email, dashboard-tls-client-cert, dashboard-tls-client-key, dashboard-tls-sans)
     Get {
         /// Path to the HCL config file
         #[arg(long, short)]
@@ -669,26 +658,6 @@ fn run_maintenance() {
     exit(status.code().unwrap_or(1));
 }
 
-#[cfg(feature = "nixos")]
-fn run_upgrade(branch: Option<String>) {
-    use std::process::{exit, Command};
-
-    let script = include_str!("../nix/scripts/nifty-upgrade.sh");
-    let tmp = std::env::temp_dir().join("nifty-upgrade.sh");
-    std::fs::write(&tmp, script).expect("failed to write temp file");
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
-        .expect("failed to chmod temp file");
-
-    let mut cmd = Command::new(&tmp);
-    cmd.env("TMPDIR", "/var/tmp");
-    if let Some(b) = branch {
-        cmd.arg(b);
-    }
-    let status = cmd.status().expect("failed to execute upgrade script");
-    exit(status.code().unwrap_or(1));
-}
-
 fn app() {
     let cli = Cli::parse();
 
@@ -696,11 +665,9 @@ fn app() {
         #[cfg(feature = "nixos")]
         Commands::Config => config::run(),
         #[cfg(feature = "nixos")]
-        Commands::Install { git_remote } => install::run(git_remote),
+        Commands::Install => install::run(),
         #[cfg(feature = "nixos")]
         Commands::Maintenance => run_maintenance(),
-        #[cfg(feature = "nixos")]
-        Commands::Upgrade { branch } => run_upgrade(branch),
         #[cfg(feature = "nixos")]
         Commands::PveSetup { pve_host } => pve_setup::run(&pve_host),
         Commands::Version => {
@@ -891,6 +858,27 @@ fn app() {
                 },
                 "switch-router-ip" => hcl_config.switch.as_ref().and_then(|s| s.router_ip.clone()),
                 "switch-mgmt-iface" => hcl_config.switch.as_ref().and_then(|s| s.mgmt_iface.clone()),
+                "dashboard-tls-enabled" => Some(hcl_config.dashboard_tls.is_some().to_string()),
+                "dashboard-tls-acme-url" => hcl_config.dashboard_tls.as_ref().map(|t| t.acme_directory_url.clone()),
+                "dashboard-tls-acme-email" => hcl_config.dashboard_tls.as_ref().and_then(|t| t.acme_email.clone()),
+                "dashboard-tls-client-cert" => hcl_config.dashboard_tls.as_ref().map(|t| t.client_cert.clone()),
+                "dashboard-tls-client-key" => hcl_config.dashboard_tls.as_ref().map(|t| t.client_key.clone()),
+                "dashboard-tls-ca-cert" => hcl_config.dashboard_tls.as_ref().map(|t| t.ca_cert.clone()),
+                "dashboard-tls-sans" => hcl_config.dashboard_tls.as_ref().and_then(|t| {
+                    if t.sans.is_empty() { None } else { Some(t.sans.join(",")) }
+                }),
+                "dashboard-tls-mtls-policies" => hcl_config.dashboard_tls.as_ref().and_then(|t| {
+                    t.mtls.as_ref().map(|m| {
+                        let policies: Vec<serde_json::Value> = m.policy.iter().map(|(name, p)| {
+                            serde_json::json!({
+                                "name": name,
+                                "cn": p.cn,
+                                "paths": p.paths,
+                            })
+                        }).collect();
+                        serde_json::to_string(&policies).unwrap()
+                    })
+                }),
                 _ => {
                     eprintln!("Unknown key: {}", key);
                     exit(1);

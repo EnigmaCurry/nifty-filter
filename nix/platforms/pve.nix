@@ -1,23 +1,17 @@
 # NixOS module additions for PVE disk images
 #
 # When included in the system config, this module:
-# - Marks the system as a PVE install (skips disk ops in nifty-install)
+# - Marks the system as a PVE install
 # - Seeds SSH authorized keys on first boot from build-time parameter
 # - Provides minimal bootstrap networking via fw_cfg mgmt MAC
-# - Shows a first-boot banner prompting nifty-install
-{ config, pkgs, lib, sshKeys ? "", gitBranch ? "master", nifty-filter-pkg, ... }:
+{ config, pkgs, lib, sshKeys ? "", nifty-filter-pkg, ... }:
 
 {
-  # Mark this as a PVE install (nifty-install checks this to skip disk ops)
+  # Mark this as a PVE install
   environment.etc."nifty-filter/pve-install".text = "pve";
 
-  # Record build branch for nifty-upgrade
-  environment.etc."nifty-filter/build-branch".text = gitBranch;
-
-  # nifty-install available in PATH (runs config wizard only on PVE)
   environment.systemPackages = [
     nifty-filter-pkg
-    (pkgs.writeShellScriptBin "nifty-install" ''exec nifty-filter install "$@"'')
   ];
 
   # Seed SSH authorized keys on first boot from build-time parameter.
@@ -158,6 +152,7 @@
       fi
       echo "}" >> "$IFACES_FILE"
 
+
       echo "New interfaces block:"
       cat "$IFACES_FILE"
 
@@ -181,19 +176,25 @@
         { print }
       ' "$HCL" > "$HCL.tmp"
       mv "$HCL.tmp" "$HCL"
-      chmod 0660 "$HCL"
+      chmod 0664 "$HCL"
       chown root:wheel "$HCL"
-      ${pkgs.acl}/bin/setfacl -m g:nifty-config:r "$HCL"
       rm -f "$IFACES_FILE"
+
+      # Handle infra NIC (virtual bridge for Step-CA / services communication)
+      INFRA_MAC=""
+      [ -f "$FWCFG/infra_mac/raw" ] && INFRA_MAC=$(cat "$FWCFG/infra_mac/raw" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+      if [ -n "$INFRA_MAC" ]; then
+        echo "  infra MAC: $INFRA_MAC (from fw_cfg)"
+        sed -i "s/mac  = \"aa:bb:cc:dd:ee:10\"/mac  = \"$INFRA_MAC\"/" "$HCL"
+      fi
 
       echo "HCL updated with real MACs"
       touch /var/nifty-filter/.pve-init-done
     '';
   };
 
-  # Bootstrap networking: configure mgmt interface from fw_cfg before
-  # nifty-install has run. This ensures SSH access on first boot.
-  # After nifty-install writes the env file, nifty-network takes over.
+  # Bootstrap networking: configure mgmt interface from fw_cfg.
+  # This ensures SSH access on first boot before nifty-network takes over.
   systemd.services.nifty-pve-network = {
     description = "Bootstrap mgmt network from fw_cfg (PVE)";
     wantedBy = [ "multi-user.target" ];
@@ -256,20 +257,11 @@
       echo ""
       echo -e "\e[1;31m  *** MAINTENANCE MODE — root filesystem is READ-WRITE ***\e[0m"
       echo ""
-      echo "  Upgrade system:  nifty-upgrade"
       echo "  Return to normal: systemctl reboot"
-      echo ""
-    elif ! [ -f /var/nifty-filter/nifty-filter.hcl ]; then
-      echo ""
-      echo -e "\e[1;33m  nifty-filter PVE image — not yet configured\e[0m"
-      echo ""
-      echo "  Run the configuration wizard:"
-      echo "    nifty-config"
       echo ""
     else
       echo ""
-      echo "  Configure:  nifty-config"
-      echo "  Upgrade:    nifty-upgrade"
+      echo "  Config:   /var/nifty-filter/nifty-filter.hcl"
       echo ""
     fi
   '';

@@ -5,7 +5,7 @@
 # own default HCL config on first boot via nifty-filter-init.
 #
 # Build with: nix build .#iso
-{ config, pkgs, lib, modulesPath, version ? "unknown", installedToplevel, gitBranch ? "master", nifty-filter-pkg, ... }:
+{ config, pkgs, lib, modulesPath, version ? "unknown", installedToplevel, nifty-filter-pkg, ... }:
 
 {
   imports = [
@@ -142,7 +142,6 @@
   # Install script and tools available in PATH
   environment.systemPackages = with pkgs; [
     nifty-filter-pkg
-    (writeShellScriptBin "nifty-install" ''exec nifty-filter install "$@"'')
     parted
     dosfstools
     e2fsprogs
@@ -154,10 +153,6 @@
   # Make the installed system closure available to the installer.
   # This is the disk-based system (with filesystem.nix), not the live ISO system.
   environment.etc."nifty-filter/installed-system".text = "${installedToplevel}";
-
-  # Record which branch this ISO was built from so the installer
-  # can write it to /var/nifty-filter/branch for nifty-upgrade.
-  environment.etc."nifty-filter/build-branch".text = "${gitBranch}";
 
   # Include the installed system closure in the ISO's nix store
   isoImage.storeContents = [ installedToplevel ];
@@ -199,8 +194,8 @@
         fi
       done < "$HOME/.ssh/authorized_keys"
       echo ""
-      echo "  Ready to install. Run:"
-      echo "    nifty-install"
+      echo "  Ready. Edit config:"
+      echo "    nano /var/nifty-filter/nifty-filter.hcl"
       echo ""
     else
       echo ""

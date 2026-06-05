@@ -1,163 +1,230 @@
 # nifty-filter
 
-nifty-filter is a declarative config to deploy network routers and firewalls. It is two things that share the same name:
+A declarative NixOS router distribution. Define your entire network
+in a single HCL config file (VLANs, firewall rules, DHCP, DNS, QoS,
+and infrastructure services) and deploy immutable VM images to Proxmox
+VE.
 
-1. **A standalone nftables rule generator** — a Rust library and CLI tool that reads
-   an HCL config file and emits a complete nftables ruleset.
-   Install it with `cargo install nifty-filter` and use it as a standalone piece in your own adhoc router.
-   
-2. **A declarative NixOS router distribution** — a complete router operating system, built around that same binary, with DHCP,
-   DNS, VLANs, an interactive installer, and more. Deploy a fully featured router on Proxmox VE, or bare metal.
+The root filesystem is read-only. All configuration lives on a
+writable `/var` partition. Upgrades replace the entire system image
+while preserving state.
 
-nifty-filter is in a stage of development and should be used for research purposes
-only. Use it at your own risk!
-
-## Standalone usage
-
-```bash
-cargo install nifty-filter
-```
-
-Or [download a release](https://github.com/EnigmaCurry/nifty-filter/releases).
-
-```bash
-# Generate rules from an HCL config file:
-nifty-filter nftables --config router.hcl
-
-# Generate and validate (requires nft on the host):
-nifty-filter nftables --config router.hcl --validate
-
-# Generate QoS (CAKE) traffic shaping commands:
-nifty-filter qos --config router.hcl
-```
-
-The ruleset is generated from a compile-time validated
-[askama template](templates/router.nft.txt). See
-[examples/](examples/) for complete configurations covering a basic
-home router, dual-stack IPv6, and multi-VLAN setups.
-
-### HCL configuration
-
-nifty-filter uses [HCL](https://github.com/hashicorp/hcl) (HashiCorp
-Configuration Language) for its config format. HCL provides labeled
-blocks, real lists, typed values, and comments — making network config
-readable and structured.
-
-```hcl
-interfaces {
-  trunk = "trunk"
-  wan   = "wan"
-}
-
-wan {
-  enable_ipv4 = true
-  enable_ipv6 = true
-  tcp_forward = ["443:10.99.40.50:443"]
-}
-
-vlan "trusted" {
-  id = 10
-  ipv4 {
-    subnet = "10.99.10.1/24"
-    egress = ["0.0.0.0/0"]
-  }
-  firewall {
-    tcp_accept = [22]
-    udp_accept = [53, 67, 68]
-  }
-  dhcp {
-    pool_start = "10.99.10.100"
-    pool_end   = "10.99.10.250"
-    router     = "10.99.10.1"
-    dns        = "10.99.10.1"
-  }
-}
-```
-
-See [examples/home_router.hcl](examples/home_router.hcl) for a simple
-setup, [examples/dual_stack_router.hcl](examples/dual_stack_router.hcl)
-for IPv4+IPv6, and
-[examples/vlan_router.hcl](examples/vlan_router.hcl) for a full
-multi-VLAN configuration with managed switch.
-
----
-
-# NixOS Router Distribution
-
-nifty-filter as a NixOS distribution provides DHCP, DNS, VLANs,
-firewall, and an interactive configuration TUI — all driven by config
-files on the writable `/var` partition. The root filesystem is
-read-only.
-
-Install it on Proxmox VE (preferred for backups and QoL) or
-bare metal. You can use virtual NICs (for routing other VMs) or real
-network hardware via PCI passthrough. A full router on a hypervisor
-platform is useful to put your apps right on the edge of your network.
+> nifty-filter is in development and should be used for research
+> purposes only. Use it at your own risk.
 
 ## Prerequisites
 
  * You need a workstation (Linux/macOS) to build images.
- * You need a separate Proxmox VE host (or bare metal target) to run the router.
+ * You need a dedicated router machine running Proxmox VE.
 
-On your workstation:
+### Workstation
 
  * Clone this repo.
  * Install [Nix](https://nixos.org/download/) and [just](https://github.com/casey/just).
- * Ensure your ssh-agent is running and that `ssh-add -L` returns at least one loaded key.
- * Ensure you can login to your PVE host (test `ssh root@<proxmox-host> whoami`).
+ * Ensure your ssh-agent is running and that `ssh-add -L` returns at least one loaded key. All agent keys are installed on the VMs during creation.
+ * Ensure you can login to your PVE host as root via SSH.
 
-## Justfile commands
+### Proxmox VE Host
 
-Run `just help` to list all available targets. The key commands are
-summarized below.
+Install [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment/overview)
+on a dedicated router machine. During the installer you must assign a
+network interface to `vmbr0` (the management bridge). We recommend
+using an **external USB network adapter** for this so that all onboard
+NICs remain available for PCI passthrough to the router VM. This lets
+you isolate PVE from the network by unplugging the USB NIC. Later on,
+you can add a route to PVE from your trusted VLAN, but the USB NIC
+adds an emergency fallback.
 
-### Build
+The USB NIC does not need normal internet access — it only needs a
+direct link to your workstation for SSH administration. Connect it
+directly to your workstation (or through a small unmanaged switch) and
+assign a static IP on both ends. From there, an SSH SOCKS proxy
+through the workstation provides outbound access for Debian package
+upgrades on the PVE host:
 
-| Command | Description |
-|---------|-------------|
-| `just pve-image` | Build a PVE disk image (pre-partitioned, ready to import) |
-| `just iso` | Build the NixOS router ISO image (fits on a CD-ROM or any USB) |
-| `just iso-big` | Build ISO with full hardware support (linux-firmware + all drivers; fits on a DVD) |
-| `just clean-nix` | Remove build artifacts and run garbage collection |
+```bash
+# On the workstation, start a SOCKS proxy:
+ssh -D 1080 root@<pve-ip>
 
-### Proxmox VE lifecycle
+# On the PVE host, use the proxy for apt:
+echo 'Acquire::http::Proxy "socks5h://127.0.0.1:1080";' > /etc/apt/apt.conf.d/99proxy
+apt update && apt full-upgrade
+```
 
-These commands manage the full VM lifecycle on a Proxmox VE host. Each
-`pve-*` command that takes a `vmid` and `vm_name` verifies the name
-matches before acting, so you cannot accidentally destroy the wrong VM.
+This keeps every onboard NIC free for passthrough while still allowing
+you to manage and update the PVE host over the direct USB link.
 
-| Command | Description |
-|---------|-------------|
-| `just pve-install <pve-host>` | Interactive: build disk image, upload, create and start a VM |
-| `just pve-ssh <pve-host> <target-ip> [user]` | SSH to VM via PVE jump host |
-| `just pve-start <pve-host> <vmid> <vm-name>` | Start a VM |
-| `just pve-stop <pve-host> <vmid> <vm-name>` | Gracefully stop a VM |
-| `just pve-destroy <pve-host> <vmid> <vm-name>` | Destroy a VM (stops first if running) |
+## Example network
 
-### Upgrade and maintenance
+The layers of the network are: 
 
-| Command | Description |
-|---------|-------------|
-| `just upgrade <router-ip>` | Build locally, rsync to router, reboot |
+ - A direct USB link for PVE administration from your workstation.
+ - A virtual management bridge for the PVE host to talk to the router VM.
+ - The VLANs defined by the router that carry production traffic on the managed switch.
+
+The rest of this document uses the
+[`examples/vlan_router.hcl`](examples/vlan_router.hcl) config as a
+running example.
+
+```mermaid
+flowchart TB
+    ISP1((ISP_1))
+    ISP2((ISP_2))
+
+    Workstation["Workstation<br/>192.168.100.1"]
+    PVE["Proxmox VE Host<br/>192.168.100.2"]
+
+    Workstation -- "USB NIC<br/>192.168.100.0/24" --- PVE
+
+    subgraph RouterVM[Router VM / physical ports]
+        direction LR
+        TRUNK["TRUNK<br/>U:1<br/>T:10,20,30,40"]
+        OPT1["OPT1<br/>empty"]
+        WAN[WAN]
+        WAN2[WAN2]
+    end
+
+    ISP1 --- WAN
+    ISP2 --- WAN2
+
+    subgraph MgmtPath[Management path]
+        direction LR
+        PVE_MGMT["PVE<br/>10.99.0.2"]
+        MGMT["Router Management<br/>vmbr1<br/>10.99.0.0/24<br/>router: 10.99.0.1"]
+    end
+
+    RouterVM --- MGMT
+    PVE --- PVE_MGMT --- MGMT
+
+    subgraph Switch[Switch]
+        direction LR
+        P1["1<br/>Admin<br/>U:10"]
+        P2["2<br/>IoT<br/>U:20"]
+        P3["3<br/>Guest<br/>U:30"]
+        P4["4<br/>Guest<br/>U:30"]
+        P5["5<br/>Lab<br/>U:40"]
+        P6["6<br/>Lab<br/>U:40"]
+        P7["7<br/>2nd Switch<br/>T:20,40"]
+        P8["8<br/>MGMT<br/>U:1"]
+        P9["9<br/>SFP trunk<br/>U:1<br/>T:10,20,30,40"]
+    end
+
+    TRUNK --- P9
+
+    subgraph VLANs[Logical VLANs / subnets]
+        direction LR
+
+        V1["VLAN 1<br/>native / MGMT<br/>reserved<br/>switch management<br/>192.168.2.1"]
+
+        V2["VLAN 2<br/>Infrastructure<br/>virtual / not on switch<br/>10.99.2.1/24<br/>Services VM: 10.99.2.2<br/>DNS / NTP / Traefik"]
+
+        V10["VLAN 10<br/>trusted / Admin<br/>10.99.10.1/24<br/>DHCP: 10.99.10.100-250<br/>Internet: yes"]
+
+        V20["VLAN 20<br/>IoT<br/>10.99.20.1/24<br/>DHCP: 10.99.20.100-250<br/>Internet: no"]
+
+        V30["VLAN 30<br/>Guest<br/>10.99.30.1/24<br/>DHCP: 10.99.30.100-250<br/>Internet: yes"]
+
+        V40["VLAN 40<br/>Lab<br/>10.99.40.1/24<br/>IPv6: fd00:40::1/64<br/>DHCP: 10.99.40.100-250<br/>Internet: yes"]
+    end
+
+    P1 -.-> V10
+    P2 -.-> V20
+    P3 -.-> V30
+    P4 -.-> V30
+    P5 -.-> V40
+    P6 -.-> V40
+    P7 -.-> V20
+    P7 -.-> V40
+    P8 -.-> V1
+
+    RouterVM -. "virtual NIC / bridge" .-> V2
+```
+
+#### Management interfaces
+
+| Network           | Subnet             | Purpose                                                                                                                               |
+|-------------------|--------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| PVE management    | `192.168.100.0/24` | Direct USB NIC link between workstation (`192.168.100.1`) and PVE host (`192.168.100.2`). SSH administration and SOCKS proxy for apt. |
+| Router management | `10.99.0.0/24`     | Virtual bridge (`vmbr1`) between PVE and the router VM. Out-of-band access to the router from the Proxmox host.                       |
+
+#### VLANs
+
+| VLAN    | ID | Subnet                           | Purpose                                                                                                                             |
+|---------|----|----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
+| infra   | 2  | `10.99.2.0/24`                   | Infrastructure services (Step-CA, Traefik, DNS, NTP). Uses a dedicated virtual NIC on an isolated bridge — not on the trunk/switch. |
+| trusted | 10 | `10.99.10.0/24`                  | Trusted devices. Full internet, SSH to router, dashboard access. mDNS reflected to IoT.                                             |
+| iot     | 20 | `10.99.20.0/24`                  | IoT jail. DHCP only, no internet, no router access beyond DHCP/DNS. mDNS reflected to trusted.                                      |
+| guest   | 30 | `10.99.30.0/24`                  | Guest network. Internet access but no SSH or dashboard.                                                                             |
+| lab     | 40 | `10.99.40.0/24` + `fd00:40::/64` | Lab (dual-stack). Full internet on IPv4 and IPv6, SSH to router.                                                                    |
 
 ## Deploying to Proxmox VE
 
-This walkthrough covers a full deployment from scratch. The example
-uses PCI passthrough NICs, but virtual bridge NICs (`vmbr*`) or a mix
-of both also work.
+A full deployment consists of three VMs, deployed in order.
 
-### 1. Destroy any existing VM (optional)
+| VM             | VMID | IP        | Purpose                                 |
+|----------------|------|-----------|-----------------------------------------|
+| infra-CA       | 100  | 10.99.2.3 | Step-CA private PKI (ACME + mTLS certs) |
+| nifty-filter   | 101  | 10.99.0.1 | Router, firewall, dashboard             |
+| infra-services | 202  | 10.99.2.2 | Traefik, Technitium DNS, DDNS, NTP      |
 
-If you are rebuilding, tear down the old VM first:
+Splitting the infrastructure across separate VMs provides several
+benefits: each VM can be upgraded and rebooted independently without
+disrupting the others, smaller images build and boot faster, and
+kernel-level isolation limits the blast radius if any single service is
+compromised. Because these VMs communicate over the network, they need
+a way to cryptographically verify each other's identity. Step-CA
+provides a private certificate authority that issues TLS server
+certificates (via ACME) and mTLS client certificates so that every
+connection between VMs is authenticated. The CA runs on its own VM so
+that its private keys are never co-located with application workloads.
+With long-lived certificates, the CA VM can be shut down entirely
+between renewals to further limit access to the CA.
 
-```bash
-just pve-destroy pve-router 101 nifty-filter
+The router uses PCI passthrough NICs for WAN, trunk, and management.
+The infra VLAN uses a virtual NIC on an isolated bridge (`vmbr2`)
+shared between the router and infrastructure VMs.
+
+### 1. Test the PVE connection
+
+All `pve-*` commands take an SSH host alias as the first argument. Add
+an entry to your `~/.ssh/config`:
+
+```
+Host pve-router
+    HostName 192.168.1.100   # your Proxmox host IP on the management interface (vmbr0)
+    User root
 ```
 
-### 2. Create and boot the VM
+Then verify the connection:
 
-`pve-install` is interactive — it connects to the PVE host, queries
-available VM IDs and network devices, and walks you through the setup:
+```bash
+just pve-status pve-router
+```
+
+This prints the logged-in user, PVE version, uptime, and any existing
+VMs.
+
+### 2. Deploy Step-CA (infra-CA)
+
+The CA VM deploys first — it has no external dependencies (the
+container image is built by Nix, no registry pull needed).
+
+```bash
+just pve-install-step-ca pve-router 10.99.2.3
+```
+
+This creates the infra bridge (`vmbr2`), adds a NIC to the router VM
+slot, and creates a minimal VM (1 CPU, 512 MB, 4 GB disk). On first
+boot, Step-CA bootstraps automatically: generates a root CA, enables
+ACME, and issues client certificates for dashboard, service-monitor,
+and traefik.
+
+> **Note:** You cannot SSH into the CA VM yet — it sits on the isolated
+> infra bridge (`vmbr2`) and the router VM (which serves as the jump
+> host) hasn't been deployed. Step-CA needs no manual setup; it will be
+> reachable once the router is online.
+
+### 3. Deploy the router
 
 ```bash
 just pve-install pve-router
@@ -181,48 +248,104 @@ two disks: a boot+root disk (read-only NixOS system) and a `/var` disk
 RAM, and serial console (no VGA). Set `VAR_SIZE` to override the
 default 8 GB `/var` disk.
 
-### 3. SSH in and configure
+### 4. Distribute certificates
 
-SSH keys are pre-installed (collected from your workstation agent and
-the PVE host's `/root/.ssh/`) — connect directly:
-
-```bash
-just pve-ssh pve-router 10.99.0.1
-```
-
-Run the configuration wizard:
+With the router online as a jump host, distribute TLS certificates from
+the Step-CA VM to all other VMs:
 
 ```bash
-nifty-install
+just pve-distribute-certs pve-router
 ```
 
-The wizard prompts for hostname, WAN/LAN interfaces, VLANs, subnets,
-DHCP pools, and DNS servers. It writes the configuration and reboots
-(interface renaming requires a reboot to take effect).
+This copies the dashboard client cert/key to the router, and (if the
+infra-services VM is reachable) the service-monitor and traefik certs
+too. The root CA cert is saved locally for inclusion in your Nix config.
+Run it again after deploying infra-services to distribute those certs.
 
-## Deploying to bare metal
+The router boots with ACME + mTLS enabled by default. Once the certs
+are in place, the dashboard will obtain its server certificate from
+Step-CA and require mTLS client certificates on all HTTPS endpoints.
+If the dashboard is in a restart loop waiting for certs, it will pick
+them up automatically.
 
-### 1. Build and flash the ISO
+### 5. Verify router internet connectivity
+
+Before deploying VMs that depend on the router as a gateway, verify it
+has working WAN connectivity:
 
 ```bash
-just iso
-sudo dd if=result/iso/nifty-filter-*.iso of=/dev/sdX bs=4M status=progress
+ssh -J root@pve-router admin@10.99.0.1 'ping -c1 1.1.1.1 && curl -sI https://cache.nixos.org | head -1'
 ```
 
-Use `just iso-big` if you need full hardware support (all
-linux-firmware and drivers).
+You should see a successful ping and an HTTP 200 response. If not,
+check the router's WAN interface and NAT configuration.
 
-### 2. Boot, install, and configure
+### 6. Deploy infra-services
 
-Boot from the media. The console shows the IP address and login
-credentials (`admin` / `nifty`). Copy your SSH key and connect:
+With the router online as a gateway, deploy the services VM:
 
 ```bash
-ssh-copy-id admin@<router-ip>
-ssh admin@<router-ip>
+just pve-install-services pve-router 10.99.2.2
 ```
 
-Run `nifty-install`, then remove the media and power on.
+This creates the infra-services VM (2 CPU, 2 GB, 8 GB disk) with
+Traefik, Technitium DNS, DDNS updater, Chrony NTP, and the
+service-monitor. Container images are pulled from the registry via the
+router gateway.
+
+### 7. Test the dashboard
+
+From a device on the trusted VLAN, open the dashboard in a browser:
+
+```
+https://10.99.10.1
+```
+
+Accept the self-signed certificate warning (the server cert is signed by
+your private Step-CA, which browsers don't trust by default). You should
+see the nifty-filter dashboard.
+
+### Custom domain
+
+All VMs default to the domain `nifty.internal`. To use a different
+domain, set `NIFTY_DOMAIN` when building or upgrading:
+
+```bash
+NIFTY_DOMAIN=mynet.internal just pve-upgrade-step-ca pve-router
+NIFTY_DOMAIN=mynet.internal just pve-upgrade-services pve-router
+```
+
+The domain is used for client certificate CNs (e.g.
+`service-monitor.mynet.internal`), `/etc/hosts` entries on the
+infrastructure VMs, and DNS zone names. The router reads its domain
+from `services.host.domain` in the HCL config.
+
+Additional env vars for overriding defaults at build time:
+
+| Variable | Default | Description |
+|---|---|---|
+| `NIFTY_DOMAIN` | `nifty.internal` | Base domain for certs, DNS, and host entries |
+| `NIFTY_STEP_CA_IP` | `10.99.2.3` | Step-CA VM IP |
+| `NIFTY_ROUTER_IP` | `10.99.2.1` | Router IP on the infra VLAN |
+| `NIFTY_SERVICES_IP` | `10.99.2.2` | Services VM IP |
+
+### Upgrading
+
+Rebuild and upgrade any VM in place (preserves `/var`):
+
+```bash
+just pve-upgrade-step-ca pve-router      # Upgrade Step-CA
+just pve-upgrade pve-router              # Upgrade router
+just pve-upgrade-services pve-router     # Upgrade infra-services
+```
+
+### Destroying VMs
+
+```bash
+just pve-destroy pve-router 100 infra-CA        # Step-CA
+just pve-destroy pve-router 101 nifty-filter     # Router
+just pve-destroy pve-router 202 infra-services   # Services
+```
 
 ## Configuring the router
 
@@ -250,14 +373,6 @@ just upgrade <router-ip>
 Builds the system closure locally, rsyncs only the missing store paths
 to the router over SSH, updates boot entries, and reboots.
 
-### From the router
-
-```bash
-nifty-upgrade
-```
-
-Pulls the latest source from git, builds on the router, and reboots.
-
 ## Maintenance mode
 
 ```bash
@@ -272,24 +387,24 @@ prompt. Reboot again to return to normal read-only mode.
 
 ### Filesystem layout
 
-| Mount | Mode | Purpose |
-|-------|------|---------|
-| `/` | read-only | NixOS system, nifty-filter binary, all services |
-| `/var` | read-write | Router config, DHCP leases, SSH keys, logs |
-| `/boot` | read-write | EFI system partition, kernel, bootloader |
-| `/tmp` | tmpfs | Scratch (cleared on reboot) |
-| `/home` | bind from `/var/home` | User home directories |
+| Mount   | Mode                  | Purpose                                         |
+|---------|-----------------------|-------------------------------------------------|
+| `/`     | read-only             | NixOS system, nifty-filter binary, all services |
+| `/var`  | read-write            | Router config, DHCP leases, SSH keys, logs      |
+| `/boot` | read-write            | EFI system partition, kernel, bootloader        |
+| `/tmp`  | tmpfs                 | Scratch (cleared on reboot)                     |
+| `/home` | bind from `/var/home` | User home directories                           |
 
 ### Boot services
 
-| Service | Purpose | Config source |
-|---------|---------|---------------|
-| `nifty-link` | Renames interfaces by MAC address | `nifty-filter.hcl` |
-| `nifty-hostname` | Sets hostname | `nifty-filter.hcl` |
-| `nifty-network` | Configures WAN (DHCP) and LAN (static IP) | `nifty-filter.hcl` |
-| `nifty-filter-init` | Seeds default config on first boot | -- |
-| `nifty-filter` | Generates and applies nftables rules | `nifty-filter.hcl` |
-| `nifty-dnsmasq` | DHCP and DNS server | `nifty-filter.hcl` |
+| Service             | Purpose                                   | Config source      |
+|---------------------|-------------------------------------------|--------------------|
+| `nifty-link`        | Renames interfaces by MAC address         | `nifty-filter.hcl` |
+| `nifty-hostname`    | Sets hostname                             | `nifty-filter.hcl` |
+| `nifty-network`     | Configures WAN (DHCP) and LAN (static IP) | `nifty-filter.hcl` |
+| `nifty-filter-init` | Seeds default config on first boot        | --                 |
+| `nifty-filter`      | Generates and applies nftables rules      | `nifty-filter.hcl` |
+| `nifty-dnsmasq`     | DHCP and DNS server                       | `nifty-filter.hcl` |
 
 ### Configuration files
 
@@ -301,3 +416,28 @@ All config lives in `/var/nifty-filter/`:
   ssh/
     ssh_host_*            # Persistent SSH host keys
 ```
+
+## Standalone nftables generator
+
+The `nifty-filter` binary can also be used as a standalone nftables
+rule generator, outside of NixOS. It reads an HCL config file and
+emits a complete nftables ruleset.
+
+```bash
+cargo install nifty-filter
+```
+
+Or [download a release](https://github.com/EnigmaCurry/nifty-filter/releases).
+
+```bash
+# Generate rules from an HCL config file:
+nifty-filter nftables --config router.hcl
+
+# Generate and validate (requires nft on the host):
+nifty-filter nftables --config router.hcl --validate
+
+# Generate QoS (CAKE) traffic shaping commands:
+nifty-filter qos --config router.hcl
+```
+
+See [examples/](examples/) for complete configurations.

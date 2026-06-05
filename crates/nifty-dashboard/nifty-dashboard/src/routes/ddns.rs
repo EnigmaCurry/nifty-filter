@@ -45,8 +45,8 @@ struct DdnsRecord {
 ///
 /// Returns the current status of DDNS records from the ddns-updater service
 /// running on the services host. Only returns data when DDNS is configured.
-async fn get_ddns(_state: State<AppState>) -> ApiJson<DdnsResponse> {
-    match fetch_ddns_data().await {
+async fn get_ddns(state: State<AppState>) -> ApiJson<DdnsResponse> {
+    match fetch_ddns_data(&state.services_client).await {
         Ok(resp) => json_ok(resp),
         Err(msg) => json_ok(DdnsResponse {
             records: vec![],
@@ -75,12 +75,6 @@ fn read_ddns_config() -> Result<DdnsServiceInfo, String> {
 
     let host = services.get("host");
 
-    let ip_address = host
-        .and_then(|h| h.get("ip_address"))
-        .and_then(|v| v.as_str())
-        .ok_or("services.host.ip_address not configured")?
-        .to_string();
-
     let domain = host
         .and_then(|h| h.get("domain"))
         .and_then(|v| v.as_str())
@@ -88,45 +82,21 @@ fn read_ddns_config() -> Result<DdnsServiceInfo, String> {
         .to_string();
 
     Ok(DdnsServiceInfo {
-        ip_address,
         domain,
     })
 }
 
 struct DdnsServiceInfo {
-    ip_address: String,
     domain: String,
 }
 
-async fn fetch_ddns_data() -> Result<DdnsResponse, String> {
+async fn fetch_ddns_data(services_client: &reqwest::Client) -> Result<DdnsResponse, String> {
     let info = read_ddns_config()?;
 
     let ddns_host = format!("ddns.{}", info.domain);
-    let base_url = format!("https://{}", info.ip_address);
+    let base_url = format!("https://{ddns_host}");
 
-    // TOFU: pin the services VM's Traefik certificate on first connect.
-    let state_dir = std::env::var("ROOT_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("/var/lib/nifty-dashboard"));
-    let pin_path = state_dir.join("services-cert.pin");
-    let verifier = std::sync::Arc::new(crate::util::tofu::TofuVerifier::new(&pin_path));
-    let tls_config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth();
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .use_preconfigured_tls(tls_config)
-        .default_headers({
-            let mut h = reqwest::header::HeaderMap::new();
-            h.insert(reqwest::header::HOST, ddns_host.parse().unwrap());
-            h
-        })
-        .build()
-        .map_err(|e| format!("http client error: {e}"))?;
-
-    let resp = client
+    let resp = services_client
         .get(&base_url)
         .send()
         .await

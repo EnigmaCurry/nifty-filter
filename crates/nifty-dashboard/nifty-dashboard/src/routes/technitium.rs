@@ -117,8 +117,8 @@ struct TechRecordEntry {
 ///
 /// Returns forwarder configuration and zone information from the Technitium DNS
 /// server running on the services host. Authenticates as the viewer user.
-async fn get_technitium(_state: State<AppState>) -> ApiJson<TechnitiumResponse> {
-    match fetch_technitium_data().await {
+async fn get_technitium(state: State<AppState>) -> ApiJson<TechnitiumResponse> {
+    match fetch_technitium_data(&state.services_client).await {
         Ok(resp) => json_ok(resp),
         Err(msg) => json_ok(TechnitiumResponse {
             forwarders: None,
@@ -129,7 +129,6 @@ async fn get_technitium(_state: State<AppState>) -> ApiJson<TechnitiumResponse> 
 }
 
 struct ServicesInfo {
-    ip_address: String,
     domain: String,
     viewer_password: String,
     forwarders: Vec<String>,
@@ -137,7 +136,7 @@ struct ServicesInfo {
     forwarder_concurrency: u32,
 }
 
-/// Read HCL config and extract services.host.ip_address and services.dns.viewer_password.
+/// Read HCL config and extract services.host.domain and services.dns.viewer_password.
 fn read_services_config() -> Result<ServicesInfo, String> {
     let path = crate::config_watcher::config_file_path();
     let contents = std::fs::read_to_string(&path)
@@ -151,12 +150,6 @@ fn read_services_config() -> Result<ServicesInfo, String> {
         .ok_or("no services block in config")?;
 
     let host = services.get("host");
-
-    let ip_address = host
-        .and_then(|h| h.get("ip_address"))
-        .and_then(|v| v.as_str())
-        .ok_or("services.host.ip_address not configured")?
-        .to_string();
 
     let domain = host
         .and_then(|h| h.get("domain"))
@@ -194,7 +187,6 @@ fn read_services_config() -> Result<ServicesInfo, String> {
         .unwrap_or(2) as u32;
 
     Ok(ServicesInfo {
-        ip_address,
         domain,
         viewer_password,
         forwarders,
@@ -203,34 +195,13 @@ fn read_services_config() -> Result<ServicesInfo, String> {
     })
 }
 
-async fn fetch_technitium_data() -> Result<TechnitiumResponse, String> {
+async fn fetch_technitium_data(services_client: &reqwest::Client) -> Result<TechnitiumResponse, String> {
     let info = read_services_config()?;
 
     let dns_host = format!("dns.{}", info.domain);
-    let base_url = format!("https://{}", info.ip_address);
+    let base_url = format!("https://{dns_host}");
 
-    // TOFU: pin the services VM's Traefik certificate on first connect.
-    // If the services VM is redeployed, delete the pin file to re-pin.
-    let state_dir = std::env::var("ROOT_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("/var/lib/nifty-dashboard"));
-    let pin_path = state_dir.join("services-cert.pin");
-    let verifier = std::sync::Arc::new(crate::util::tofu::TofuVerifier::new(&pin_path));
-    let tls_config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth();
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .use_preconfigured_tls(tls_config)
-        .default_headers({
-            let mut h = reqwest::header::HeaderMap::new();
-            h.insert(reqwest::header::HOST, dns_host.parse().unwrap());
-            h
-        })
-        .build()
-        .map_err(|e| format!("http client error: {e}"))?;
+    let client = services_client;
 
     // Forwarder info comes from the HCL config (settings API requires admin).
     let concurrent = info.forwarders.len() > 1;
@@ -242,22 +213,8 @@ async fn fetch_technitium_data() -> Result<TechnitiumResponse, String> {
     });
 
     // Login as viewer and fetch zones (viewer has per-zone read access).
-    let token = login(&client, &base_url, &info.viewer_password).await
-        .map_err(|e| {
-            if e.contains("certificate") || e.contains("fingerprint") || e.contains("InvalidCertificate") {
-                format!(
-                    "WARNING: The services VM TLS certificate has changed since it was last pinned. \
-                     This could indicate the services VM was redeployed, or it could be a \
-                     man-in-the-middle attack. Investigate before proceeding. \
-                     If the services VM was intentionally redeployed, reset the pin: \
-                     sudo rm {} && sudo systemctl restart nifty-dashboard",
-                    pin_path.display()
-                )
-            } else {
-                e
-            }
-        })?;
-    let zones = fetch_zones(&client, &base_url, &token).await.unwrap_or_default();
+    let token = login(client, &base_url, &info.viewer_password).await?;
+    let zones = fetch_zones(client, &base_url, &token).await.unwrap_or_default();
 
     Ok(TechnitiumResponse {
         forwarders,

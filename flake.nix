@@ -23,7 +23,6 @@
       };
 
       version = self.shortRev or "dirty";
-      gitBranch = builtins.getEnv "NIFTY_BUILD_BRANCH";
       sshKeys = builtins.getEnv "NIFTY_SSH_KEYS";
 
       # Build a PVE router system (disk-based, includes PVE-specific config)
@@ -34,7 +33,7 @@
         nixpkgs.lib.nixosSystem {
           inherit system;
           specialArgs = {
-            inherit gitBranch nifty-filter-pkg;
+            inherit nifty-filter-pkg;
             sshKeys = sshKeysArg;
           };
           modules = [
@@ -57,7 +56,7 @@
         in
         nixpkgs.lib.nixosSystem {
           inherit system;
-          specialArgs = { inherit version installedToplevel gitBranch nifty-filter-pkg; };
+          specialArgs = { inherit version installedToplevel nifty-filter-pkg; };
           modules = [
             self.nixosModules.default
             ./nix/system.nix
@@ -79,7 +78,7 @@
           iso-big = (mkRouterIso { inherit system; extraModules = [ ./nix/platforms/iso-big.nix ]; }).config.system.build.isoImage;
 
           pve-image = import ./nix/platforms/pve-image.nix {
-            inherit nixpkgs system self sshKeys version gitBranch;
+            inherit nixpkgs system self sshKeys version;
           };
 
           default = self.packages.${system}.nifty-filter;
@@ -94,6 +93,7 @@
 
       nixosModules.default = import ./nix/module.nix self;
       nixosModules.services = import ./nix/services/containers/default.nix;
+      nixosModules.step-ca = import ./nix/services/step-ca.nix;
 
       devShells = forAllSystems (system:
         let pkgs = pkgsFor system;

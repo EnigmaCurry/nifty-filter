@@ -2497,11 +2497,6 @@
                   <p class="text-muted-foreground text-xs mt-1">Builds the system closure on your workstation and deploys it to the router via the Proxmox host. The router will reboot into the new system.</p>
                 </div>
 
-                <div>
-                  <h4 class="font-semibold mb-2">Alternative: build on the router</h4>
-                  <pre class="bg-muted/50 border border-border rounded-md p-3 font-mono text-xs overflow-x-auto">sudo nifty-upgrade</pre>
-                  <p class="text-muted-foreground text-xs mt-1">Pulls the latest source and builds directly on the router. Requires sufficient RAM and disk space.</p>
-                </div>
               </div>
             </Card.Content>
           </Card.Root>

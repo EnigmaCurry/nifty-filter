@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use serde::de::{self, Deserializer};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -24,6 +25,8 @@ pub struct HclConfig {
     pub vlan: HashMap<String, VlanHclConfig>,
     #[serde(default)]
     pub services: Option<serde_json::Value>,
+    #[serde(default)]
+    pub dashboard_tls: Option<DashboardTlsConfig>,
 }
 
 impl HclConfig {
@@ -43,15 +46,66 @@ impl HclConfig {
     }
 }
 
+/// Dashboard TLS configuration (ACME + mTLS via Step-CA).
+/// When this block is present, the dashboard uses ACME for its server cert
+/// and presents a client cert for outbound mTLS connections.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DashboardTlsConfig {
+    /// ACME directory URL (e.g. https://10.99.2.3:9443/acme/acme/directory)
+    pub acme_directory_url: String,
+    /// ACME contact email
+    #[serde(default)]
+    pub acme_email: Option<String>,
+    /// Path to client cert PEM (dashboard's own identity for mTLS)
+    pub client_cert: String,
+    /// Path to client key PEM
+    pub client_key: String,
+    /// Path to CA cert PEM for mTLS client verification
+    pub ca_cert: String,
+    /// SANs for ACME cert requests
+    #[serde(default)]
+    pub sans: Vec<String>,
+    /// mTLS authorization policies
+    #[serde(default)]
+    pub mtls: Option<MtlsHclConfig>,
+}
+
+/// mTLS authorization configuration.
+/// Policies are evaluated in order — first match wins.
+/// Requests that match no policy are denied (403).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtlsHclConfig {
+    /// Named policies. Order is preserved (first match wins).
+    #[serde(default)]
+    pub policy: IndexMap<String, MtlsPolicyHclConfig>,
+}
+
+/// A single mTLS authorization policy.
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtlsPolicyHclConfig {
+    /// Allowed client certificate CN patterns.
+    /// Supports exact match and wildcard prefix (`*.example.com`).
+    /// Empty list means the path is public (no client cert required).
+    #[serde(default)]
+    pub cn: Vec<String>,
+    /// URL path patterns this policy applies to.
+    /// Supports exact match and glob suffix (`/internal/*`).
+    pub paths: Vec<String>,
+}
+
 /// Interface configuration: each interface is a labeled block with a name
 /// and an optional MAC address for renaming.
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct InterfacesConfig {
     pub trunk: InterfaceEntry,
     pub wan: InterfaceEntry,
     #[serde(default)]
     pub mgmt: Option<MgmtInterfaceEntry>,
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, InterfaceEntry>,
 }
 
 /// A single interface entry with a name and optional MAC for .link generation.
@@ -970,6 +1024,48 @@ services {
     fn test_no_services_is_ok() {
         let config = parse_with_prefix("");
         assert!(config.services.is_none());
+    }
+
+    #[test]
+    fn test_parse_dashboard_tls() {
+        let config = parse_with_prefix(r#"
+dashboard_tls {
+  acme_directory_url = "https://10.99.2.3:9443/acme/acme/directory"
+  acme_email         = "admin@nifty.internal"
+  client_cert        = "/var/lib/nifty-dashboard/client-cert.pem"
+  client_key         = "/var/lib/nifty-dashboard/client-key.pem"
+  ca_cert            = "/var/lib/nifty-dashboard/step-ca-root.crt"
+  sans               = ["router.nifty.internal", "dashboard.nifty.internal"]
+}
+"#);
+        let tls = config.dashboard_tls.as_ref().unwrap();
+        assert_eq!(tls.acme_directory_url, "https://10.99.2.3:9443/acme/acme/directory");
+        assert_eq!(tls.acme_email.as_deref(), Some("admin@nifty.internal"));
+        assert_eq!(tls.client_cert, "/var/lib/nifty-dashboard/client-cert.pem");
+        assert_eq!(tls.client_key, "/var/lib/nifty-dashboard/client-key.pem");
+        assert_eq!(tls.sans, vec!["router.nifty.internal", "dashboard.nifty.internal"]);
+    }
+
+    #[test]
+    fn test_parse_dashboard_tls_minimal() {
+        let config = parse_with_prefix(r#"
+dashboard_tls {
+  acme_directory_url = "https://10.99.2.3:9443/acme/acme/directory"
+  client_cert        = "/certs/client.pem"
+  client_key         = "/certs/client-key.pem"
+  ca_cert            = "/certs/ca.pem"
+}
+"#);
+        let tls = config.dashboard_tls.as_ref().unwrap();
+        assert_eq!(tls.acme_directory_url, "https://10.99.2.3:9443/acme/acme/directory");
+        assert!(tls.acme_email.is_none());
+        assert!(tls.sans.is_empty());
+    }
+
+    #[test]
+    fn test_no_dashboard_tls_is_ok() {
+        let config = parse_with_prefix("");
+        assert!(config.dashboard_tls.is_none());
     }
 
     #[test]

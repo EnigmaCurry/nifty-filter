@@ -20,6 +20,7 @@ pub fn generate_linkfiles(config: &HclConfig, output_dir: &str) -> Result<(), St
     let has_any_mac = config.interfaces.wan.mac.is_some()
         || config.interfaces.trunk.mac.is_some()
         || config.interfaces.mgmt.as_ref().and_then(|m| m.mac.as_ref()).is_some()
+        || config.interfaces.extra.values().any(|e| e.mac.is_some())
         || config.vlan.values().any(|v| v.interface.as_ref().and_then(|i| i.mac.as_ref()).is_some());
 
     if !has_any_mac {
@@ -64,6 +65,11 @@ pub fn generate_linkfiles(config: &HclConfig, output_dir: &str) -> Result<(), St
     if let Some(mgmt) = &config.interfaces.mgmt {
         if let Some(mac) = &mgmt.mac {
             write_link_file(dir, &mgmt.name, mac)?;
+        }
+    }
+    for entry in config.interfaces.extra.values() {
+        if let Some(mac) = &entry.mac {
+            write_link_file(dir, &entry.name, mac)?;
         }
     }
     for vlan in config.vlan.values() {

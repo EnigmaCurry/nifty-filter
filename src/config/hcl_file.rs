@@ -205,6 +205,19 @@ fn write_interfaces(w: &mut HclWriter, ifaces: &InterfacesConfig) {
         w.close();
     }
 
+    // extra interfaces
+    let mut extra_keys: Vec<&String> = ifaces.extra.keys().collect();
+    extra_keys.sort();
+    for key in extra_keys {
+        let entry = &ifaces.extra[key];
+        w.open(key);
+        w.str_attr("name", &entry.name);
+        if let Some(ref mac) = entry.mac {
+            w.str_attr("mac", mac);
+        }
+        w.close();
+    }
+
     w.close();
 }
 

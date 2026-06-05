@@ -89,8 +89,9 @@ in
     };
   };
 
-  # nifty-dashboard web UI (HTTPS with self-signed TLS)
-  # Certs are generated on first start and cached in /var/lib/private/nifty-dashboard/tls-cache/.
+  # nifty-dashboard web UI
+  # TLS mode is determined by the HCL config: if a dashboard_tls block is
+  # present, the dashboard uses ACME (Step-CA) with mTLS; otherwise plain HTTP.
   # Binds to 0.0.0.0; access is controlled by nftables firewall rules
   # (mgmt and per-VLAN tcp_accept) and the dashboard's own subnet middleware.
   systemd.services.nifty-dashboard = mkIf cfg.packages.nifty-dashboard.enable {
@@ -104,10 +105,36 @@ in
     environment.NIFTY_CONFIG_FILE = hclFile;
     environment.NIFTY_CONFIG_BOOT_SHA_FILE = "/run/nifty-filter/config-boot-sha";
     environment.NIFTY_STATE_DIR = "/run/nifty-state";
-    serviceConfig = {
+    serviceConfig = let
+      nfGet = "${nifty-filter}/bin/nifty-filter get -c ${hclFile}";
+      dashExec = "${nifty-dashboard}/bin/nifty-dashboard";
+      startScript = pkgs.writeShellScript "nifty-dashboard-start" ''
+        set -euo pipefail
+        DASH_PORT=$(${nfGet} dashboard-port)
+        TLS_ENABLED=$(${nfGet} dashboard-tls-enabled)
+        if [ "$TLS_ENABLED" = "true" ]; then
+          ACME_URL=$(${nfGet} dashboard-tls-acme-url)
+          CLIENT_CERT=$(${nfGet} dashboard-tls-client-cert)
+          CLIENT_KEY=$(${nfGet} dashboard-tls-client-key)
+          CA_CERT=$(${nfGet} dashboard-tls-ca-cert)
+          SANS=$(${nfGet} dashboard-tls-sans)
+          MTLS_POLICIES=$(${nfGet} dashboard-tls-mtls-policies || true)
+          exec ${dashExec} serve --net-listen-ip 0.0.0.0 --net-listen-port "$DASH_PORT" \
+            --tls-mode acme \
+            --tls-acme-directory-url "$ACME_URL" \
+            --tls-client-cert "$CLIENT_CERT" \
+            --tls-client-key "$CLIENT_KEY" \
+            --tls-client-ca "$CA_CERT" \
+            ''${SANS:+--tls-san "$SANS"} \
+            ''${MTLS_POLICIES:+--tls-mtls-policies "$MTLS_POLICIES"}
+        else
+          exec ${dashExec} serve --net-listen-ip 0.0.0.0 --net-listen-port "$DASH_PORT"
+        fi
+      '';
+    in {
       Type = "simple";
       StateDirectory = "nifty-dashboard";
-      ExecStart = "${pkgs.bash}/bin/bash -c 'DASH_PORT=$(${nifty-filter}/bin/nifty-filter get -c ${hclFile} dashboard-port); exec ${nifty-dashboard}/bin/nifty-dashboard serve --net-listen-ip 0.0.0.0 --net-listen-port $DASH_PORT --tls-mode self-signed'";
+      ExecStart = "${startScript}";
       Restart = "on-failure";
       RestartSec = "5s";
 

@@ -6,6 +6,17 @@
 { config, pkgs, lib, ... }:
 
 {
+  # Trust the Step-CA root certificate system-wide (for ACME, mTLS, curl, etc.)
+  # Created by: just pve-distribute-certs <pve-host>
+  # Cert is stored per deployment: certs/<pve-host>/step-ca-root.crt
+  # builtins.path copies the file into the nix store at eval time so the
+  # sandboxed builder can access it (the original is .gitignore'd).
+  security.pki.certificateFiles =
+    let
+      certEnv = builtins.getEnv "NIFTY_STEP_CA_ROOT_CERT";
+      certPath = if certEnv != "" then builtins.path { path = certEnv; name = "step-ca-root.crt"; } else null;
+    in lib.optional (certPath != null) certPath;
+
   system.stateVersion = "25.05";
   networking.hostName = "nifty-filter";
 
@@ -151,7 +162,6 @@
   environment.systemPackages = with pkgs; [
     (writeShellScriptBin "nifty-config" ''exec sudo nifty-filter config "$@"'')
     (writeShellScriptBin "nifty-maintenance" ''exec nifty-filter maintenance "$@"'')
-    (writeShellScriptBin "nifty-upgrade" ''exec nifty-filter upgrade "$@"'')
     git
     vim
     htop
@@ -168,13 +178,11 @@
       echo ""
       echo -e "\e[1;31m  *** MAINTENANCE MODE — root filesystem is READ-WRITE ***\e[0m"
       echo ""
-      echo "  Upgrade system:  nifty-upgrade"
       echo "  Return to normal: systemctl reboot"
       echo ""
     else
       echo ""
       echo "  Configure:  nifty-config"
-      echo "  Upgrade:    nifty-upgrade"
       echo ""
     fi
   '';

@@ -124,8 +124,24 @@ release:
     git tag "v${CURRENT_VERSION}"; \
     git push "${GIT_REMOTE}" tag "v${CURRENT_VERSION}";
 
+# Test SSH connection to Proxmox VE host and print instance info
+pve-status pve_host:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    REMOTE="root@{{pve_host}}"
+    echo "Connecting to {{pve_host}}..."
+    ssh ${REMOTE} '
+        echo "User: $(whoami)"
+        echo "Host: $(hostname)"
+        echo "PVE version: $(pveversion)"
+        echo "Uptime:$(uptime)"
+        echo ""
+        echo "VMs:"
+        qm list 2>/dev/null || echo "  (none)"
+    '
+
 # Build PVE disk image (pre-partitioned, ready to import)
-pve-image:
+pve-image pve_host="":
     #!/usr/bin/env bash
     set -eo pipefail
     KEYS="$(ssh-add -L 2>/dev/null || true)"
@@ -134,7 +150,8 @@ pve-image:
         exit 1
     fi
     export NIFTY_SSH_KEYS="${KEYS}"
-    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" \
+    NIFTY_PVE_HOST="{{pve_host}}" \
+    NIFTY_STEP_CA_ROOT_CERT="$(pwd)/certs/{{pve_host}}/step-ca-root.crt" \
         nix build .#pve-image --impure
     echo ""
     echo "PVE disk image built successfully:"
@@ -142,7 +159,7 @@ pve-image:
 
 # Build NixOS router ISO image
 iso:
-    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" nix build .#iso --impure
+    nix build .#iso --impure
     @echo ""
     @echo "ISO built successfully (branch: $(git symbolic-ref --short HEAD 2>/dev/null || echo master)):"
     @echo "  $(readlink -f result/iso/*.iso)"
@@ -158,7 +175,7 @@ iso:
 
 # Build NixOS router ISO with full hardware support (linux-firmware + all drivers)
 iso-big:
-    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" nix build .#iso-big --impure
+    nix build .#iso-big --impure
     @echo ""
     @echo "ISO (big) built successfully (branch: $(git symbolic-ref --short HEAD 2>/dev/null || echo master)):"
     @echo "  $(readlink -f result/iso/*.iso)"
@@ -242,11 +259,22 @@ upgrade host:
 pve-upgrade-menu pve_host:
     #!/usr/bin/env bash
     set -eo pipefail
+    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
     CHOICE=$(script-wizard choose "What to upgrade?" \
+        "Step-CA VM" \
         "Router VM (full rebuild + reboot)" \
         "Services VM (including technitium)" \
         "Dashboard only (no reboot)")
     case "${CHOICE}" in
+        "Step-CA VM"*)
+            echo "Pulling latest nifty-filter..."
+            git pull
+            echo "Pulling latest nixos-vm-template..."
+            git -C "${VM_TEMPLATE_DIR}" pull
+            echo "Updating nifty-filter flake input..."
+            nix flake update nifty-filter --flake "${VM_TEMPLATE_DIR}"
+            just pve-upgrade-step-ca "{{pve_host}}"
+            ;;
         "Router VM"*)
             echo "Pulling latest nifty-filter..."
             git pull
@@ -255,9 +283,10 @@ pve-upgrade-menu pve_host:
         "Services VM"*)
             echo "Pulling latest nifty-filter..."
             git pull
-            VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
             echo "Pulling latest nixos-vm-template..."
             git -C "${VM_TEMPLATE_DIR}" pull
+            echo "Updating nifty-filter flake input..."
+            nix flake update nifty-filter --flake "${VM_TEMPLATE_DIR}"
             just pve-upgrade-services "{{pve_host}}"
             ;;
         "Dashboard only"*)
@@ -268,7 +297,7 @@ pve-upgrade-menu pve_host:
     esac
 
 # Upgrade a remote router VM via PVE jump host (builds locally, stages for next reboot)
-pve-upgrade pve_host vmid vm_name target_ip="10.99.0.1":
+pve-upgrade pve_host vmid="101" vm_name="nifty-filter" target_ip="10.99.0.1":
     #!/usr/bin/env bash
     set -eo pipefail
 
@@ -298,6 +327,8 @@ pve-upgrade pve_host vmid vm_name target_ip="10.99.0.1":
     trap 'ssh ${SSH_OPTS} ${PROXY} -O exit ${REMOTE} 2>/dev/null || true' EXIT
 
     echo "Building system closure..."
+    NIFTY_PVE_HOST="${PVE_HOST}" \
+    NIFTY_STEP_CA_ROOT_CERT="$(pwd)/certs/${PVE_HOST}/step-ca-root.crt" \
     nix build .#nixosConfigurations.pve-router-x86_64.config.system.build.toplevel --impure
     SYSTEM_PATH="$(readlink -f result)"
     echo "System: ${SYSTEM_PATH}"
@@ -476,23 +507,14 @@ pve-install pve_host:
         fi
     done
 
-    # --- Collect SSH keys ---
-    echo "Collecting SSH keys..."
-    WORKSTATION_KEYS="$(ssh-add -L 2>/dev/null || true)"
-    if [ -z "${WORKSTATION_KEYS}" ]; then
-        echo "ERROR: No keys found in SSH agent (ssh-add -L returned nothing)"
-        exit 1
-    fi
-    PVE_KEYS="$(ssh ${SSH_OPTS} ${REMOTE} 'cat /root/.ssh/id_ed25519.pub /root/.ssh/id_rsa.pub 2>/dev/null || true')"
-    NIFTY_SSH_KEYS="$(echo -e "${WORKSTATION_KEYS}\n${PVE_KEYS}" | sort -u | grep -v '^$')"
+    # NIFTY_SSH_KEYS is set by pve-setup (selected interactively)
     export NIFTY_SSH_KEYS
-    KEY_COUNT=$(echo "${NIFTY_SSH_KEYS}" | wc -l)
-    echo "  ${KEY_COUNT} SSH key(s) collected"
 
     # --- Build PVE disk image ---
     echo "Building PVE disk image..."
     nix flake update
-    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" \
+    NIFTY_PVE_HOST="${PVE_HOST}" \
+    NIFTY_STEP_CA_ROOT_CERT="$(pwd)/certs/${PVE_HOST}/step-ca-root.crt" \
         nix build .#pve-image --impure
     IMAGE_PATH="$(find result/ -maxdepth 1 -type f \( -name '*.raw' -o -name '*.img' \) | head -1)"
     if [ -z "${IMAGE_PATH}" ]; then
@@ -525,13 +547,32 @@ pve-install pve_host:
         fi
     done
 
-    # --- Build NIC flags (mgmt is always net0) ---
+    # --- Discover infra bridge (created by pve-install-step-ca) ---
+    INFRA_BRIDGE=""
+    for candidate in vmbr2; do
+        if ssh ${SSH_OPTS} ${REMOTE} "ip link show ${candidate}" &>/dev/null; then
+            INFRA_BRIDGE="${candidate}"
+            echo "Found infra bridge: ${INFRA_BRIDGE}"
+            break
+        fi
+    done
+    if [ -z "${INFRA_BRIDGE}" ]; then
+        echo "ERROR: No infra bridge found (expected vmbr2)."
+        echo "Deploy the Step-CA VM first: just pve-install-step-ca ${PVE_HOST} <step-ca-ip>"
+        exit 1
+    fi
+
+    # --- Build NIC flags (mgmt is always net0, infra is last) ---
     NIC_ARGS="--net0 virtio,bridge=mgmt"
     NET_INDEX=1
     for bridge in "${BRIDGES[@]}"; do
         NIC_ARGS="${NIC_ARGS} --net${NET_INDEX} virtio,bridge=${bridge}"
         NET_INDEX=$((NET_INDEX + 1))
     done
+    # Infra NIC for Step-CA / services communication
+    NIC_ARGS="${NIC_ARGS} --net${NET_INDEX} virtio,bridge=${INFRA_BRIDGE}"
+    INFRA_NET_INDEX=${NET_INDEX}
+    NET_INDEX=$((NET_INDEX + 1))
 
     HOSTPCI_ARGS=""
     PCI_INDEX=0
@@ -612,6 +653,13 @@ pve-install pve_host:
         fi
     done
 
+    # Pass infra NIC MAC so the router can identify it
+    INFRA_MAC=$(echo "${QM_CONFIG}" | grep "^net${INFRA_NET_INDEX}:" | grep -oP 'virtio=\K[^,]+')
+    if [ -n "${INFRA_MAC}" ]; then
+        FW_CFG_ARGS="${FW_CFG_ARGS} -fw_cfg name=opt/nifty/infra_mac,string=${INFRA_MAC}"
+        echo "  infra MAC: ${INFRA_MAC} (bridge: ${INFRA_BRIDGE})"
+    fi
+
     ssh ${SSH_OPTS} ${REMOTE} "qm set ${VMID} --args '${FW_CFG_ARGS}'"
 
     # --- Start VM ---
@@ -629,6 +677,7 @@ pve-install pve_host:
     for bridge in "${BRIDGES[@]}"; do
         echo "  Bridge:  ${bridge}"
     done
+    echo "  Infra:   ${INFRA_MAC:-unknown} on ${INFRA_BRIDGE}"
     for dev in "${PCI_DEVICES[@]}"; do
         echo "  PCI:     0000:${dev}"
     done
@@ -1044,8 +1093,202 @@ pve-install-services pve_host ip bridge="vmbr2" vm_name="infra-services" router_
     printf '%s\n' 22 53 80 443 > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/tcp_ports"
     printf '%s\n' 53 123 > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/udp_ports"
 
+    # /etc/hosts entries so services can resolve the router
+    NIFTY_DOMAIN="${NIFTY_DOMAIN:-nifty.internal}"
+    echo "${GATEWAY} router.${NIFTY_DOMAIN}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/hosts"
+
+    # DNS: use the router's dnsmasq so services can resolve .internal domains
+    echo "${GATEWAY}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/resolv.conf"
+
     BACKEND=proxmox PVE_HOST="${PVE_HOST}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw \
         just create-batch "${VM_NAME}" "podman,nifty-services" "2048" "2" "8G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
+
+# Set up Step-CA VM on the infra bridge, then create it via nixos-vm-template.
+# Deploy this BEFORE the router or infra-services VMs.
+# The infra bridge (vmbr2) must already exist (run pve-install-services first, or create it manually).
+pve-install-step-ca pve_host ip bridge="vmbr2" vm_name="infra-CA" router_vmid="101" pve_storage="local-lvm" pve_vmid="100":
+    #!/usr/bin/env bash
+    set -eo pipefail
+
+    PVE_HOST="{{pve_host}}"
+    REMOTE="root@${PVE_HOST}"
+    VM_NAME="{{vm_name}}"
+    BRIDGE="{{bridge}}"
+    # Accept bare IP or CIDR; default to /24
+    IP_RAW="{{ip}}"
+    IP_ADDR="${IP_RAW%%/*}"
+    STATIC_IP="${IP_ADDR}/24"
+    GATEWAY="$(echo "${IP_ADDR}" | sed 's/\.[0-9]*$/.1/')"
+
+    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
+    if [ ! -f "${VM_TEMPLATE_DIR}/Justfile" ]; then
+        echo "ERROR: nixos-vm-template not found at ${VM_TEMPLATE_DIR}"
+        echo "Set NIXOS_VM_TEMPLATE to the correct path."
+        exit 1
+    fi
+
+    SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/nifty-step-ca-%C -o ControlPersist=60"
+
+    echo "Connecting to ${PVE_HOST}..."
+    ssh ${SSH_OPTS} -fN ${REMOTE}
+    trap 'ssh ${SSH_OPTS} -O exit ${REMOTE} 2>/dev/null || true' EXIT
+
+    # --- Ensure the infra bridge exists ---
+    if ! ssh ${SSH_OPTS} ${REMOTE} "ip link show ${BRIDGE}" &>/dev/null; then
+        echo "Creating isolated bridge ${BRIDGE} on ${PVE_HOST}..."
+        ssh ${SSH_OPTS} ${REMOTE} "printf '\nauto %s\niface %s inet manual\n    bridge-ports none\n    bridge-stp off\n    bridge-fd 0\n' '${BRIDGE}' '${BRIDGE}' >> /etc/network/interfaces && ifup ${BRIDGE}"
+        echo "  ${BRIDGE} created."
+    else
+        echo "Bridge ${BRIDGE} already exists."
+    fi
+
+    # --- Add a NIC to the router VM on this bridge (if not already present) ---
+    if ssh ${SSH_OPTS} ${REMOTE} "qm config {{router_vmid}}" &>/dev/null; then
+        ROUTER_CONFIG=$(ssh ${SSH_OPTS} ${REMOTE} "qm config {{router_vmid}}")
+        if ! echo "${ROUTER_CONFIG}" | grep -q "bridge=${BRIDGE}"; then
+            NEXT_NET=1
+            while echo "${ROUTER_CONFIG}" | grep -q "^net${NEXT_NET}:"; do
+                NEXT_NET=$((NEXT_NET + 1))
+            done
+            echo "Adding net${NEXT_NET} (bridge=${BRIDGE}) to router VM {{router_vmid}}..."
+            ssh ${SSH_OPTS} ${REMOTE} "qm set {{router_vmid}} --net${NEXT_NET} virtio,bridge=${BRIDGE}"
+            INFRA_MAC=$(ssh ${SSH_OPTS} ${REMOTE} "qm config {{router_vmid}}" | grep "^net${NEXT_NET}:" | grep -oP 'virtio=\K[^,]+')
+            echo "  Router NIC added (MAC: ${INFRA_MAC})."
+            echo "  Add this to your nifty-filter.hcl:"
+            echo ""
+            echo "    vlan \"infra\" {"
+            echo "      id = 2"
+            echo "      interface {"
+            echo "        mac  = \"${INFRA_MAC}\""
+            echo "        name = \"infra\""
+            echo "      }"
+            echo "      ..."
+            echo "    }"
+            echo ""
+        else
+            echo "Router VM {{router_vmid}} already has a NIC on ${BRIDGE}."
+        fi
+    else
+        echo "Router VM {{router_vmid}} does not exist yet — skipping NIC addition."
+        echo "The router will get an infra NIC automatically when pve-install runs."
+    fi
+
+    # Close PVE SSH before handing off to nixos-vm-template
+    ssh ${SSH_OPTS} -O exit ${REMOTE} 2>/dev/null || true
+    trap - EXIT
+
+    # --- Create the Step-CA VM via nixos-vm-template (proxmox backend) ---
+    echo ""
+    echo "Creating Step-CA VM via nixos-vm-template..."
+    cd "${VM_TEMPLATE_DIR}"
+    mkdir -p "${VM_TEMPLATE_DIR}/machines/${VM_NAME}"
+    echo "{{pve_vmid}}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/vmid"
+
+    # PVE firewall: Step-CA only needs SSH + ACME port
+    printf '%s\n' 22 9443 > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/tcp_ports"
+    printf '%s\n' > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/udp_ports"
+
+    # /etc/hosts entries so Step-CA can resolve the router for ACME challenges
+    NIFTY_DOMAIN="${NIFTY_DOMAIN:-nifty.internal}"
+    echo "${GATEWAY} router.${NIFTY_DOMAIN}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/hosts"
+
+    # DNS: use the router's dnsmasq so Step-CA can resolve .internal domains
+    echo "${GATEWAY}" > "${VM_TEMPLATE_DIR}/machines/${VM_NAME}/resolv.conf"
+
+    BACKEND=proxmox PVE_HOST="${PVE_HOST}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw \
+        just create-batch "${VM_NAME}" "podman,step-ca" "512" "1" "4G" "bridge:${BRIDGE}" "${STATIC_IP},${GATEWAY}"
+
+# Copy TLS certs from Step-CA VM to router and infra-services VMs.
+# Jump chain: workstation → PVE host → router (mgmt) → infra VLAN VMs.
+pve-distribute-certs pve_host step_ca_ip="10.99.2.3" router_ip="10.99.0.1" services_ip="10.99.2.2":
+    #!/usr/bin/env bash
+    set -eo pipefail
+
+    PVE_HOST="{{pve_host}}"
+    STEP_CA_IP="{{step_ca_ip}}"
+    ROUTER_IP="{{router_ip}}"
+    SERVICES_IP="{{services_ip}}"
+
+    # Jump chain: PVE host → router (mgmt bridge) → infra VLAN
+    PVE="root@${PVE_HOST}"
+    ROUTER="admin@${ROUTER_IP}"
+    JUMP_TO_ROUTER="-J ${PVE}"
+    JUMP_TO_INFRA="-J ${PVE},${ROUTER}"
+
+    CA="admin@${STEP_CA_IP}"
+
+    echo "=== Distributing TLS certificates from Step-CA (${STEP_CA_IP}) ==="
+    echo "    Jump chain: ${PVE_HOST} → ${ROUTER_IP} → ${STEP_CA_IP}"
+    echo ""
+
+    # Helper: read a file from Step-CA via double jump
+    ca_cat() { ssh ${JUMP_TO_INFRA} ${CA} "sudo cat $1"; }
+
+    # --- Copy root CA cert to workstation (for Nix build) ---
+    echo "Fetching root CA cert..."
+    mkdir -p "certs/${PVE_HOST}"
+    ca_cat /var/lib/step-ca/certs/root_ca.crt > "certs/${PVE_HOST}/step-ca-root.crt"
+    echo "  Saved to certs/${PVE_HOST}/step-ca-root.crt"
+
+    # --- Copy dashboard client cert to router ---
+    echo "Copying dashboard client cert to router (${ROUTER_IP})..."
+    ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo mkdir -p /var/lib/nifty-dashboard && sudo chown root:wheel /var/lib/nifty-dashboard && sudo chmod 755 /var/lib/nifty-dashboard"
+    ca_cat /var/lib/step-ca/client-certs/dashboard/cert.pem | \
+        ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/client-cert.pem > /dev/null && sudo chmod 644 /var/lib/nifty-dashboard/client-cert.pem"
+    ca_cat /var/lib/step-ca/client-certs/dashboard/key.pem | \
+        ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/client-key.pem > /dev/null && sudo chmod 600 /var/lib/nifty-dashboard/client-key.pem"
+    ca_cat /var/lib/step-ca/certs/root_ca.crt | \
+        ssh ${JUMP_TO_ROUTER} ${ROUTER} "sudo tee /var/lib/nifty-dashboard/step-ca-root.crt > /dev/null && sudo chmod 644 /var/lib/nifty-dashboard/step-ca-root.crt"
+    echo "  Dashboard certs + CA root installed on router."
+
+    # --- Copy service-monitor + traefik client certs to infra-services ---
+    if ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "true" 2>/dev/null; then
+        echo "Copying service-monitor client cert to infra-services (${SERVICES_IP})..."
+        ca_cat /var/lib/step-ca/client-certs/service-monitor/cert.pem | \
+            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo mkdir -p /var/lib/service-monitor-certs && sudo tee /var/lib/service-monitor-certs/cert.pem > /dev/null"
+        ca_cat /var/lib/step-ca/client-certs/service-monitor/key.pem | \
+            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo tee /var/lib/service-monitor-certs/key.pem > /dev/null && sudo chmod 600 /var/lib/service-monitor-certs/key.pem"
+        echo "  Service-monitor certs installed."
+
+        echo "Copying traefik client cert to infra-services (${SERVICES_IP})..."
+        ca_cat /var/lib/step-ca/client-certs/traefik/cert.pem | \
+            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo mkdir -p /var/lib/traefik-certs && sudo tee /var/lib/traefik-certs/cert.pem > /dev/null"
+        ca_cat /var/lib/step-ca/client-certs/traefik/key.pem | \
+            ssh ${JUMP_TO_INFRA} admin@${SERVICES_IP} "sudo tee /var/lib/traefik-certs/key.pem > /dev/null && sudo chmod 600 /var/lib/traefik-certs/key.pem"
+        echo "  Traefik certs installed."
+    else
+        echo "Infra-services VM (${SERVICES_IP}) not reachable — skipping."
+        echo "Run this again after deploying infra-services."
+    fi
+
+    # --- Copy CA root cert into nixos-vm-template machine dirs for upgrades ---
+    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
+    if [ -d "${VM_TEMPLATE_DIR}/machines" ]; then
+        for vm in infra-CA infra-services; do
+            if [ -d "${VM_TEMPLATE_DIR}/machines/${vm}" ]; then
+                cp "certs/${PVE_HOST}/step-ca-root.crt" "${VM_TEMPLATE_DIR}/machines/${vm}/ca-cert.pem"
+                echo "  CA cert copied to nixos-vm-template machines/${vm}/ca-cert.pem"
+            fi
+        done
+    fi
+
+    echo ""
+    echo "Done. Root CA cert saved to certs/${PVE_HOST}/step-ca-root.crt"
+    echo "Rebuild the router to trust it: just pve-upgrade ${PVE_HOST} 101 nifty-filter"
+    echo "Or restart the dashboard if already rebuilt: ssh ${JUMP_TO_ROUTER} ${ROUTER} sudo systemctl restart nifty-dashboard"
+
+# Upgrade Step-CA VM (delegates to nixos-vm-template proxmox backend)
+pve-upgrade-step-ca pve_host vm_name="infra-CA" pve_storage="local-lvm":
+    #!/usr/bin/env bash
+    set -eo pipefail
+    VM_TEMPLATE_DIR="${NIXOS_VM_TEMPLATE:-$(cd .. && pwd)/nixos-vm-template}"
+    if [ ! -f "${VM_TEMPLATE_DIR}/Justfile" ]; then
+        echo "ERROR: nixos-vm-template not found at ${VM_TEMPLATE_DIR}"
+        echo "Set NIXOS_VM_TEMPLATE to the correct path."
+        exit 1
+    fi
+    cd "${VM_TEMPLATE_DIR}"
+    BACKEND=proxmox PVE_HOST="{{pve_host}}" PVE_STORAGE="{{pve_storage}}" PVE_DISK_FORMAT=raw just upgrade "{{vm_name}}"
 
 # Upgrade infra-services VM (delegates to nixos-vm-template proxmox backend)
 pve-upgrade-services pve_host vm_name="infra-services" pve_storage="local-lvm":

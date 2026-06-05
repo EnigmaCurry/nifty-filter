@@ -78,11 +78,26 @@ pub fn serve(cfg: AppConfig, root_dir: PathBuf) -> Result<(), CliError> {
         plan.session_check_secs,
         plan.tls_config,
         plan.auth_config,
+        cfg.tls.client_cert_path.clone(),
+        cfg.tls.client_key_path.clone(),
+        cfg.tls.client_ca_path.clone(),
+        parse_mtls_policies(&cfg.tls.mtls_policies)?,
     ))
     .map_err(|e| {
         error!("server::run failed: {:#}", e);
         CliError::RuntimeError(format!("{:#}", e))
     })
+}
+
+fn parse_mtls_policies(
+    json: &Option<String>,
+) -> Result<Vec<crate::middleware::mtls::MtlsPolicy>, CliError> {
+    match json {
+        Some(s) if !s.is_empty() => serde_json::from_str(s).map_err(|e| {
+            CliError::InvalidArgs(format!("invalid --tls-mtls-policies JSON: {e}"))
+        }),
+        _ => Ok(vec![]),
+    }
 }
 
 fn parse_listen_addr(cfg: &AppConfig) -> Result<SocketAddr, CliError> {
@@ -119,33 +134,6 @@ fn build_tls_config(cfg: &AppConfig, root_dir: &Path) -> Result<server::TlsConfi
             Ok(server::TlsConfig::RustlsFiles {
                 cert_path,
                 key_path,
-            })
-        }
-
-        TlsMode::SelfSigned => {
-            let cache_dir = if cfg.tls.self_signed_ephemeral {
-                None
-            } else {
-                Some(root_dir.join(TLS_CACHE_DIR))
-            };
-            let sans = cfg.tls.sans.0.clone();
-            let leaf_valid_secs = cfg.tls.effective_self_signed_valid_seconds();
-            let ca_valid_secs = cfg.tls.effective_ca_cert_valid_seconds();
-
-            info!(
-                "TLS mode: self-signed (HTTPS) – cache_dir={:?}, sans={:?}",
-                cache_dir, sans
-            );
-            debug!(
-                "TLS leaf_valid_secs={}, ca_valid_secs={}",
-                leaf_valid_secs, ca_valid_secs
-            );
-
-            Ok(server::TlsConfig::SelfSigned {
-                cache_dir,
-                sans,
-                leaf_valid_secs,
-                ca_valid_secs,
             })
         }
 

@@ -75,8 +75,14 @@ pub fn router(
         .route("/favicon.ico", get(favicon))
         .into();
 
+    // Internal endpoints — protected by mTLS policies, outside /api/
+    let internal_router = ApiRouter::<AppState>::new()
+        .nest("/services-config", services_config::router());
+
     // Convert to axum::Router so we can add fallible layers (OIDC)
-    let mut app: axum::Router<AppState> = api_router.into();
+    let mut app: axum::Router<AppState> = api_router
+        .nest("/internal", internal_router)
+        .into();
 
     if oidc_cfg.enabled {
         let oidc_auth_layer =
