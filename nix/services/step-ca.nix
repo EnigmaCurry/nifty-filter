@@ -46,6 +46,12 @@ let
     --entrypoint ${pkgs.step-cli}/bin/step \
     nifty-step-ca:latest'';
 
+  # Run bash inside the container (for mkdir, etc.)
+  bashRunContainer = ''${pkgs.podman}/bin/podman run --rm \
+    -v step-ca-data:/home/step \
+    --entrypoint ${pkgs.bash}/bin/bash \
+    nifty-step-ca:latest'';
+
   # Run step-cli directly on the host (for cert issuance — avoids container networking issues)
   stepRunHost = "STEPPATH=$MOUNT HOME=$MOUNT ${pkgs.step-cli}/bin/step";
 
@@ -149,6 +155,9 @@ in
         mkdir -p "$MOUNT/secrets" "$MOUNT/certs"
         openssl rand -base64 32 > "$MOUNT/secrets/password"
         chmod 600 "$MOUNT/secrets/password"
+
+        # Ensure directories exist inside the container volume.
+        ${bashRunContainer} -c "mkdir -p /home/step/certs /home/step/secrets /home/step/config"
 
         # Create 100-year root CA cert (step ca init defaults to ~10 years).
         ${stepRunContainer} certificate create \
