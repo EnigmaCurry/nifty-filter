@@ -46,11 +46,6 @@ let
     --entrypoint ${pkgs.step-cli}/bin/step \
     nifty-step-ca:latest'';
 
-  # Run bash inside the container (for mkdir, etc.)
-  bashRunContainer = ''${pkgs.podman}/bin/podman run --rm \
-    -v step-ca-data:/home/step \
-    --entrypoint ${pkgs.bash}/bin/bash \
-    nifty-step-ca:latest'';
 
   # Run step-cli directly on the host (for cert issuance — avoids container networking issues)
   stepRunHost = "STEPPATH=$MOUNT HOME=$MOUNT ${pkgs.step-cli}/bin/step";
@@ -152,14 +147,25 @@ in
         echo "Bootstrapping Step-CA..."
 
         # Generate a random password for the CA keys.
-        mkdir -p "$MOUNT/secrets" "$MOUNT/certs"
+        mkdir -p "$MOUNT/secrets"
         openssl rand -base64 32 > "$MOUNT/secrets/password"
         chmod 600 "$MOUNT/secrets/password"
 
-        # Ensure directories exist inside the container volume.
-        ${bashRunContainer} -c "mkdir -p /home/step/certs /home/step/secrets /home/step/config"
+        # Initialize the CA with default 10-year certs (non-interactive).
+        ${stepRunContainer} ca init \
+          --name="${cfg.caName}" \
+          --provisioner="${cfg.provisioner}" \
+          --dns="${dnsFlags}" \
+          --address=":${portStr}" \
+          --deployment-type=standalone \
+          --password-file="/home/step/secrets/password" \
+          --acme
 
-        # Create 100-year root CA cert (step ca init defaults to ~10 years).
+        # Fix paths in ca.json to be container-relative (/home/step/...)
+        sed -i "s|$MOUNT|/home/step|g" "$MOUNT/config/ca.json"
+        sed -i "s|$MOUNT|/home/step|g" "$MOUNT/config/defaults.json"
+
+        # Replace root CA with a 100-year cert (init creates ~10 year).
         ${stepRunContainer} certificate create \
           "${cfg.caName} Root CA" \
           "/home/step/certs/root_ca.crt" \
@@ -169,25 +175,7 @@ in
           --password-file="/home/step/secrets/password" \
           --force
 
-        # Initialize the CA with the pre-created 100-year root cert.
-        ${stepRunContainer} ca init \
-          --name="${cfg.caName}" \
-          --provisioner="${cfg.provisioner}" \
-          --dns="${dnsFlags}" \
-          --address=":${portStr}" \
-          --deployment-type=standalone \
-          --password-file="/home/step/secrets/password" \
-          --root="/home/step/certs/root_ca.crt" \
-          --key="/home/step/secrets/root_ca_key" \
-          --key-password-file="/home/step/secrets/password" \
-          --provisioner-password-file="/home/step/secrets/password" \
-          --acme
-
-        # Fix paths in ca.json to be container-relative (/home/step/...)
-        sed -i "s|$MOUNT|/home/step|g" "$MOUNT/config/ca.json"
-        sed -i "s|$MOUNT|/home/step|g" "$MOUNT/config/defaults.json"
-
-        # Replace the intermediate CA with a 100-year cert (init creates ~10 year).
+        # Replace intermediate CA with a 100-year cert signed by the new root.
         INT_CERT=$(${pkgs.jq}/bin/jq -r '.crt' "$MOUNT/config/ca.json")
         INT_KEY=$(${pkgs.jq}/bin/jq -r '.key' "$MOUNT/config/ca.json")
         ${stepRunContainer} certificate create \
