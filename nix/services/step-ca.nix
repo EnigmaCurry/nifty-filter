@@ -160,15 +160,13 @@ in
         ${bashRunContainer} -c "mkdir -p /home/step/certs /home/step/secrets /home/step/config"
 
         # Create 100-year root CA cert (step ca init defaults to ~10 years).
-        # Key is unencrypted so step ca init can import it non-interactively;
-        # it is protected by filesystem permissions on the volume.
         ${stepRunContainer} certificate create \
           "${cfg.caName} Root CA" \
           "/home/step/certs/root_ca.crt" \
           "/home/step/secrets/root_ca_key" \
           --profile root-ca \
           --not-after=876000h \
-          --insecure --no-password \
+          --password-file="/home/step/secrets/password" \
           --force
 
         # Initialize the CA with the pre-created 100-year root cert.
@@ -181,6 +179,7 @@ in
           --password-file="/home/step/secrets/password" \
           --root="/home/step/certs/root_ca.crt" \
           --key="/home/step/secrets/root_ca_key" \
+          --key-password-file="/home/step/secrets/password" \
           --acme
 
         # Fix paths in ca.json to be container-relative (/home/step/...)
