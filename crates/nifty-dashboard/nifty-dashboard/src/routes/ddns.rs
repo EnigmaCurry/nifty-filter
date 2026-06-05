@@ -75,12 +75,6 @@ fn read_ddns_config() -> Result<DdnsServiceInfo, String> {
 
     let host = services.get("host");
 
-    let ip_address = host
-        .and_then(|h| h.get("ip_address"))
-        .and_then(|v| v.as_str())
-        .ok_or("services.host.ip_address not configured")?
-        .to_string();
-
     let domain = host
         .and_then(|h| h.get("domain"))
         .and_then(|v| v.as_str())
@@ -88,13 +82,11 @@ fn read_ddns_config() -> Result<DdnsServiceInfo, String> {
         .to_string();
 
     Ok(DdnsServiceInfo {
-        ip_address,
         domain,
     })
 }
 
 struct DdnsServiceInfo {
-    ip_address: String,
     domain: String,
 }
 
@@ -102,11 +94,10 @@ async fn fetch_ddns_data(services_client: &reqwest::Client) -> Result<DdnsRespon
     let info = read_ddns_config()?;
 
     let ddns_host = format!("ddns.{}", info.domain);
-    let base_url = format!("https://{}", info.ip_address);
+    let base_url = format!("https://{ddns_host}");
 
     let resp = services_client
         .get(&base_url)
-        .header(reqwest::header::HOST, &ddns_host)
         .send()
         .await
         .map_err(|e| format!("ddns-updater request failed: {e}"))?;

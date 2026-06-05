@@ -129,7 +129,6 @@ async fn get_technitium(state: State<AppState>) -> ApiJson<TechnitiumResponse> {
 }
 
 struct ServicesInfo {
-    ip_address: String,
     domain: String,
     viewer_password: String,
     forwarders: Vec<String>,
@@ -137,7 +136,7 @@ struct ServicesInfo {
     forwarder_concurrency: u32,
 }
 
-/// Read HCL config and extract services.host.ip_address and services.dns.viewer_password.
+/// Read HCL config and extract services.host.domain and services.dns.viewer_password.
 fn read_services_config() -> Result<ServicesInfo, String> {
     let path = crate::config_watcher::config_file_path();
     let contents = std::fs::read_to_string(&path)
@@ -151,12 +150,6 @@ fn read_services_config() -> Result<ServicesInfo, String> {
         .ok_or("no services block in config")?;
 
     let host = services.get("host");
-
-    let ip_address = host
-        .and_then(|h| h.get("ip_address"))
-        .and_then(|v| v.as_str())
-        .ok_or("services.host.ip_address not configured")?
-        .to_string();
 
     let domain = host
         .and_then(|h| h.get("domain"))
@@ -194,7 +187,6 @@ fn read_services_config() -> Result<ServicesInfo, String> {
         .unwrap_or(2) as u32;
 
     Ok(ServicesInfo {
-        ip_address,
         domain,
         viewer_password,
         forwarders,
@@ -207,7 +199,7 @@ async fn fetch_technitium_data(services_client: &reqwest::Client) -> Result<Tech
     let info = read_services_config()?;
 
     let dns_host = format!("dns.{}", info.domain);
-    let base_url = format!("https://{}", info.ip_address);
+    let base_url = format!("https://{dns_host}");
 
     let client = services_client;
 
@@ -221,8 +213,8 @@ async fn fetch_technitium_data(services_client: &reqwest::Client) -> Result<Tech
     });
 
     // Login as viewer and fetch zones (viewer has per-zone read access).
-    let token = login(client, &base_url, &dns_host, &info.viewer_password).await?;
-    let zones = fetch_zones(client, &base_url, &dns_host, &token).await.unwrap_or_default();
+    let token = login(client, &base_url, &info.viewer_password).await?;
+    let zones = fetch_zones(client, &base_url, &token).await.unwrap_or_default();
 
     Ok(TechnitiumResponse {
         forwarders,
@@ -256,13 +248,11 @@ async fn parse_json<T: serde::de::DeserializeOwned>(
 async fn login(
     client: &reqwest::Client,
     base_url: &str,
-    host: &str,
     password: &str,
 ) -> Result<String, String> {
     let url = format!("{base_url}/api/user/login");
     let resp = client
         .post(&url)
-        .header(reqwest::header::HOST, host)
         .form(&[("user", "viewer"), ("pass", password)])
         .send()
         .await
@@ -282,13 +272,11 @@ async fn login(
 async fn fetch_zones(
     client: &reqwest::Client,
     base_url: &str,
-    host: &str,
     token: &str,
 ) -> Result<Vec<ZoneInfo>, String> {
     let url = format!("{base_url}/api/zones/list");
     let resp = client
         .get(&url)
-        .header(reqwest::header::HOST, host)
         .header("Authorization", format!("Bearer {token}"))
         .send()
         .await
@@ -307,7 +295,7 @@ async fn fetch_zones(
 
     let mut zones = Vec::new();
     for entry in zone_entries {
-        let records = fetch_zone_records(client, base_url, host, token, &entry.name)
+        let records = fetch_zone_records(client, base_url, token, &entry.name)
             .await
             .unwrap_or_default();
         zones.push(ZoneInfo {
@@ -323,14 +311,12 @@ async fn fetch_zones(
 async fn fetch_zone_records(
     client: &reqwest::Client,
     base_url: &str,
-    host: &str,
     token: &str,
     zone: &str,
 ) -> Result<Vec<RecordInfo>, String> {
     let url = format!("{base_url}/api/zones/records/get");
     let resp = client
         .get(&url)
-        .header(reqwest::header::HOST, host)
         .header("Authorization", format!("Bearer {token}"))
         .query(&[("domain", zone), ("zone", zone), ("listZone", "true")])
         .send()
