@@ -152,7 +152,6 @@ pve-image pve_host="":
     export NIFTY_SSH_KEYS="${KEYS}"
     NIFTY_PVE_HOST="{{pve_host}}" \
     NIFTY_STEP_CA_ROOT_CERT="$(pwd)/certs/{{pve_host}}/step-ca-root.crt" \
-    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" \
         nix build .#pve-image --impure
     echo ""
     echo "PVE disk image built successfully:"
@@ -160,7 +159,7 @@ pve-image pve_host="":
 
 # Build NixOS router ISO image
 iso:
-    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" nix build .#iso --impure
+    nix build .#iso --impure
     @echo ""
     @echo "ISO built successfully (branch: $(git symbolic-ref --short HEAD 2>/dev/null || echo master)):"
     @echo "  $(readlink -f result/iso/*.iso)"
@@ -176,7 +175,7 @@ iso:
 
 # Build NixOS router ISO with full hardware support (linux-firmware + all drivers)
 iso-big:
-    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" nix build .#iso-big --impure
+    nix build .#iso-big --impure
     @echo ""
     @echo "ISO (big) built successfully (branch: $(git symbolic-ref --short HEAD 2>/dev/null || echo master)):"
     @echo "  $(readlink -f result/iso/*.iso)"
@@ -516,7 +515,6 @@ pve-install pve_host:
     nix flake update
     NIFTY_PVE_HOST="${PVE_HOST}" \
     NIFTY_STEP_CA_ROOT_CERT="$(pwd)/certs/${PVE_HOST}/step-ca-root.crt" \
-    NIFTY_BUILD_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo master)" \
         nix build .#pve-image --impure
     IMAGE_PATH="$(find result/ -maxdepth 1 -type f \( -name '*.raw' -o -name '*.img' \) | head -1)"
     if [ -z "${IMAGE_PATH}" ]; then

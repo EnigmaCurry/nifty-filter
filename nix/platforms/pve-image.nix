@@ -7,7 +7,7 @@
 #   Disk 2 (/var):       Created empty by pve-install, formatted on first boot
 #
 # Usage: NIFTY_SSH_KEYS="$(ssh-add -L)" nix build .#pve-image --impure
-{ nixpkgs, system, self, sshKeys ? "", gitBranch ? "master", version ? "unknown" }:
+{ nixpkgs, system, self, sshKeys ? "", version ? "unknown" }:
 
 let
   lib = nixpkgs.lib;
@@ -16,7 +16,7 @@ let
   nixosConfig = nixpkgs.lib.nixosSystem {
     inherit system;
     specialArgs = {
-      inherit gitBranch nifty-filter-pkg sshKeys;
+      inherit nifty-filter-pkg sshKeys;
     };
     modules = [
       self.nixosModules.default
@@ -29,8 +29,7 @@ let
         image.baseName = "nifty-filter-pve";
         image.format = "raw";
         image.efiSupport = true;
-        # Root needs extra space for nix store (on-device upgrades build here)
-        virtualisation.diskSize = 14 * 1024;  # 14 GiB (closure ~4G + 10G for on-device upgrades)
+        virtualisation.diskSize = 6 * 1024;  # 6 GiB (closure ~4G + headroom)
 
         # Disk 1: boot+root — use the labels the disk-image module creates
         # (it sets "/" and "/boot" automatically, we don't override them)

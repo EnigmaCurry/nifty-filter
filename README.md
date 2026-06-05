@@ -373,14 +373,6 @@ just upgrade <router-ip>
 Builds the system closure locally, rsyncs only the missing store paths
 to the router over SSH, updates boot entries, and reboots.
 
-### From the router
-
-```bash
-nifty-upgrade
-```
-
-Pulls the latest source from git, builds on the router, and reboots.
-
 ## Maintenance mode
 
 ```bash

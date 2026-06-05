@@ -4,14 +4,11 @@
 # - Marks the system as a PVE install
 # - Seeds SSH authorized keys on first boot from build-time parameter
 # - Provides minimal bootstrap networking via fw_cfg mgmt MAC
-{ config, pkgs, lib, sshKeys ? "", gitBranch ? "master", nifty-filter-pkg, ... }:
+{ config, pkgs, lib, sshKeys ? "", nifty-filter-pkg, ... }:
 
 {
   # Mark this as a PVE install
   environment.etc."nifty-filter/pve-install".text = "pve";
-
-  # Record build branch for nifty-upgrade
-  environment.etc."nifty-filter/build-branch".text = gitBranch;
 
   environment.systemPackages = [
     nifty-filter-pkg
@@ -260,13 +257,11 @@
       echo ""
       echo -e "\e[1;31m  *** MAINTENANCE MODE — root filesystem is READ-WRITE ***\e[0m"
       echo ""
-      echo "  Upgrade system:  nifty-upgrade"
       echo "  Return to normal: systemctl reboot"
       echo ""
     else
       echo ""
       echo "  Config:   /var/nifty-filter/nifty-filter.hcl"
-      echo "  Upgrade:  nifty-upgrade"
       echo ""
     fi
   '';

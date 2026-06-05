@@ -162,7 +162,6 @@
   environment.systemPackages = with pkgs; [
     (writeShellScriptBin "nifty-config" ''exec sudo nifty-filter config "$@"'')
     (writeShellScriptBin "nifty-maintenance" ''exec nifty-filter maintenance "$@"'')
-    (writeShellScriptBin "nifty-upgrade" ''exec nifty-filter upgrade "$@"'')
     git
     vim
     htop
@@ -179,13 +178,11 @@
       echo ""
       echo -e "\e[1;31m  *** MAINTENANCE MODE — root filesystem is READ-WRITE ***\e[0m"
       echo ""
-      echo "  Upgrade system:  nifty-upgrade"
       echo "  Return to normal: systemctl reboot"
       echo ""
     else
       echo ""
       echo "  Configure:  nifty-config"
-      echo "  Upgrade:    nifty-upgrade"
       echo ""
     fi
   '';

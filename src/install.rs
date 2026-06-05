@@ -312,7 +312,6 @@ struct InstallConfig {
     vlan_aware_switch: bool,
     vlans: Vec<VlanInstallConfig>,
     dns_servers: String,
-    git_remote: Option<String>,
 }
 
 fn prompt_vlan_config(vlan_id: u16, default_subnet_base: &str, used_names: &mut Vec<String>) -> VlanInstallConfig {
@@ -397,7 +396,7 @@ fn prompt_vlan_config(vlan_id: u16, default_subnet_base: &str, used_names: &mut 
     }
 }
 
-fn gather_config(git_remote: Option<String>) -> InstallConfig {
+fn gather_config() -> InstallConfig {
     let hostname_re = Regex::new(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$").unwrap();
 
     // Hostname
@@ -673,7 +672,6 @@ fn gather_config(git_remote: Option<String>) -> InstallConfig {
         vlan_aware_switch,
         vlans,
         dns_servers,
-        git_remote,
     }
 }
 
@@ -716,9 +714,6 @@ fn show_summary(cfg: &InstallConfig) {
         );
     }
     println!("  DNS servers:  {}", cfg.dns_servers);
-    if let Some(ref remote) = cfg.git_remote {
-        println!("  Git remote:   {remote}");
-    }
     println!();
     println!("  Save this summary for future reference (copy or screenshot).");
     println!();
@@ -1077,26 +1072,6 @@ DHCP_UPSTREAM_DNS="{dns}"
         ],
     );
 
-    // Record build branch
-    let build_branch = fs::read_to_string("/etc/nifty-filter/build-branch")
-        .unwrap_or_else(|_| "master".to_string())
-        .trim()
-        .to_string();
-    fs::write(format!("{nf_dir}/branch"), &build_branch).ok();
-    println!("  Build branch: {build_branch}");
-
-    if let Some(ref remote) = cfg.git_remote {
-        run_cmd("git", &["-C", &nf_dir, "remote", "add", "origin", remote]);
-        println!("==> Cloning source repo for on-device upgrades...");
-        let src_dir = format!("{nf_dir}/src");
-        if run_cmd("git", &["clone", "-b", &build_branch, remote, &src_dir]) {
-            run_cmd("chown", &["-R", "1000:100", &src_dir]);
-        } else {
-            println!("  WARNING: Could not clone source repo. On-device upgrades will need manual setup.");
-        }
-        println!("  Git remote set: {remote}");
-    }
-
     // Final ownership
     run_cmd("chown", &["-R", "1000:100", &nf_dir]);
 }
@@ -1276,25 +1251,6 @@ DHCP_UPSTREAM_DNS="{dns}"
         ],
     );
 
-    // Record build branch (read from /etc, persist to /var)
-    let build_branch = fs::read_to_string("/etc/nifty-filter/build-branch")
-        .unwrap_or_else(|_| "master".to_string())
-        .trim()
-        .to_string();
-    fs::write(format!("{nf_dir}/branch"), &build_branch).ok();
-    println!("  Build branch: {build_branch}");
-
-    if let Some(ref remote) = cfg.git_remote {
-        run_cmd("git", &["-C", nf_dir, "remote", "add", "origin", remote]);
-        println!("==> Cloning source repo for on-device upgrades...");
-        let src_dir = format!("{nf_dir}/src");
-        if run_cmd("git", &["clone", "-b", &build_branch, remote, &src_dir]) {
-            run_cmd("chown", &["-R", "1000:100", &src_dir]);
-        } else {
-            println!("  WARNING: Could not clone source repo.");
-        }
-    }
-
     run_cmd("chown", &["-R", "1000:100", nf_dir]);
 }
 
@@ -1336,9 +1292,6 @@ fn show_pve_summary(cfg: &InstallConfig) {
         );
     }
     println!("  DNS servers:  {}", cfg.dns_servers);
-    if let Some(ref remote) = cfg.git_remote {
-        println!("  Git remote:   {remote}");
-    }
     println!();
 }
 
@@ -1380,7 +1333,7 @@ fn sort_ifaces_by_pci(ifaces: &[String]) -> Vec<String> {
 
 /// PVE-specific config gathering: reads interface assignments from fw_cfg,
 /// skipping the interactive interface selection prompts.
-fn gather_config_pve(git_remote: Option<String>) -> InstallConfig {
+fn gather_config_pve() -> InstallConfig {
     let hostname_re = Regex::new(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$").unwrap();
 
     // Read fw_cfg
@@ -1651,7 +1604,6 @@ fn gather_config_pve(git_remote: Option<String>) -> InstallConfig {
         vlan_aware_switch,
         vlans,
         dns_servers,
-        git_remote,
     }
 }
 
@@ -1661,7 +1613,7 @@ fn is_pve_install() -> bool {
     Path::new("/etc/nifty-filter/pve-install").exists()
 }
 
-pub fn run(git_remote: Option<String>) {
+pub fn run() {
     let pve_mode = is_pve_install();
 
     if !pve_mode && !Path::new("/etc/nifty-filter/installed-system").exists() {
@@ -1694,7 +1646,7 @@ pub fn run(git_remote: Option<String>) {
 
         show_authorized_keys();
 
-        let cfg = gather_config_pve(git_remote);
+        let cfg = gather_config_pve();
         show_pve_summary(&cfg);
 
         if !prompt_confirm("Apply this configuration?") {
@@ -1723,7 +1675,7 @@ pub fn run(git_remote: Option<String>) {
         println!("  OK: key authentication confirmed");
         show_authorized_keys();
 
-        let cfg = gather_config(git_remote);
+        let cfg = gather_config();
         show_summary(&cfg);
 
         if !prompt_confirm("Proceed with installation?") {
