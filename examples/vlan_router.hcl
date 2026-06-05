@@ -105,12 +105,16 @@ services {
   # This limits which clients may reach each service.
   # Each route creates a Host(`<name>.<domain>`) rule in Traefik.
   # `allow_from` is required — routes without it are not exposed.
+  # `authorized_clients` optionally requires a valid mTLS client certificate
+  # with a SAN DNS name matching one of the listed values.
   traefik {
     route "dns" {
       ## Route to local technitium DNS web admin service:
-      backend    = "http://127.0.0.1:5380"
+      backend              = "http://127.0.0.1:5380"
       ## Allowed VLANs for this route:
-      allow_from = ["10.99.2.0/24", "10.99.10.0/24"]
+      allow_from           = ["10.99.2.0/24", "10.99.10.0/24"]
+      ## Require client cert with matching SAN (optional):
+      authorized_clients   = ["dashboard.nifty.internal"]
     }
     route "ddns" {
       ## Route to ddns-updater web dashboard:

@@ -34,6 +34,8 @@ pub struct RouteConfig {
     pub backend: String,
     #[serde(default)]
     pub allow_from: Vec<String>,
+    #[serde(default)]
+    pub authorized_clients: Vec<String>,
 }
 
 #[derive(Deserialize)]

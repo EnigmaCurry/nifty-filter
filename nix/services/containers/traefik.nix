@@ -17,6 +17,15 @@ let
 
   useAcme = traefikCfg.tls.acmeUrl != null;
 
+  # traefik-certauthz plugin — authorizes requests by client cert SAN DNS entries.
+  # Loaded as a local plugin via volume mount into the Traefik container.
+  certauthzPlugin = pkgs.fetchFromGitHub {
+    owner = "enigmacurry";
+    repo = "traefik-certauthz";
+    rev = "v0.1.0";
+    hash = "sha256-6RcLYQ7JIxXRWfW2iT51THpF0mO9mgJ7e8mbA5BMls0=";
+  };
+
   # TLS certificate config — must live in Traefik's dynamic config (not static).
   # Only used in self-signed mode; ACME mode uses certificatesResolvers instead.
   tlsConfig = {
@@ -66,6 +75,10 @@ let
       caServer = traefikCfg.tls.acmeUrl;
       storage = "/acme/acme.json";
       tlsChallenge = {};
+    };
+  } // {
+    experimental.localPlugins.certauthz = {
+      moduleName = "github.com/famedly/traefik-certauthz";
     };
   };
 
@@ -229,6 +242,7 @@ in
       volumes = [
         "${staticConfigFile}:/etc/traefik/traefik.yml:ro"
         "traefik-dynamic:/etc/traefik/dynamic:ro"
+        "${certauthzPlugin}:/plugins-local/src/github.com/famedly/traefik-certauthz:ro"
       ] ++ (if useAcme then [
         "${acmeDir}:/acme"
       ] ++ lib.optional (traefikCfg.tls.caCertPath != null)
