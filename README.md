@@ -9,8 +9,12 @@ The root filesystem is read-only. All configuration lives on a
 writable `/var` partition. Upgrades replace the entire system image
 while preserving state.
 
-> nifty-filter is in development and should be used for research
-> purposes only. Use it at your own risk.
+
+> [!NOTE]
+> nifty-filter is in development and is used for research purposes only. 
+> Use it at your own risk. 
+> This code is written using Claude Code and other AI tools. 
+> It is reviewed and tested by a human being.
 
 ## Prerequisites
 
