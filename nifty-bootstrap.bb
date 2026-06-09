@@ -480,8 +480,16 @@
         (println "  Detected: running on Proxmox VE host.")
         (reset! pve-host "localhost"))
       (do
-        (reset! pve-host (wiz/ask "Proxmox VE host (hostname or IP):"
-                                  :suggestions ["pve" "pve.local"]))
+        (let [ssh-hosts (try
+                          (->> (slurp (str (System/getenv "HOME") "/.ssh/config"))
+                               str/split-lines
+                               (keep #(second (re-find #"(?i)^\s*Host\s+(.+)" %)))
+                               (mapcat #(str/split % #"\s+"))
+                               (remove #(str/includes? % "*"))
+                               vec)
+                          (catch Exception _ []))]
+          (reset! pve-host (wiz/ask "Proxmox VE host (hostname or IP):"
+                                    :suggestions ssh-hosts)))
         (println (format "  Testing SSH connection to root@%s..." @pve-host))
         (try
           (sh-ok (format "ssh -o ConnectTimeout=10 root@%s 'pveversion'" @pve-host))
