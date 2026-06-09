@@ -46,6 +46,7 @@ Find your `WOODPECKER_SERVER` and `WOODPECKER_TOKEN` values at
 Woodpecker server URL).
 
 ```bash
+# Web UI URL (not the gRPC endpoint used by agents)
 export WOODPECKER_SERVER=https://woodpecker.example.com
 export WOODPECKER_TOKEN=your-api-token
 export CI_REPO=youruser/nifty-filter
