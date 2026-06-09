@@ -39,6 +39,7 @@ for f in output/export/nifty-filter-*.qcow2; do
     date_stamp=$(echo "$filename" | grep -o '[0-9]\{8\}')
     git_sha=$(echo "$filename" | sed 's/.*-\([a-f0-9]*\)\.qcow2$/\1/')
     sha256=$(sha256sum "$f" | cut -d' ' -f1)
+    size=$(stat --printf='%s' "$f")
     url="${S3_PUBLIC_URL%/}/${filename}"
     manifest=$(echo "$manifest" | jq \
         --arg key "nifty-filter" \
@@ -47,7 +48,8 @@ for f in output/export/nifty-filter-*.qcow2; do
         --arg date "$date_stamp" \
         --arg commit "$git_sha" \
         --arg sha256 "$sha256" \
-        '.images[$key] = {url: $url, filename: $filename, date: $date, commit: $commit, sha256: $sha256}')
+        --arg size "$size" \
+        '.images[$key] = {url: $url, filename: $filename, date: $date, commit: $commit, sha256: $sha256, size: ($size | tonumber)}')
 done
 
 echo "$manifest" | jq . > /tmp/manifest.json
