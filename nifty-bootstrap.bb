@@ -550,26 +550,80 @@
                              (wiz/ask "Infra-services IP address:" :default (:services-ip defaults))
                              (:services-ip defaults))
               ;; Router NICs: PCI passthrough addresses or bridge names
-              ;; The first NIC is the WAN, second is trunk, rest are extras
+              ;; First NIC = WAN, second = trunk, rest = extras
               ;; mgmt and infra NICs are added automatically
               router-nics  (if deploy-router?
-                             (do
+                             (let [;; Query PCI network devices from PVE
+                                   pci-output (try (pve-cmd! "lspci -Dnn | grep -i 'ethernet\\|network' | while IFS= read -r line; do pci=$(echo \"$line\" | awk '{print $1}'); desc=$(echo \"$line\" | cut -d' ' -f2-); mac=$(cat /sys/bus/pci/devices/$pci/net/*/address 2>/dev/null | head -1); printf '%s\\t%s\\t%s\\n' \"$pci\" \"$mac\" \"$desc\"; done")
+                                                   (catch Exception _ ""))
+                                   pci-devices (vec (keep (fn [line]
+                                                            (let [parts (str/split line #"\t" 3)]
+                                                              (when (and (seq parts) (not (str/blank? (first parts))))
+                                                                {:id (first parts)
+                                                                 :mac (second parts)
+                                                                 :desc (get parts 2 "")})))
+                                                          (str/split-lines pci-output)))
+                                   ;; Query bridges from PVE
+                                   bridge-output (try (pve-cmd! "ip -br link show type bridge | awk '{print $1, $3}'")
+                                                      (catch Exception _ ""))
+                                   bridges (vec (keep (fn [line]
+                                                        (let [parts (str/split (str/trim line) #"\s+")]
+                                                          (when (and (seq parts) (not (str/blank? (first parts))))
+                                                            {:name (first parts)
+                                                             :mac (get parts 1 "")})))
+                                                      (str/split-lines bridge-output)))]
                                (println)
                                (println "Router NIC configuration:")
-                               (println "  Enter PCI addresses (e.g. 01:00.0) for passthrough")
-                               (println "  or bridge names (e.g. vmbr0) for virtual NICs.")
                                (println "  First NIC = WAN, second = trunk, rest = extras.")
                                (println "  mgmt and infra NICs are added automatically.")
+                               (when (seq pci-devices)
+                                 (println)
+                                 (println "  PCI network devices on PVE:")
+                                 (doseq [d pci-devices]
+                                   (println (format "    %s %s %s"
+                                                    (:id d)
+                                                    (if (str/blank? (:mac d)) "" (str "[" (:mac d) "]"))
+                                                    (:desc d)))))
+                               (when (seq bridges)
+                                 (println)
+                                 (println "  Bridges on PVE:")
+                                 (doseq [b bridges]
+                                   (println (format "    %s %s" (:name b) (if (str/blank? (:mac b)) "" (str "[" (:mac b) "]"))))))
                                (println)
-                               (loop [nics []]
-                                 (let [prompt (if (empty? nics)
-                                               "WAN NIC (PCI address or bridge):"
-                                               (format "Additional NIC #%d (blank to finish):" (inc (count nics))))
-                                       nic (wiz/ask prompt
-                                                    :allow-blank (not (empty? nics)))]
-                                   (if (str/blank? nic)
-                                     nics
-                                     (recur (conj nics nic))))))
+                               (let [;; Build choosable options
+                                     pci-options (mapv (fn [d]
+                                                         (format "PCI: %s %s %s"
+                                                                 (:id d)
+                                                                 (if (str/blank? (:mac d)) "" (str "[" (:mac d) "]"))
+                                                                 (:desc d)))
+                                                       pci-devices)
+                                     bridge-options (mapv (fn [b]
+                                                            (format "Bridge: %s %s"
+                                                                    (:name b)
+                                                                    (if (str/blank? (:mac b)) "" (str "[" (:mac b) "]"))))
+                                                          bridges)
+                                     all-options (into pci-options bridge-options)
+                                     parse-choice (fn [choice]
+                                                    (cond
+                                                      (str/starts-with? choice "PCI: ")
+                                                      (let [id (second (re-find #"PCI: (\S+)" choice))]
+                                                        ;; Strip 0000: domain prefix
+                                                        (str/replace id #"^0000:" ""))
+                                                      (str/starts-with? choice "Bridge: ")
+                                                      (second (re-find #"Bridge: (\S+)" choice))
+                                                      :else choice))]
+                                 (loop [nics []
+                                        labels ["WAN" "Trunk"]]
+                                   (let [label (or (first labels)
+                                                   (format "Extra NIC #%d" (- (count nics) 1)))
+                                         ;; After first 2 NICs, ask if they want more
+                                         continue? (or (< (count nics) 2)
+                                                       (wiz/confirm (format "Add another NIC? (%s)" label) :default :no))]
+                                     (if (not continue?)
+                                       nics
+                                       (let [choice (wiz/choose (format "%s NIC:" label) all-options)
+                                             nic-id (parse-choice choice)]
+                                         (recur (conj nics nic-id) (rest labels))))))))
                              [])
 
               ;; Step 5: VMIDs
