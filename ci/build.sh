@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NIFTY_SSH_KEYS="" nix build .#pve-image --impure
+nix build .#pve-image-ci
 
 src=$(find result/ -maxdepth 1 -type f \( -name '*.qcow2' -o -name '*.raw' \) | head -1)
 if [ -z "$src" ]; then

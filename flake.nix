@@ -81,6 +81,11 @@
             inherit nixpkgs system self sshKeys version;
           };
 
+          pve-image-ci = import ./nix/platforms/pve-image.nix {
+            inherit nixpkgs system self version;
+            sshKeys = "";
+          };
+
           default = self.packages.${system}.nifty-filter;
         }
       );
