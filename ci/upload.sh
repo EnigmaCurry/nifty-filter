@@ -14,7 +14,7 @@ rclone cleanup "remote:$S3_BUCKET/" -v || true
 rclone delete "remote:$S3_BUCKET/" --include "nifty-filter-*.qcow2" -v
 
 # Upload new image
-rclone copy output/export/ "remote:$S3_BUCKET/" --include '*.qcow2' -v -P --s3-chunk-size 64M --s3-no-check-bucket
+rclone copy output/export/ "remote:$S3_BUCKET/" --include '*.qcow2' -v --s3-chunk-size 64M --s3-no-check-bucket
 
 # Update manifest
 rclone copy "remote:$S3_BUCKET/manifest.json" /tmp/manifest/ 2>/dev/null || true
