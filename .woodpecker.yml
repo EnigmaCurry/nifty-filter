@@ -20,7 +20,7 @@ steps:
         fi
         echo "Source image:"
         ls -lh "$src"
-        date_stamp=$(date +%%Y%%m%%d)
+        date_stamp=$(date +%Y%m%d)
         git_sha=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
         dest="output/export/nifty-filter-${date_stamp}-${git_sha}.qcow2"
         mkdir -p output/export
@@ -79,7 +79,7 @@ steps:
           date_stamp=$(echo "$filename" | grep -o '[0-9]\{8\}')
           git_sha=$(echo "$filename" | sed 's/.*-\([a-f0-9]*\)\.qcow2$/\1/')
           sha256=$(sha256sum "$f" | cut -d' ' -f1)
-          url="${S3_PUBLIC_URL%%/}/${filename}"
+          url="${S3_PUBLIC_URL%/}/${filename}"
           manifest=$(echo "$manifest" | jq \
             --arg key "nifty-filter" \
             --arg url "$url" \
