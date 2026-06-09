@@ -20,7 +20,8 @@ rclone copy output/export/ "remote:$S3_BUCKET/" --include '*.qcow2' -v --s3-chun
 rclone copy "remote:$S3_BUCKET/manifest.json" /tmp/manifest/ 2>/dev/null || true
 manifest='{"images":{}}'
 if [ -f /tmp/manifest/manifest.json ]; then
-    manifest=$(cat /tmp/manifest/manifest.json)
+    # Only preserve the "images" key; discard any foreign keys (e.g. stale "profiles")
+    manifest=$(cat /tmp/manifest/manifest.json | jq '{images: (.images // {})}')
 fi
 
 # Prune stale entries
