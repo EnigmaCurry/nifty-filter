@@ -326,12 +326,12 @@ from `services.host.domain` in the HCL config.
 
 Additional env vars for overriding defaults at build time:
 
-| Variable | Default | Description |
-|---|---|---|
-| `NIFTY_DOMAIN` | `nifty.internal` | Base domain for certs, DNS, and host entries |
-| `NIFTY_STEP_CA_IP` | `10.99.2.3` | Step-CA VM IP |
-| `NIFTY_ROUTER_IP` | `10.99.2.1` | Router IP on the infra VLAN |
-| `NIFTY_SERVICES_IP` | `10.99.2.2` | Services VM IP |
+| Variable            | Default          | Description                                  |
+|---------------------|------------------|----------------------------------------------|
+| `NIFTY_DOMAIN`      | `nifty.internal` | Base domain for certs, DNS, and host entries |
+| `NIFTY_STEP_CA_IP`  | `10.99.2.3`      | Step-CA VM IP                                |
+| `NIFTY_ROUTER_IP`   | `10.99.2.1`      | Router IP on the infra VLAN                  |
+| `NIFTY_SERVICES_IP` | `10.99.2.2`      | Services VM IP                               |
 
 ### Upgrading
 
