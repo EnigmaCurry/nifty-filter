@@ -530,20 +530,20 @@
       (println (format "  infra-services:  %s (commit %s)" (:date services-image) (:commit services-image))))
     (println)
 
-    ;; Build selection options based on available images
-    (let [available (cond-> []
-                      step-ca-image  (conj "infra-CA (step-ca)")
-                      services-image (conj "infra-services")
-                      nf-image       (conj "nifty-filter"))]
-      (when (empty? available)
-        (println "ERROR: No images available in either manifest.")
-        (System/exit 1))
+    (when (and (nil? nf-image) (nil? step-ca-image) (nil? services-image))
+      (println "ERROR: No images available in either manifest.")
+      (System/exit 1))
 
-      ;; Step 3: Select VMs
-      (let [selected (wiz/select "Which VMs to deploy?" available :default available)
-            deploy-step-ca?  (some #(str/starts-with? % "infra-CA") selected)
-            deploy-services? (some #(= % "infra-services") selected)
-            deploy-router?   (some #(= % "nifty-filter") selected)]
+    ;; Step 3: Confirm each VM individually
+    (let [deploy-step-ca?  (and step-ca-image
+                                (wiz/confirm "Deploy infra-CA (step-ca)?" :default :yes))
+          deploy-services? (and services-image
+                                (wiz/confirm "Deploy infra-services?" :default :yes))
+          deploy-router?   (and nf-image
+                                (wiz/confirm "Deploy nifty-filter (router)?" :default :yes))]
+      (when-not (or deploy-step-ca? deploy-services? deploy-router?)
+        (println "Nothing selected. Exiting.")
+        (System/exit 0))
 
         ;; Step 4: Network configuration
         (println)
@@ -796,6 +796,6 @@
           (when (or deploy-step-ca? deploy-services? deploy-router?)
             (println "  3. Distribute certs (from workstation with nifty-filter repo):")
             (println (format "     just pve-distribute-certs %s" @pve-host)))
-          (println))))))
+          (println)))))
 
 (-main)
