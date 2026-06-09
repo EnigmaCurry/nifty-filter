@@ -25,7 +25,7 @@ fi
 
 # Prune stale entries
 bucket_files=$(rclone lsf "remote:$S3_BUCKET/" --include 'nifty-filter-*.qcow2')
-for key in $(echo "$manifest" | jq -r '.images | keys[]'); do
+for key in $(echo "$manifest" | jq -r '.images // {} | keys[]'); do
     entry_filename=$(echo "$manifest" | jq -r --arg k "$key" '.images[$k].filename')
     if ! echo "$bucket_files" | grep -qxF "$entry_filename"; then
         manifest=$(echo "$manifest" | jq --arg k "$key" 'del(.images[$k])')
