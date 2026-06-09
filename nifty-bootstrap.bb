@@ -667,9 +667,18 @@
                                                      :default (str (System/getenv "HOME") "/.ssh/id_ed25519.pub"))]
                                (str/trim (slurp key-path))))))
 
-              ;; Step 7: Storage
-              storage (wiz/ask "PVE storage backend:" :default (:storage defaults)
-                               :suggestions ["local-lvm" "local-zfs" "local"])
+              ;; Step 7: Storage — query PVE for backends that support VM disk images
+              pve-storages (try
+                             (let [output (pve-cmd! "pvesm status --content images 2>/dev/null | awk 'NR>1 && $2==\"active\" {print $1}'")]
+                               (vec (remove str/blank? (str/split-lines output))))
+                             (catch Exception _ ["local-lvm"]))
+              storage (if (= 1 (count pve-storages))
+                        (do (println (format "  Using storage: %s" (first pve-storages)))
+                            (first pve-storages))
+                        (wiz/choose "PVE storage backend:" pve-storages
+                                    :default (if (some #(= % (:storage defaults)) pve-storages)
+                                               (:storage defaults)
+                                               (first pve-storages))))
 
               ;; Derived values
               infra-gateway (subnet-gateway step-ca-ip)
