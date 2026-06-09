@@ -1,0 +1,90 @@
+labels:
+  backend: local
+
+when:
+  - event: push
+    branch: dev
+  - event: manual
+
+steps:
+  - name: build
+    image: bash
+    commands:
+      - |
+        NIFTY_SSH_KEYS="" nix build .#pve-image --impure
+        src=$(find result/ -maxdepth 1 -type f \( -name '*.qcow2' -o -name '*.raw' \) | head -1)
+        if [ -z "$src" ]; then
+          echo "ERROR: No disk image found in result/"
+          ls -la result/
+          exit 1
+        fi
+        date=$(date +%Y%m%d)
+        sha=$(git rev-parse --short HEAD)
+        dest="output/export/nifty-filter-${date}-${sha}.qcow2"
+        mkdir -p output/export
+        cp "$src" "$dest"
+        echo "Exported: $dest"
+        ls -lh output/export/
+
+  - name: upload
+    image: bash
+    environment:
+      RCLONE_CONFIG_REMOTE_TYPE:
+        from_secret: rclone_type
+      RCLONE_CONFIG_REMOTE_PROVIDER:
+        from_secret: rclone_provider
+      RCLONE_CONFIG_REMOTE_ACCESS_KEY_ID:
+        from_secret: rclone_access_key_id
+      RCLONE_CONFIG_REMOTE_SECRET_ACCESS_KEY:
+        from_secret: rclone_secret_access_key
+      RCLONE_CONFIG_REMOTE_ENDPOINT:
+        from_secret: rclone_endpoint
+      RCLONE_CONFIG_REMOTE_REGION:
+        from_secret: rclone_region
+      RCLONE_CONFIG_REMOTE_ACL: public-read
+      S3_BUCKET:
+        from_secret: s3_bucket
+      S3_PUBLIC_URL:
+        from_secret: s3_public_url
+    commands:
+      - |
+        rclone() { nix run nixpkgs#rclone -- "$@"; }
+        jq() { nix run nixpkgs#jq -- "$@"; }
+        # Delete old images
+        rclone delete "remote:$S3_BUCKET/" --include "nifty-filter-*.qcow2" -v
+        # Upload new image
+        rclone copy output/export/ "remote:$S3_BUCKET/" --include '*.qcow2' -v
+        # Update manifest
+        rclone copy "remote:$S3_BUCKET/manifest.json" /tmp/manifest/ 2>/dev/null || true
+        manifest='{"images":{}}'
+        if [ -f /tmp/manifest/manifest.json ]; then
+          manifest=$(cat /tmp/manifest/manifest.json)
+        fi
+        # Prune stale entries
+        bucket_files=$(rclone lsf "remote:$S3_BUCKET/" --include 'nifty-filter-*.qcow2')
+        for key in $(echo "$manifest" | jq -r '.images | keys[]'); do
+          entry_filename=$(echo "$manifest" | jq -r --arg k "$key" '.images[$k].filename')
+          if ! echo "$bucket_files" | grep -qxF "$entry_filename"; then
+            manifest=$(echo "$manifest" | jq --arg k "$key" 'del(.images[$k])')
+          fi
+        done
+        # Add new entry
+        for f in output/export/nifty-filter-*.qcow2; do
+          filename=$(basename "$f")
+          date_stamp=$(echo "$filename" | grep -o '[0-9]\{8\}')
+          git_sha=$(echo "$filename" | sed 's/.*-\([a-f0-9]*\)\.qcow2$/\1/')
+          sha256=$(sha256sum "$f" | cut -d' ' -f1)
+          url="${S3_PUBLIC_URL%/}/${filename}"
+          manifest=$(echo "$manifest" | jq \
+            --arg key "nifty-filter" \
+            --arg url "$url" \
+            --arg filename "$filename" \
+            --arg date "$date_stamp" \
+            --arg commit "$git_sha" \
+            --arg sha256 "$sha256" \
+            '.images[$key] = {url: $url, filename: $filename, date: $date, commit: $commit, sha256: $sha256}')
+        done
+        echo "$manifest" | jq . > /tmp/manifest.json
+        echo "Manifest:"
+        cat /tmp/manifest.json
+        rclone copyto /tmp/manifest.json "remote:$S3_BUCKET/manifest.json" --s3-no-check-bucket -v

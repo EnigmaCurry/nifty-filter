@@ -7,6 +7,7 @@
 #   Disk 2 (/var):       Created empty by pve-install, formatted on first boot
 #
 # Usage: NIFTY_SSH_KEYS="$(ssh-add -L)" nix build .#pve-image --impure
+# Output: result/nifty-filter.qcow2
 { nixpkgs, system, self, sshKeys ? "", version ? "unknown" }:
 
 let
@@ -26,8 +27,8 @@ let
       # Native nixpkgs disk image module
       "${nixpkgs}/nixos/modules/virtualisation/disk-image.nix"
       {
-        image.baseName = "nifty-filter-pve";
-        image.format = "raw";
+        image.baseName = "nifty-filter";
+        image.format = "qcow2";
         image.efiSupport = true;
         virtualisation.diskSize = 6 * 1024;  # 6 GiB (closure ~4G + headroom)
 
