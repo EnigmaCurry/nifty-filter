@@ -26,7 +26,6 @@
    :step-ca-ip    "10.99.2.3"
    :services-ip   "10.99.2.2"
    :router-mgmt   "10.99.0.1"
-   :wan-bridge    "vmbr0"
    :step-ca-vmid  "100"
    :services-vmid "202"
    :router-vmid   "101"
@@ -300,16 +299,30 @@
 
 ;; ─── Deploy: nifty-filter router VM ─────────────────────────────────────────
 
+(defn pci-device?
+  "Check if a NIC string is a PCI address (e.g. 01:00.0 or 0000:01:00.0)."
+  [nic]
+  (boolean (re-matches #"(?:0000:)?[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]" nic)))
+
+(defn normalize-pci
+  "Strip leading 0000: prefix if present, for hostpci flags."
+  [addr]
+  (str/replace addr #"^0000:" ""))
+
 (defn deploy-nifty-filter!
-  "Deploy the nifty-filter router VM."
-  [{:keys [vmid image-url image-sha256 wan-bridge infra-bridge
+  "Deploy the nifty-filter router VM.
+   nics is a seq of NIC identifiers: PCI addresses (e.g. '01:00.0') or bridge names (e.g. 'vmbr0').
+   The first NIC is the WAN, remaining are extras. mgmt and infra are added automatically."
+  [{:keys [vmid image-url image-sha256 nics infra-bridge
            mgmt-subnet ssh-keys storage]}]
   (let [staging (:staging-dir defaults)
         image-file (format "%s/nifty-filter.qcow2" staging)
         mgmt-prefix (second (str/split mgmt-subnet #"/"))
         mgmt-base (str/join "." (butlast (str/split (first (str/split mgmt-subnet #"/")) #"\.")))
-        router-mgmt-ip (str mgmt-base ".1")
-        pve-mgmt-ip (str mgmt-base ".2/" mgmt-prefix)]
+        pve-mgmt-ip (str mgmt-base ".2/" mgmt-prefix)
+        ;; Classify NICs as PCI passthrough or virtual bridges
+        pci-devices (filterv pci-device? nics)
+        bridges (filterv (complement pci-device?) nics)]
     (println)
     (println (format "=== Deploying nifty-filter (VMID %s) ===" vmid))
 
@@ -329,68 +342,117 @@
     (println "Setting up mgmt bridge...")
     (ensure-bridge! "mgmt" :ip pve-mgmt-ip)
 
-    ;; Create VM with multiple NICs
-    (println (format "  Creating VM %s..." vmid))
-    (qm! (format "create %s --name nifty-filter --machine q35 --bios ovmf --cpu host --cores 2 --memory 2048 --efidisk0 %s:1,efitype=4m,pre-enrolled-keys=0 --scsihw virtio-scsi-single --ostype l26 --onboot 1 --serial0 socket --vga serial0 --net0 virtio,bridge=mgmt --net1 virtio,bridge=%s --net2 virtio,bridge=%s"
-                  vmid storage wan-bridge infra-bridge))
+    ;; Ensure user-specified bridges exist
+    (doseq [bridge bridges]
+      (ensure-bridge! bridge))
 
-    ;; Import boot disk as scsi0
-    (println "  Importing boot disk...")
-    (qm! (format "importdisk %s '%s' %s" vmid image-file storage))
-    (qm! (format "set %s --scsi0 %s:vm-%s-disk-1 --boot order=scsi0" vmid storage vmid))
+    ;; Build NIC args: net0=mgmt, then virtual bridges, then infra (last virtual NIC)
+    ;; PCI devices get --hostpci flags instead of --net
+    (let [net-args (str "--net0 virtio,bridge=mgmt"
+                        (str/join ""
+                          (map-indexed (fn [i bridge]
+                                        (format " --net%d virtio,bridge=%s" (inc i) bridge))
+                                      bridges))
+                        ;; Infra NIC is always the last virtual NIC
+                        (format " --net%d virtio,bridge=%s"
+                                (+ 1 (count bridges)) infra-bridge))
+          hostpci-args (str/join ""
+                         (map-indexed (fn [i dev]
+                                       (format " --hostpci%d 0000:%s,pcie=1" i (normalize-pci dev)))
+                                     pci-devices))
+          infra-net-index (+ 1 (count bridges))]
 
-    ;; Create and format /var disk as scsi1
-    (println "  Creating 8G /var disk...")
-    (qm! (format "set %s --scsi1 %s:8" vmid storage))
-    (let [config (qm! (format "config %s" vmid))
-          var-volid (some->> (str/split-lines config)
-                             (filter #(str/starts-with? % "scsi1:"))
-                             first
-                             (re-find #"scsi1: ([^,]+)")
-                             second
-                             str/trim)
-          var-path (pve-cmd! (format "pvesm path %s" var-volid))]
-      (println "  Formatting /var disk (NIFTY_VAR)...")
-      (pve-cmd! (format "mkfs.ext4 -F -L NIFTY_VAR -q '%s'" var-path))
+      ;; Create VM
+      (println (format "  Creating VM %s..." vmid))
+      (qm! (format "create %s --name nifty-filter --machine q35 --bios ovmf --cpu host --cores 2 --memory 2048 --efidisk0 %s:1,efitype=4m,pre-enrolled-keys=0 --scsihw virtio-scsi-single --ostype l26 --onboot 1 --serial0 socket --vga serial0 %s%s"
+                    vmid storage net-args hostpci-args))
 
-      ;; Inject SSH keys into var disk via guestfish
-      (when (not (str/blank? ssh-keys))
-        (println "  Injecting SSH keys into /var disk...")
-        (let [key-dir (format "%s/nifty-keys" staging)]
-          (pve-cmd! (format "mkdir -p '%s'" key-dir))
-          ;; Write keys to PVE
-          (if @local-pve?
-            (spit (str key-dir "/authorized_keys") (str ssh-keys "\n"))
-            (sh-ok (format "echo '%s' | ssh root@%s 'cat > %s/authorized_keys'"
-                           (str/replace ssh-keys "'" "'\\''")
-                           @pve-host key-dir)))
-          ;; Use guestfish to inject into var disk
-          (pve-cmd! (format "LIBGUESTFS_BACKEND=direct guestfish -a '%s' run : mount /dev/sda / : mkdir-p /home/admin/.ssh : copy-in %s/authorized_keys /home/admin/.ssh/ : chmod 0700 /home/admin/.ssh : chmod 0600 /home/admin/.ssh/authorized_keys : chown 1000 100 /home/admin/.ssh : chown 1000 100 /home/admin/.ssh/authorized_keys"
-                            var-path key-dir))
-          (pve-cmd! (format "rm -rf '%s'" key-dir)))))
+      ;; Import boot disk as scsi0
+      (println "  Importing boot disk...")
+      (qm! (format "importdisk %s '%s' %s" vmid image-file storage))
+      (qm! (format "set %s --scsi0 %s:vm-%s-disk-1 --boot order=scsi0" vmid storage vmid))
 
-    ;; Set fw_cfg args
-    (println "  Configuring fw_cfg parameters...")
-    (let [config (qm! (format "config %s" vmid))
-          get-mac (fn [net-key]
-                    (some->> (str/split-lines config)
-                             (filter #(str/starts-with? % (str net-key ":")))
-                             first
-                             (re-find #"virtio=([^,]+)")
-                             second))
-          mgmt-mac (get-mac "net0")
-          wan-mac (get-mac "net1")
-          infra-mac (get-mac "net2")
-          fw-cfg (str (format "-fw_cfg name=opt/nifty/mgmt_mac,string=%s" mgmt-mac)
-                      " -fw_cfg name=opt/nifty/nic_roles,string=wan:trunk"
-                      (when wan-mac
-                        (format " -fw_cfg name=opt/nifty/wan_mac,string=%s" wan-mac))
-                      (when infra-mac
-                        (format " -fw_cfg name=opt/nifty/infra_mac,string=%s" infra-mac)))]
-      (println (format "    mgmt MAC:  %s" mgmt-mac))
-      (println (format "    wan MAC:   %s" wan-mac))
-      (println (format "    infra MAC: %s" infra-mac))
-      (qm! (format "set %s --args '%s'" vmid fw-cfg)))
+      ;; Create and format /var disk as scsi1
+      (println "  Creating 8G /var disk...")
+      (qm! (format "set %s --scsi1 %s:8" vmid storage))
+      (let [config (qm! (format "config %s" vmid))
+            var-volid (some->> (str/split-lines config)
+                               (filter #(str/starts-with? % "scsi1:"))
+                               first
+                               (re-find #"scsi1: ([^,]+)")
+                               second
+                               str/trim)
+            var-path (pve-cmd! (format "pvesm path %s" var-volid))]
+        (println "  Formatting /var disk (NIFTY_VAR)...")
+        (pve-cmd! (format "mkfs.ext4 -F -L NIFTY_VAR -q '%s'" var-path))
+
+        ;; Inject SSH keys into var disk via guestfish
+        (when (not (str/blank? ssh-keys))
+          (println "  Injecting SSH keys into /var disk...")
+          (let [key-dir (format "%s/nifty-keys" staging)]
+            (pve-cmd! (format "mkdir -p '%s'" key-dir))
+            ;; Write keys to PVE
+            (if @local-pve?
+              (spit (str key-dir "/authorized_keys") (str ssh-keys "\n"))
+              (sh-ok (format "echo '%s' | ssh root@%s 'cat > %s/authorized_keys'"
+                             (str/replace ssh-keys "'" "'\\''")
+                             @pve-host key-dir)))
+            ;; Use guestfish to inject into var disk
+            (pve-cmd! (format "LIBGUESTFS_BACKEND=direct guestfish -a '%s' run : mount /dev/sda / : mkdir-p /home/admin/.ssh : copy-in %s/authorized_keys /home/admin/.ssh/ : chmod 0700 /home/admin/.ssh : chmod 0600 /home/admin/.ssh/authorized_keys : chown 1000 100 /home/admin/.ssh : chown 1000 100 /home/admin/.ssh/authorized_keys"
+                              var-path key-dir))
+            (pve-cmd! (format "rm -rf '%s'" key-dir)))))
+
+      ;; Build NIC role order and fw_cfg args
+      ;; Roles: first NIC is wan, then trunk, then extra1, extra2, ...
+      ;; PCI NICs are discovered by bus address order at boot (no MAC needed here)
+      ;; Virtual bridge NICs get their MACs passed via fw_cfg
+      (println "  Configuring fw_cfg parameters...")
+      (let [config (qm! (format "config %s" vmid))
+            get-mac (fn [net-key]
+                      (some->> (str/split-lines config)
+                               (filter #(str/starts-with? % (str net-key ":")))
+                               first
+                               (re-find #"virtio=([^,]+)")
+                               second))
+            mgmt-mac (get-mac "net0")
+            ;; Build role list matching NIC order (wan first, then extras)
+            nic-roles (str/join ":"
+                        (concat ["wan" "trunk"]
+                                (map #(str "extra" (inc %))
+                                     (range (max 0 (- (count nics) 2))))))
+            infra-mac (get-mac (format "net%d" infra-net-index))
+            ;; Start building fw_cfg
+            fw-cfg (atom (str (format "-fw_cfg name=opt/nifty/mgmt_mac,string=%s" mgmt-mac)
+                              (format " -fw_cfg name=opt/nifty/nic_roles,string=%s" nic-roles)))]
+        (println (format "    mgmt MAC:   %s" mgmt-mac))
+        (println (format "    NIC roles:  %s" nic-roles))
+
+        ;; Pass MACs for virtual bridge NICs (PCI NICs are discovered by bus address)
+        (loop [bridge-idx 0
+               nic-idx 0
+               role-names (concat ["wan" "trunk"]
+                                  (map #(str "extra" (inc %))
+                                       (range (max 0 (- (count nics) 2)))))]
+          (when (and (< nic-idx (count nics)) (seq role-names))
+            (let [nic (nth nics nic-idx)]
+              (if (pci-device? nic)
+                ;; PCI device — no MAC to pass, skip to next role
+                (recur bridge-idx (inc nic-idx) (rest role-names))
+                ;; Virtual bridge — read MAC and pass via fw_cfg
+                (let [net-key (format "net%d" (inc bridge-idx))
+                      mac (get-mac net-key)
+                      role (first role-names)]
+                  (when mac
+                    (swap! fw-cfg str (format " -fw_cfg name=opt/nifty/%s_mac,string=%s" role mac))
+                    (println (format "    %s MAC:  %s (bridge)" role mac)))
+                  (recur (inc bridge-idx) (inc nic-idx) (rest role-names)))))))
+
+        ;; Infra NIC MAC
+        (when infra-mac
+          (swap! fw-cfg str (format " -fw_cfg name=opt/nifty/infra_mac,string=%s" infra-mac))
+          (println (format "    infra MAC:  %s (bridge: %s)" infra-mac infra-bridge)))
+
+        (qm! (format "set %s --args '%s'" vmid @fw-cfg))))
 
     ;; Cleanup staging
     (pve-cmd! (format "rm -f '%s'" image-file))
@@ -487,10 +549,28 @@
               services-ip  (if deploy-services?
                              (wiz/ask "Infra-services IP address:" :default (:services-ip defaults))
                              (:services-ip defaults))
-              wan-bridge   (if deploy-router?
-                             (wiz/ask "WAN bridge (e.g. vmbr0):" :default (:wan-bridge defaults)
-                                      :suggestions ["vmbr0" "vmbr1"])
-                             (:wan-bridge defaults))
+              ;; Router NICs: PCI passthrough addresses or bridge names
+              ;; The first NIC is the WAN, second is trunk, rest are extras
+              ;; mgmt and infra NICs are added automatically
+              router-nics  (if deploy-router?
+                             (do
+                               (println)
+                               (println "Router NIC configuration:")
+                               (println "  Enter PCI addresses (e.g. 01:00.0) for passthrough")
+                               (println "  or bridge names (e.g. vmbr0) for virtual NICs.")
+                               (println "  First NIC = WAN, second = trunk, rest = extras.")
+                               (println "  mgmt and infra NICs are added automatically.")
+                               (println)
+                               (loop [nics []]
+                                 (let [prompt (if (empty? nics)
+                                               "WAN NIC (PCI address or bridge):"
+                                               (format "Additional NIC #%d (blank to finish):" (inc (count nics))))
+                                       nic (wiz/ask prompt
+                                                    :allow-blank (not (empty? nics)))]
+                                   (if (str/blank? nic)
+                                     nics
+                                     (recur (conj nics nic))))))
+                             [])
 
               ;; Step 5: VMIDs
               step-ca-vmid  (if deploy-step-ca?
@@ -548,8 +628,11 @@
             (println (format "  infra-services: VMID %s, %s/%s on %s"
                              services-vmid services-ip "24" infra-bridge)))
           (when deploy-router?
-            (println (format "  nifty-filter:   VMID %s, %s on mgmt, WAN on %s, infra on %s"
-                             router-vmid (str mgmt-base ".1") wan-bridge infra-bridge)))
+            (println (format "  nifty-filter:   VMID %s, %s on mgmt, infra on %s"
+                             router-vmid (str mgmt-base ".1") infra-bridge))
+            (doseq [[i nic] (map-indexed vector router-nics)]
+              (println (format "                  NIC %d: %s%s"
+                               i nic (if (pci-device? nic) " (PCI passthrough)" " (bridge)")))))
           (println)
 
           (when-not (wiz/confirm "Proceed with deployment?" :default :yes)
@@ -616,7 +699,7 @@
              {:vmid       router-vmid
               :image-url  (:url nf-image)
               :image-sha256 (:sha256 nf-image)
-              :wan-bridge wan-bridge
+              :nics       router-nics
               :infra-bridge infra-bridge
               :mgmt-subnet mgmt-subnet
               :ssh-keys   ssh-keys
