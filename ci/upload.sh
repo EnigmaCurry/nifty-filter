@@ -52,6 +52,7 @@ for f in output/export/nifty-filter-*.qcow2; do
         '.images[$key] = {url: $url, filename: $filename, date: $date, commit: $commit, sha256: $sha256, size: ($size | tonumber)}')
 done
 
+manifest=$(echo "$manifest" | jq --arg ts "$(date +%s)" '.updated = ($ts | tonumber)')
 echo "$manifest" | jq . > /tmp/manifest.json
 echo "Manifest:"
 cat /tmp/manifest.json
