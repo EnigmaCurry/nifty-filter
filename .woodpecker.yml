@@ -55,6 +55,8 @@ steps:
         jq() { nix run nixpkgs#jq -- "$@"; }
         echo "Upload image:"
         ls -lh output/export/
+        # Clean up stale multipart uploads from previous failed runs
+        rclone cleanup "remote:$S3_BUCKET/" -v || true
         # Delete old images
         rclone delete "remote:$S3_BUCKET/" --include "nifty-filter-*.qcow2" -v
         # Upload new image
