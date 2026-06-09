@@ -18,9 +18,9 @@ steps:
           ls -la result/
           exit 1
         fi
-        date=$(date +%Y%m%d)
-        sha=$(git rev-parse --short HEAD)
-        dest="output/export/nifty-filter-${date}-${sha}.qcow2"
+        date_stamp=$(date +%%Y%%m%%d)
+        git_sha=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        dest="output/export/nifty-filter-${date_stamp}-${git_sha}.qcow2"
         mkdir -p output/export
         cp "$src" "$dest"
         echo "Exported: $dest"
